@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+"""
+SmartDrive Update Deployment Tool
+
+Safely updates SmartDrive scripts and documentation from development
+environment to deployment drives without overwriting user data.
+
+Usage:
+    python update.py                                 # Interactive mode
+    python update.py --drive G                       # Update specific drive
+    python update.py --dry-run                       # Preview changes
+    
+    # External drive GUI mode
+    python update.py --mode external_drive --source server --url <URL>
+    python update.py --mode external_drive --source local  --root <DIR>
+"""
+
+import os
+import shutil
+import sys
+import json
+import subprocess
+import filecmp
+from pathlib import Path
+import argparse
+from typing import List, Set
+from datetime import datetime
+
+# =============================================================================
+# Core module imports - SINGLE SOURCE OF TRUTH
+# =============================================================================
+_script_dir = Path(__file__).resolve().parent
+
+# Determine execution context (deployed vs development)
+if _script_dir.parent.name == ".smartdrive":
+    # Deployed on drive: .smartdrive/scripts/update.py
+    # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
+    _deploy_root = _script_dir.parent
+    _project_root = _deploy_root.parent  # drive root
+    if str(_deploy_root) not in sys.path:
+        sys.path.insert(0, str(_deploy_root))
+else:
+    # Development: scripts/update.py at repo root
+    _project_root = _script_dir.parent
+    
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+try:
+    from core.version import VERSION as CURRENT_VERSION
+    from core.paths import Paths
+    from core.constants import Branding, ConfigKeys, FileNames
+    from core.config import write_config_atomic
+    from core.platform import is_windows as _is_windows
+    from core.platform import windows_create_shortcut, windows_refresh_explorer, windows_set_attributes
+except ImportError:
+    CURRENT_VERSION = "2.0.0"  # Fallback for when core not available
+    write_config_atomic = None  # Fallback will use direct write
+    class FileNames:
+        CONFIG_JSON = "config.json"
+        BAT_LAUNCHER = "KeyDrive.bat"
+        GUI_BAT_LAUNCHER = "KeyDriveGUI.bat"
+    class ConfigKeys:
+        LAST_UPDATED = "last_updated"
+
+# =============================================================================
+# Logging - Structured log events
+# =============================================================================
+import logging
+
+_update_logger = logging.getLogger("smartdrive.update")
+
+def _log_update(event: str, **kwargs) -> None:
+    """Emit structured update log event."""
+    details = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
+    _update_logger.info(f"{event}{': ' + details if details else ''}")
+
+# Configuration (source roots)
+# IMPORTANT: This updater may run either from a repo checkout or from a deployed drive.
+# In both cases, `_project_root` resolves to the drive/repo root that contains `.smartdrive/`.
+DEV_ROOT = _project_root
+DEV_SCRIPTS = DEV_ROOT / ".smartdrive" / "scripts"
+
+# Import branding variables
+
+
+# Files to update inside .smartdrive/scripts (drive root must contain entrypoints only)
+FILES_TO_UPDATE = [
+    "*.py",
+    "requirements.txt",
+]
+
+# Files/folders to NEVER overwrite (user data)
+# Note: config.json user data is protected, but version metadata is updated
+PROTECTED = {
+    "keys",           # Keyfiles directory
+    "integrity",      # Signatures directory
+    "recovery_kits",  # Recovery documents
+    "config.json"     # User configuration (version field updated separately)
+}
+
+def set_drive_icon(target_path: Path, drive_letter: str) -> None:
+    """Set a custom drive icon using desktop.ini (no admin required)."""
+    if not _is_windows():
+        return  # Only for Windows
+    
+    try:
+        desktop_ini = target_path / "desktop.ini"
+
+        # Always reference the deployed static folder (root must stay clean)
+        icon_rel = Path(Paths.SMARTDRIVE_DIR_NAME) / Paths.STATIC_SUBDIR / FileNames.ICON_MAIN
+        icon_path = icon_rel.as_posix().replace("/", "\\")
+        
+        ini_content = f"""[.ShellClassInfo]
+IconFile={icon_path}
+IconIndex=0
+
+[ViewState]
+Mode=
+Vid=
+FolderType=Generic
+"""
+        
+        # Remove attributes if file exists (best-effort)
+        if desktop_ini.exists():
+            windows_set_attributes(desktop_ini, hidden=False, system=False)
+
+        with open(desktop_ini, "w", encoding="utf-8") as f:
+            f.write(ini_content)
+
+        # Required: desktop.ini System+Hidden, drive root System
+        windows_set_attributes(desktop_ini, hidden=True, system=True)
+        windows_set_attributes(target_path, system=True)
+        windows_refresh_explorer()
+        
+        log(f"Created desktop.ini for custom drive icon on {drive_letter}:")
+    except Exception as e:
+        log(f"Could not create desktop.ini: {e}", "WARN")
+
+def _cleanup_root_legacy_artifacts(target_path: Path) -> None:
+    """Best-effort removal of legacy root artifacts to keep drive root clean."""
+    legacy_paths = [
+        target_path / FileNames.README,
+        target_path / FileNames.GUI_README,
+        target_path / FileNames.README_PDF,
+        target_path / FileNames.GUI_README_PDF,
+        target_path / FileNames.BAT_LAUNCHER,
+        target_path / FileNames.GUI_BAT_LAUNCHER,
+        target_path / FileNames.VBS_LAUNCHER,
+        target_path / FileNames.GUI_EXE,
+    ]
+
+    for p in legacy_paths:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+
+def _ensure_clean_root_entrypoints(target_path: Path, target_scripts: Path) -> None:
+    """Ensure the drive root only contains OS-clickable entrypoints."""
+    if _is_windows():
+        try:
+            windows_set_attributes(target_path / Paths.SMARTDRIVE_DIR_NAME, hidden=True)
+        except Exception:
+            pass
+
+        shortcut_name = Path(FileNames.BAT_LAUNCHER).with_suffix(".lnk").name
+        shortcut_path = target_path / shortcut_name
+        icon_path = target_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR / FileNames.ICON_MAIN
+        exe_path = target_scripts / f"{Branding.PRODUCT_NAME}GUI.exe"
+
+        if exe_path.exists():
+            windows_create_shortcut(
+                shortcut_path=shortcut_path,
+                target_path=exe_path,
+                working_dir=target_path,
+                icon_path=icon_path,
+                description=f"{Branding.PRODUCT_NAME} (GUI)",
+            )
+
+    sh_src = DEV_ROOT / FileNames.SH_LAUNCHER
+    sh_dst = target_path / FileNames.SH_LAUNCHER
+    if sh_src.exists():
+        try:
+            shutil.copy2(sh_src, sh_dst)
+        except Exception:
+            pass
+
+    command_name = f"{Branding.PRODUCT_NAME}.command"
+    command_path = target_path / command_name
+    try:
+        command_path.write_text(
+            "#!/bin/bash\n"
+            "cd \"$(dirname \"$0\")\"\n"
+            f"chmod +x './{FileNames.SH_LAUNCHER}' 2>/dev/null || true\n"
+            f"./{FileNames.SH_LAUNCHER}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    except Exception:
+        pass
+
+def log(msg: str, level: str = "INFO"):
+    """Log message with level."""
+    print(f"[{level}] {msg}")
+
+def error(msg: str):
+    """Log error message."""
+    log(msg, "ERROR")
+
+def warn(msg: str):
+    """Log warning message."""
+    log(msg, "WARN")
+
+def get_available_drives() -> List[str]:
+    """Get list of available drive letters."""
+    drives = []
+    for drive in "DEFGHIJKLMNOPQRSTUVWXYZ":
+        path = Path(f"{drive}:\\")
+        if path.exists():
+            drives.append(drive)
+    return drives
+
+def select_drive_interactive() -> str:
+    """Interactive drive selection."""
+    drives = get_available_drives()
+    
+    if not drives:
+        error("No external drives found (D:-Z:)")
+        return None
+    
+    print("\nAvailable drives:")
+    for i, drive in enumerate(drives, 1):
+        path = f"{drive}:\\"
+        try:
+            # Get drive label if possible
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            volume_name = ctypes.create_unicode_buffer(1024)
+            file_system = ctypes.create_unicode_buffer(1024)
+            kernel32.GetVolumeInformationW(path, volume_name, 1024, None, None, None, file_system, 1024)
+            label = volume_name.value or "No Label"
+        except:
+            label = "Unknown"
+        print(f"  [{i}] {drive}:\\ - {label}")
+    
+    while True:
+        try:
+            choice = input("\nSelect drive to update (number or letter): ").strip().upper()
+            
+            # Check if it's a number
+            if choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(drives):
+                    return drives[idx]
+                else:
+                    print("Invalid number.")
+                    continue
+            
+            # Check if it's a drive letter
+            if len(choice) == 1 and choice in drives:
+                return choice
+            
+            print("Invalid choice. Enter a number or drive letter.")
+            
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return None
+
+def is_smartdrive_drive(drive_path: Path) -> bool:
+    """Check if drive has SmartDrive installed."""
+    smartdrive_dir = drive_path / ".smartdrive"
+    config_file = smartdrive_dir / "scripts" / "config.json"
+    return config_file.exists()
+
+def get_files_to_update() -> List[Path]:
+    """Get list of files to update from dev environment."""
+    files = []
+    
+    # Get files from scripts directory
+    for pattern in FILES_TO_UPDATE:
+        for src in DEV_SCRIPTS.glob(pattern):
+            if src.is_file():
+                # Skip protected files
+                if src.name in PROTECTED:
+                    continue
+                files.append(src)
+    
+    # Add documentation (to be deployed under .smartdrive/docs)
+    for doc_name in (
+        FileNames.README,
+        FileNames.GUI_README,
+        FileNames.README_PDF,
+        FileNames.GUI_README_PDF,
+    ):
+        doc = DEV_ROOT / doc_name
+        if doc.exists():
+            files.append(doc)
+    
+    # Add constants.py
+    constants_file = DEV_ROOT / "constants.py"
+    if constants_file.exists():
+        files.append(constants_file)
+    
+    # Add variables.py
+    variables_file = DEV_ROOT / "variables.py"
+    if variables_file.exists():
+        files.append(variables_file)
+    
+    return files
+
+def preview_update(target_drive: str, dry_run: bool = True) -> List[tuple]:
+    """Preview what will be updated."""
+    target_path = Path(f"{target_drive}:\\")
+    target_scripts = target_path / ".smartdrive" / "scripts"
+    target_docs = target_path / ".smartdrive" / "docs"
+    
+    changes = []
+    files_to_update = get_files_to_update()
+    
+    for src in files_to_update:
+        if src.parent == DEV_ROOT and src.name in {
+            FileNames.README,
+            FileNames.GUI_README,
+            FileNames.README_PDF,
+            FileNames.GUI_README_PDF,
+        }:
+            # Documentation goes under .smartdrive/docs/
+            dst = target_docs / src.name
+        elif src.name == "constants.py" and src.parent == DEV_ROOT:
+            # constants.py goes to scripts directory
+            dst = target_scripts / "constants.py"
+        elif src.name == "variables.py" and src.parent == DEV_ROOT:
+            # variables.py goes to scripts directory
+            dst = target_scripts / "variables.py"
+        else:
+            # Scripts go to .smartdrive/scripts/
+            dst = target_scripts / src.name
+        
+        action = "COPY"
+        if dst.exists():
+            # Determine if content differs (mtime alone is unreliable across drives)
+            try:
+                same = filecmp.cmp(src, dst, shallow=False)
+                action = "SKIP (same)" if same else "UPDATE"
+            except Exception:
+                action = "UPDATE"
+        
+        changes.append((src, dst, action))
+    
+    if dry_run:
+        print(f"\n{'─' * 70}")
+        print(f"  UPDATE PREVIEW: {target_drive}:\\")
+        print(f"{'─' * 70}\n")
+        
+        for src, dst, action in changes:
+            if action != "SKIP (same)":
+                print(f"  {action}: {dst}")
+        
+        skipped = sum(1 for _, _, a in changes if a == "SKIP (same)")
+        if skipped:
+            print(f"  SKIP: {skipped} files unchanged")
+        
+        print(f"\n  Protected (never overwritten): {', '.join(PROTECTED)}")
+        print(f"  Note: config.json version will be updated to {CURRENT_VERSION}")
+    
+    return changes
+
+def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) -> bool:
+    """Perform the update."""
+    target_path = Path(f"{target_drive}:\\")
+    
+    _log_update("update.start", target=f"{target_drive}:\\", dry_run=dry_run)
+    
+    if not target_path.exists():
+        error(f"Drive {target_drive}:\\ not found")
+        _log_update("update.failed", reason="drive_not_found")
+        return False
+    
+    # Check if it's a SmartDrive drive
+    if not is_smartdrive_drive(target_path):
+        warn(f"Drive {target_drive}:\\ doesn't appear to have SmartDrive installed")
+        if not yes:
+            confirm = input("Continue anyway? [y/N]: ").strip().lower()
+            if confirm != 'y':
+                _log_update("update.cancelled", reason="user_abort")
+                return False
+    
+    # Preview
+    changes = preview_update(target_drive, dry_run=True)
+    
+    if dry_run:
+        _log_update("update.dry_run.complete", change_count=len(changes))
+        return True
+    
+    # Confirm
+    if not yes:
+        print()
+        confirm = input("Proceed with update? [y/N]: ").strip().lower()
+        if confirm != 'y':
+            print("Update cancelled.")
+            _log_update("update.cancelled", reason="user_declined")
+            return False
+    
+    # Perform update
+    print(f"\n{'─' * 70}")
+    print("  PERFORMING UPDATE")
+    print(f"{'─' * 70}\n")
+    
+    target_scripts = target_path / ".smartdrive" / "scripts"
+    target_scripts.mkdir(parents=True, exist_ok=True)
+    (target_path / ".smartdrive" / "docs").mkdir(parents=True, exist_ok=True)
+    
+    success_count = 0
+    error_count = 0
+    
+    for src, dst, action in changes:
+        if action == "SKIP (same)":
+            continue
+        
+        try:
+            shutil.copy2(src, dst)
+            print(f"  ✓ {dst.name}")
+            success_count += 1
+        except Exception as e:
+            error(f"Failed to copy {src.name}: {e}")
+            error_count += 1
+    
+    # Update config.json version (only if version actually changed)
+    # IMPORTANT: config.json user data is PRESERVED - only version/last_updated are updated
+    config_path = target_scripts / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            current_config_version = config.get("version")
+            _log_update("update.config.preserving", path=str(config_path))
+            
+            # Only update if the version in version.py is different
+            if current_config_version != CURRENT_VERSION:
+                config["version"] = CURRENT_VERSION
+                config["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # ALWAYS use atomic write - no fallback to direct write
+                if write_config_atomic:
+                    write_config_atomic(config_path, config)
+                else:
+                    raise ImportError("write_config_atomic required but not available")
+                
+                print(f"  ✓ Updated version: {current_config_version or 'none'} → {CURRENT_VERSION}")
+                _log_update("update.config.version_updated", old=current_config_version, new=CURRENT_VERSION)
+                success_count += 1
+            else:
+                _log_update("update.config.version_unchanged", version=CURRENT_VERSION)
+            # If version is already current, don't count it as an update
+        
+        except Exception as e:
+            error(f"Failed to update config.json version: {e}")
+            _log_update("update.config.error", error=str(e))
+            error_count += 1
+    
+    # Copy core folder (SSOT modules)
+    core_src = DEV_ROOT / ".smartdrive" / "core"
+    if core_src.exists():
+        core_dst = target_path / ".smartdrive" / "core"
+        try:
+            # Ensure destination exists
+            core_dst.mkdir(parents=True, exist_ok=True)
+            
+            # Copy each file individually to ensure updates
+            for item in core_src.rglob("*"):
+                if item.is_file():
+                    rel_path = item.relative_to(core_src)
+                    dst_file = core_dst / rel_path
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, dst_file)
+            
+            print("  ✓ Core modules")
+            _log_update("update.core.copied")
+            success_count += 1
+        except Exception as e:
+            error(f"Failed to copy core modules: {e}")
+            _log_update("update.core.error", error=str(e))
+            error_count += 1
+    
+    # Copy static folder to .smartdrive/static/ (deployed structure)
+    # MANDATORY: Icons must be present for tray/window functionality
+    static_src = DEV_ROOT / "static"
+    if static_src.exists():
+        # Primary destination: .smartdrive/static/
+        static_dst = target_path / ".smartdrive" / "static"
+        try:
+            static_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(static_src, static_dst, dirs_exist_ok=True)
+            # Count files for logging
+            static_files = list(static_dst.rglob("*"))
+            file_count = sum(1 for f in static_files if f.is_file())
+            print(f"  ✓ Static folder (.smartdrive/static/) - {file_count} files")
+            _log_update("update.static.copied", path=str(static_dst), file_count=file_count)
+            success_count += 1
+            
+            # Remove legacy ROOT/static/ folder if it exists (migration from old structure)
+            legacy_static = target_path / "static"
+            if legacy_static.exists() and legacy_static.is_dir():
+                try:
+                    shutil.rmtree(legacy_static)
+                    print("  ✓ Removed legacy static/ folder (migrated to .smartdrive/static/)")
+                    _log_update("update.static.legacy_removed", path=str(legacy_static))
+                except Exception as e:
+                    print(f"  ⚠ Could not remove legacy static/ folder: {e}")
+            
+        except Exception as e:
+            error(f"Failed to copy static folder: {e}")
+            _log_update("update.static.error", error=str(e))
+            error_count += 1
+    else:
+        _log_update("update.static.notfound", source=str(static_src))
+    
+    # Copy GUI executable if it exists (to .smartdrive/scripts)
+    exe_src = DEV_ROOT / "dist" / f"{Branding.PRODUCT_NAME}GUI.exe"
+    if exe_src.exists():
+        exe_dst = target_scripts / f"{Branding.PRODUCT_NAME}GUI.exe"
+        try:
+            # Use copy instead of copy2 to avoid potential metadata issues
+            shutil.copy(exe_src, exe_dst)
+            print(f"  ✓ {Branding.PRODUCT_NAME}GUI.exe")
+            _log_update("update.executable.copied", file=f"{Branding.PRODUCT_NAME}GUI.exe")
+            success_count += 1
+        except Exception as e:
+            error(f"Failed to copy {Branding.PRODUCT_NAME}GUI.exe: {e}")
+            _log_update("update.executable.error", error=str(e))
+            error_count += 1
+
+    # Enforce clean root entrypoints and remove legacy artifacts
+    _cleanup_root_legacy_artifacts(target_path)
+    _ensure_clean_root_entrypoints(target_path, target_scripts)
+
+    # Set custom drive icon if on Windows
+    if _is_windows():
+        set_drive_icon(target_path, target_drive)
+
+    _log_update("update.complete", target=f"{target_drive}:\\", success=success_count, errors=error_count, version=CURRENT_VERSION)
+    print(f"\n{'─' * 70}")
+    print(f"  UPDATE COMPLETE")
+    print(f"{'─' * 70}")
+    print(f"  Updated: {success_count} files")
+    if error_count:
+        print(f"  Errors: {error_count} files")
+    print(f"  Target: {target_drive}:\\")
+    print(f"  Version: {CURRENT_VERSION}")
+    
+    return error_count == 0
+
+def update_deployment_drive(target_drive: str = None, dry_run: bool = False, yes: bool = False) -> bool:
+    """
+    Update a deployment drive with latest SmartDrive files.
+    
+    Args:
+        target_drive: Drive letter (e.g., 'G'), or None for interactive selection
+        dry_run: If True, only preview changes
+    
+    Returns:
+        True if successful
+    """
+    if target_drive is None:
+        target_drive = select_drive_interactive()
+        if not target_drive:
+            return False
+    
+    return perform_update(target_drive, dry_run, yes)
+
+# For backward compatibility and direct execution
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Update SmartDrive deployment drives")
+    parser.add_argument("--drive", "-d", help="Target drive letter (e.g., G)")
+    parser.add_argument("--dry-run", action="store_true", help="Preview changes without updating")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts")
+    # External drive GUI mode
+    parser.add_argument("--mode", choices=["external_drive"], help="Run in external drive mode")
+    parser.add_argument("--source", choices=["server", "local"], help="Update source type")
+    parser.add_argument("--url", help="Server URL for update payload")
+    parser.add_argument("--root", help="Local directory for update payload")
+
+    args = parser.parse_args()
+
+    # External drive GUI mode path
+    if args.mode == "external_drive" and args.source:
+        try:
+            # CANONICAL PATH COMPUTATION (per AGENT_ARCHITECTURE.md):
+            # Script is at: DRIVE:\.smartdrive\scripts\update.py
+            #   .parent = DRIVE:\.smartdrive\scripts\
+            #   .parent.parent = DRIVE:\.smartdrive\  (DEPLOY_ROOT)
+            #   .parent.parent.parent = DRIVE:\       (DRIVE_ROOT)
+            scripts_root = Path(__file__).resolve().parent
+            deploy_root = scripts_root.parent  # .smartdrive/
+            drive_root = deploy_root.parent    # DRIVE:\
+            
+            # HARD GATE: Verify we're in a .smartdrive deployment
+            expected_dir_name = ".smartdrive"
+            if deploy_root.name != expected_dir_name:
+                error(f"FATAL: Expected to be in '{expected_dir_name}' but found '{deploy_root.name}'")
+                error(f"Script path: {Path(__file__).resolve()}")
+                error("Update aborted: Invalid deployment layout")
+                sys.exit(3)
+            
+            temp_dir = scripts_root / "_update_tmp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+
+            payload_dir = temp_dir / "payload"
+            if payload_dir.exists():
+                shutil.rmtree(payload_dir, ignore_errors=True)
+            payload_dir.mkdir(parents=True, exist_ok=True)
+
+            if args.source == "server" and args.url:
+                # Download archive from server URL
+                import urllib.request
+                archive_path = temp_dir / "update.zip"
+                urllib.request.urlretrieve(args.url, archive_path)
+                # Extract zip
+                import zipfile
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    zf.extractall(payload_dir)
+            elif args.source == "local" and args.root:
+                # Copy from local directory
+                src_root = Path(args.root)
+                if not src_root.exists():
+                    error(f"Local update root not found: {src_root}")
+                    sys.exit(2)
+                shutil.copytree(src_root, payload_dir, dirs_exist_ok=True)
+            else:
+                error("Invalid update source or missing parameters")
+                sys.exit(2)
+
+            # Overlay copy into DEPLOY_ROOT (.smartdrive/), NOT drive root
+            # This ensures code stays under .smartdrive/ and doesn't pollute drive root
+            staging_dir = temp_dir / "staging"
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            shutil.copytree(deploy_root, staging_dir, dirs_exist_ok=True)
+            shutil.copytree(payload_dir, staging_dir, dirs_exist_ok=True)
+
+            # Move staged back to deploy_root (best effort)
+            for item in staging_dir.iterdir():
+                dst = deploy_root / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, dst)
+
+            # Update version in config.json
+            cfg_path = deploy_root / "scripts" / FileNames.CONFIG_JSON
+            if cfg_path.exists():
+                try:
+                    with open(cfg_path, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                    cfg[ConfigKeys.LAST_UPDATED] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # Use atomic write if available
+                    if write_config_atomic:
+                        write_config_atomic(cfg_path, cfg)
+                    else:
+                        with open(cfg_path, 'w', encoding='utf-8') as f:
+                            json.dump(cfg, f, indent=2)
+                except Exception as e:
+                    warn(f"Could not update last_updated: {e}")
+
+            # Cleanup
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            print("Update overlay complete.")
+            sys.exit(0)
+        except Exception as e:
+            error(str(e))
+            sys.exit(1)
+
+    # Default interactive/drive mode
+    ok = update_deployment_drive(args.drive, args.dry_run, args.yes)
+    sys.exit(0 if ok else 1)
+    
+    if args.drive:
+        update_deployment_drive(args.drive, args.dry_run, args.yes)
+    else:
+        update_deployment_drive(dry_run=args.dry_run, yes=args.yes)

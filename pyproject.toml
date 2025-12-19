@@ -1,0 +1,24 @@
+# pyproject.toml — Code hygiene tool configuration
+# These tools are Tier-1 (non-governing): they format code but do not define correctness.
+# See AGENT_ARCHITECTURE.md § "Tooling Tier Model" for tier definitions.
+
+[tool.black]
+line-length = 120
+target-version = ["py310", "py311", "py312", "py313"]
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | venv
+    | __pycache__
+    | obsolete
+    | \.smartdrive
+    | \.tmp
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip = [".git", ".venv", "venv", "__pycache__", "obsolete", ".smartdrive", ".tmp"]
+skip_gitignore = false

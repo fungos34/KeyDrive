@@ -1,0 +1,36 @@
+{
+  "schema_version": 3,
+  "mode": "pw_gpg_keyfile",
+  "encrypted_keyfile": "../keys/keyfile.vc.gpg",
+  "seed_gpg_path": "../keys/seed.gpg",
+  "kdf": "scrypt",
+  "salt_b64": "base64_encoded_salt",
+  "hkdf_info": "smartdrive-vc-pw-v1",
+  "pw_encoding": "utf-8",
+  "windows": {
+    "volume_path": "\\Device\\Harddisk1\\Partition2",
+    "mount_letter": "V",
+    "veracrypt_path": ""
+  },
+  "unix": {
+    "volume_path": "/dev/sdX2",
+    "mount_point": "~/veradrive"
+  },
+  "drive_id": "aea880fe-346e-4c6b-8fc8-108e51dd8404",
+  "lost_and_found": {
+    "enabled": false,
+    "message": ""
+  },
+  "gui_lang": "en",
+  "drive_name": "KeyFileSafer",
+  "gui_theme": "rose",
+  "keyfile": "",
+  "recovery": {
+    "enabled": false
+  },
+  "update_source_type": "local",
+  "update_url": "",
+  "update_local_root": "",
+  "verification_overridden": false,
+  "last_updated": "2025-12-17 17:13:45"
+}

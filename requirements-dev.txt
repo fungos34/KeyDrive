@@ -1,0 +1,10 @@
+# Development / test dependencies
+# Keep pinned for reproducibility.
+
+pytest==8.3.4
+pytest-qt==4.4.0
+
+# Tier-1 Code Hygiene (non-governing — format only, do not alter behavior)
+# See AGENT_ARCHITECTURE.md § "Tooling Tier Model"
+black==24.10.0
+isort==5.13.2

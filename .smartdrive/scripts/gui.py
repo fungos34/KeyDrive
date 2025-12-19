@@ -1,0 +1,4825 @@
+#!/usr/bin/env python3
+"""
+KeyDrive GUI - Minimalistic Windows Interface
+===============================================
+
+A clean, minimal GUI for KeyDrive operations that integrates
+with the existing CLI backend while providing a modern interface.
+
+Author: KeyDrive Project
+License: MIT
+"""
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import traceback
+from pathlib import Path
+from typing import Optional
+
+# Get logger for GUI module
+_gui_logger = logging.getLogger("SmartDriveGUI.gui")
+
+
+def log_exception(context: str, exc: Exception = None, level: str = "warning") -> None:
+    """
+    Log an exception with context information.
+
+    Args:
+        context: Description of what was happening when the error occurred
+        exc: The exception (if None, logs current exception from sys.exc_info)
+        level: Log level ('debug', 'info', 'warning', 'error', 'critical')
+    """
+    log_func = getattr(_gui_logger, level, _gui_logger.warning)
+    if exc:
+        log_func(f"{context}: {exc}", exc_info=True)
+    else:
+        log_func(f"{context}", exc_info=True)
+    # Also print to stderr for immediate visibility
+    print(f"[!] {context}", file=sys.stderr)
+    traceback.print_exc()
+
+
+# ===========================================================================
+# Core module imports (single source of truth)
+# ===========================================================================
+_script_dir = Path(__file__).resolve().parent
+
+# Determine execution context (deployed vs development)
+if _script_dir.parent.name == ".smartdrive":
+    # Deployed on drive: .smartdrive/scripts/gui.py
+    # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
+    _deploy_root = _script_dir.parent
+    _project_root = _deploy_root.parent  # drive root
+    if str(_deploy_root) not in sys.path:
+        sys.path.insert(0, str(_deploy_root))
+else:
+    # Development: scripts/gui.py at repo root
+    _project_root = _script_dir.parent
+
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from core.config import get_drive_id, load_or_create_config, write_config_atomic
+from core.constants import Branding, ConfigKeys, FileNames, GUIConfig
+from core.limits import Limits
+from core.modes import SecurityMode
+from core.paths import Paths
+from core.single_instance import SingleInstanceManager, check_single_instance
+from core.tray import TrayIconManager, is_tray_available
+
+# Import from core modules (single source of truth)
+from core.version import VERSION as APP_VERSION
+
+# Import i18n module for translations
+from gui_i18n import AVAILABLE_LANGUAGES, TRANSLATIONS, tr
+
+# Global language setting (loaded from config or default)
+_current_lang = GUIConfig.DEFAULT_LANG
+
+
+def get_lang() -> str:
+    """Get current GUI language."""
+    return _current_lang
+
+
+def set_lang(lang: str) -> None:
+    """Set GUI language."""
+    global _current_lang
+    _current_lang = lang if lang in TRANSLATIONS else GUIConfig.DEFAULT_LANG
+
+
+# Import all constants from variables.py (which now also imports from core)
+try:
+    from variables import (
+        APP_NAME,
+        BANNER_TITLE,
+        COLORS,
+        CORNER_RADIUS,
+        ORGANIZATION_NAME,
+        PRODUCT_DESCRIPTION,
+        PRODUCT_NAME,
+        TITLE_MAX_CHARS,
+        TITLE_MIN_SIDE_CHARS,
+        WINDOW_HEIGHT,
+        WINDOW_MARGIN,
+        WINDOW_TITLE,
+        WINDOW_WIDTH,
+    )
+except ImportError:
+    # Fallback values if variables.py is not available
+    PRODUCT_NAME = Branding.PRODUCT_NAME
+    PRODUCT_DESCRIPTION = "KeyDrive Manager"
+    APP_NAME = PRODUCT_NAME
+    ORGANIZATION_NAME = "KeyDrive Project"
+    TITLE_MAX_CHARS = 18
+    TITLE_MIN_SIDE_CHARS = 2
+    WINDOW_WIDTH = 360
+    WINDOW_HEIGHT = 380
+    WINDOW_MARGIN = 20
+    CORNER_RADIUS = 12
+    COLORS = Branding.THEME.copy()
+    COLORS.update(
+        {
+            "primary": "#2FA36B",  # Primary actions
+            "primary_hover": "#3FBF87",  # Hover/active state
+            "secondary": "#7FD1B2",  # Focus/selection
+            "background": "#0F1F1A",  # Main background
+            "surface": "#162B24",  # Panels, grouped sections
+            "text": "#E6F2ED",  # Primary text
+            "text_secondary": "#B8D6C9",  # Secondary text, labels
+            "text_disabled": "#7FA99A",  # Disabled text
+            "warning": "#D9A441",  # Warning
+            "border": "#1B352C",  # Inactive outlines
+            "separator": "#244238",  # Separators, dividers
+            "smartdrive_used": "#2FA36B",  # SmartDrive used space
+            "smartdrive_free": "#7FD1B2",  # SmartDrive free space
+            "vc_used": "#0891B2",  # VeraCrypt used space (teal)
+            "vc_free": "#67E8F9",  # VeraCrypt free space (cyan)
+            "launch_used": "#2FA36B",  # Launch drive used space (same as smartdrive)
+            "launch_free": "#7FD1B2",  # Launch drive free space (same as smartdrive)
+        }
+    )
+    WINDOW_TITLE = f"{PRODUCT_NAME} Manager"
+    BANNER_TITLE = f"{PRODUCT_NAME} Manager"
+
+
+def sanitize_product_name(name: str) -> str:
+    """Sanitize product name for display and storage."""
+    import re
+
+    # 1) strip, fallback to default if empty
+    name = name.strip()
+    if not name:
+        return PRODUCT_NAME
+
+    # 2) regex-remove disallowed chars: keep [A-Za-z0-9 _\-#]
+    name = re.sub(r"[^A-Za-z0-9 _\-#]", "", name)
+
+    # 3) truncate to TITLE_MAX_CHARS
+    if len(name) > TITLE_MAX_CHARS:
+        name = name[:TITLE_MAX_CHARS].rstrip()
+
+    # 4) return default if result is empty
+    return name if name else PRODUCT_NAME
+
+
+def split_for_logo(name: str) -> tuple[str, str]:
+    """
+    Returns (left, right) for title header:
+    - Uses sanitized name, prefers splitting on a space nearest the center if both sides
+      are at least TITLE_MIN_SIDE_CHARS long.
+    - Falls back to a camel-case split if appropriate, else a midpoint split that
+      enforces the minimum side-length constraint.
+    """
+    name = sanitize_product_name(name)
+    length = len(name)
+
+    # Too short to split meaningfully
+    if length < TITLE_MIN_SIDE_CHARS * 2:
+        return name, ""
+
+    # Try split on space closest to middle
+    if " " in name:
+        spaces = [i for i, c in enumerate(name) if c == " "]
+        middle = length // 2
+        best_space = min(spaces, key=lambda x: abs(x - middle))
+        left = name[:best_space].rstrip()
+        right = name[best_space + 1 :].lstrip()
+        if len(left) >= TITLE_MIN_SIDE_CHARS and len(right) >= TITLE_MIN_SIDE_CHARS:
+            return left, right
+
+    # Try camel-case split
+    uppercase_indices = [i for i, c in enumerate(name) if c.isupper() and i > 0]
+    if uppercase_indices:
+        middle = length // 2
+        best_upper = min(uppercase_indices, key=lambda x: abs(x - middle))
+        left = name[:best_upper]
+        right = name[best_upper:]
+        if len(left) >= TITLE_MIN_SIDE_CHARS and len(right) >= TITLE_MIN_SIDE_CHARS:
+            return left, right
+
+    # Midpoint split with min-side rule enforcement
+    middle = length // 2
+    if middle < TITLE_MIN_SIDE_CHARS:
+        middle = TITLE_MIN_SIDE_CHARS
+    elif length - middle < TITLE_MIN_SIDE_CHARS:
+        middle = length - TITLE_MIN_SIDE_CHARS
+
+    return name[:middle], name[middle:]
+
+
+def get_product_name(settings) -> str:
+    """Get product name from settings or default."""
+    if settings:
+        stored_name = settings.value("product_name", "")
+        if stored_name:
+            return sanitize_product_name(stored_name)
+    return PRODUCT_NAME
+
+
+def get_script_dir():
+    """Get the correct script directory, handling PyInstaller bundling."""
+    if getattr(sys, "frozen", False):
+        # Running from PyInstaller executable
+        # The exe is deployed to drive root, scripts are in .smartdrive/scripts
+        exe_dir = Path(sys.executable).parent
+        scripts_dir = exe_dir / ".smartdrive" / "scripts"
+        if scripts_dir.exists():
+            return scripts_dir
+        # Fallback: check if scripts are bundled in the exe
+        if hasattr(sys, "_MEIPASS"):
+            bundled_scripts = Path(sys._MEIPASS) / "scripts"
+            if bundled_scripts.exists():
+                return bundled_scripts
+        # Last resort: assume scripts are next to the executable
+        return exe_dir
+    else:
+        # Running from source
+        return Path(__file__).parent
+
+
+def resolve_config_path() -> Path:
+    """
+    Resolve the path to config.json.
+
+    Returns:
+        Path to config.json in the script directory
+    """
+    return get_script_dir() / "config.json"
+
+
+def get_static_dir():
+    """
+    Get the correct static directory, handling PyInstaller bundling and deployment.
+
+    Priority order:
+    1. .smartdrive/static/ (deployed structure)
+    2. ROOT/static/ (legacy/dev structure)
+    3. PyInstaller bundled location
+    """
+    # Try to use the new resource module if available
+    try:
+        from core.resources import get_static_dir as resource_get_static_dir
+
+        return resource_get_static_dir()
+    except ImportError:
+        pass
+
+    if getattr(sys, "frozen", False):
+        # Running from PyInstaller executable
+        exe_dir = Path(sys.executable).parent
+
+        # Check deployed structure first: .smartdrive/static/
+        if exe_dir.name == "scripts" and exe_dir.parent.name == ".smartdrive":
+            deployed_static = exe_dir.parent / "static"
+            if deployed_static.exists():
+                return deployed_static
+
+        # Check for .smartdrive/static relative to exe
+        smartdrive_static = exe_dir / ".smartdrive" / "static"
+        if smartdrive_static.exists():
+            return smartdrive_static
+
+        # Legacy: static next to exe
+        static_dir = exe_dir / "static"
+        if static_dir.exists():
+            return static_dir
+
+        # Fallback: check if static is bundled
+        if hasattr(sys, "_MEIPASS"):
+            bundled_static = Path(sys._MEIPASS) / "static"
+            if bundled_static.exists():
+                return bundled_static
+
+        # Last resort
+        return exe_dir
+    else:
+        # Running from source or deployed
+        script_dir = Path(__file__).parent
+
+        # Check if we're in .smartdrive/scripts (deployed)
+        if script_dir.name == "scripts" and script_dir.parent.name == ".smartdrive":
+            launcher_root = script_dir.parent.parent
+            # Primary: .smartdrive/static/
+            deployed_static = script_dir.parent / "static"
+            if deployed_static.exists():
+                return deployed_static
+            # Fallback: ROOT/static/ (legacy)
+            legacy_static = launcher_root / "static"
+            if legacy_static.exists():
+                return legacy_static
+
+        # Fallback: assume static is next to scripts (source)
+        static_dir = script_dir.parent / "static"
+        if static_dir.exists():
+            return static_dir
+
+        # Never use cwd - log warning and return a deterministic path
+        _gui_logger.warning("Could not find static directory, using fallback")
+        return script_dir.parent / ".smartdrive" / "static"
+
+
+def get_python_exe():
+    """Get the correct python executable, handling PyInstaller bundling."""
+    if getattr(sys, "frozen", False):
+        # For bundled apps, find python.exe in the same directory or use pythonw.exe
+        exe_dir = Path(sys.executable).parent
+        python_exe = exe_dir / "python.exe"
+        if not python_exe.exists():
+            python_exe = exe_dir / "pythonw.exe"
+        if not python_exe.exists():
+            # Fallback: try to find python in PATH
+            python_exe = "python.exe"
+        return python_exe
+    else:
+        # Running from source
+        return sys.executable
+
+
+SCRIPT_DIR = get_script_dir()
+sys.path.insert(0, str(SCRIPT_DIR))
+
+# Configuration - config.json lives in .smartdrive/, not .smartdrive/scripts/
+# SCRIPT_DIR is .smartdrive/scripts/, so parent is .smartdrive/
+if SCRIPT_DIR.name == "scripts" and SCRIPT_DIR.parent.name == ".smartdrive":
+    CONFIG_FILE = SCRIPT_DIR.parent / "config.json"  # .smartdrive/config.json
+else:
+    CONFIG_FILE = SCRIPT_DIR / "config.json"  # fallback for development
+
+try:
+    from PyQt6.QtCore import QPoint, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
+    from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QTextOption
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QDialog,
+        QFileDialog,
+        QFormLayout,
+        QFrame,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QMenu,
+        QMessageBox,
+        QProgressBar,
+        QPushButton,
+        QSizePolicy,
+        QSpinBox,
+        QTabWidget,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
+except ImportError:
+    print("[X] PyQt6 not available. Please install with: pip install PyQt6 PyQt6-Qt6")
+    sys.exit(1)
+
+
+# ============================================================
+# POPUP HELPER - Use tr() at render time, not string interpolation
+# ============================================================
+
+
+def show_popup(parent, title_key: str, body_key: str, icon: str = "info", **fmt) -> QMessageBox.StandardButton:
+    """
+    Display a message box with translated title and body.
+
+    Calls tr() at RENDER time, not at call time, ensuring proper i18n.
+
+    Args:
+        parent: Parent widget
+        title_key: Translation key for the dialog title
+        body_key: Translation key for the dialog body
+        icon: One of "info", "warning", "error", "question"
+        **fmt: Format arguments passed to tr() for body_key
+
+    Returns:
+        The button clicked (QMessageBox.StandardButton)
+    """
+    lang = get_lang()
+    title = tr(title_key, lang=lang)
+    body = tr(body_key, lang=lang, **fmt) if fmt else tr(body_key, lang=lang)
+
+    icon_map = {
+        "info": QMessageBox.Icon.Information,
+        "warning": QMessageBox.Icon.Warning,
+        "error": QMessageBox.Icon.Critical,
+        "question": QMessageBox.Icon.Question,
+    }
+    msg_icon = icon_map.get(icon, QMessageBox.Icon.Information)
+
+    if icon == "question":
+        return QMessageBox.question(
+            parent,
+            title,
+            body,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+    elif icon == "error":
+        return QMessageBox.critical(parent, title, body)
+    elif icon == "warning":
+        return QMessageBox.warning(parent, title, body)
+    else:
+        return QMessageBox.information(parent, title, body)
+
+
+# ===========================================================================
+# Cross-Platform File Explorer Helper
+# ===========================================================================
+
+
+def open_in_file_manager(path: Path, parent=None) -> bool:
+    """
+    Open a directory in the system file manager.
+
+    Cross-platform implementation per AGENT_ARCHITECTURE.md Section 2.5.
+
+    Args:
+        path: Path to the directory to open (must be a Path object)
+        parent: Parent widget for error dialogs (optional)
+
+    Returns:
+        True if successfully opened, False on error
+
+    Platform behavior:
+        Windows: uses os.startfile()
+        macOS: uses subprocess with 'open'
+        Linux: uses subprocess with 'xdg-open'
+    """
+    from core.platform import get_platform
+
+    if not isinstance(path, Path):
+        path = Path(path)
+
+    if not path.exists():
+        if parent is not None:
+            show_popup(
+                parent,
+                "popup_open_failed_title",
+                "popup_open_failed_body",
+                icon="error",
+                path=str(path),
+                error="Path does not exist",
+            )
+        return False
+
+    platform = get_platform()
+
+    try:
+        if platform == "windows":
+            os.startfile(str(path))
+        elif platform == "darwin":
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            # Linux and other Unix-like
+            subprocess.run(["xdg-open", str(path)], check=False)
+        return True
+    except Exception as e:
+        log_exception("Failed to open file manager", e, level="warning")
+        if parent is not None:
+            show_popup(
+                parent, "popup_open_failed_title", "popup_open_failed_body", icon="error", path=str(path), error=str(e)
+            )
+        return False
+
+
+from datetime import datetime
+
+# Import SmartDrive functions
+from smartdrive import check_mount_status, detect_context
+
+
+def check_mount_status_veracrypt() -> bool:
+    """Check if volume is mounted using filesystem check (more reliable than VeraCrypt CLI)."""
+    try:
+        import json
+        from pathlib import Path
+
+        if not CONFIG_FILE.exists():
+            return False
+
+        with open(CONFIG_FILE, "r") as f:
+            cfg = json.load(f)
+
+        mount_letter = (cfg.get(ConfigKeys.WINDOWS) or {}).get(ConfigKeys.MOUNT_LETTER, "V").upper()
+        drive_path = Path(f"{mount_letter}:/")
+
+        # Check if drive exists and is accessible
+        if drive_path.exists() and drive_path.is_dir():
+            # Additional check: try to list directory contents to verify it's really mounted
+            try:
+                list(drive_path.iterdir())
+                return True
+            except (OSError, PermissionError):
+                # If we can't list contents, it might not be properly mounted
+                return False
+
+        return False
+
+    except Exception as e:
+        log_exception("Error checking mount status", e, level="debug")
+        return False
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+# MOUNT WORKER THREAD
+# ============================================================
+
+
+class MountWorker(QThread):
+    """Worker thread for mounting operations to prevent UI blocking."""
+
+    finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
+
+    def __init__(self, password, keyfiles=None):
+        super().__init__()
+        self.password = password
+        self.keyfiles = keyfiles or []
+
+    def run(self):
+        """Execute mount operation in background thread."""
+        try:
+            # Import here to avoid circular imports
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            script_dir = get_script_dir()
+            mount_script = script_dir / "mount.py"
+
+            if not mount_script.exists():
+                self.finished.emit(False, "worker_mount_script_not_found", {})
+                return
+
+            python_exe = get_python_exe()
+
+            # Run mount script with password (if provided)
+            cmd = [str(python_exe), str(mount_script), "--gui"]
+            if self.password:
+                cmd.extend(["--password", self.password])
+            if self.keyfiles:
+                for kf in self.keyfiles:
+                    cmd.extend(["--keyfile", kf])
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=script_dir,
+                timeout=Limits.VERACRYPT_MOUNT_TIMEOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+
+            if result.returncode == 0:
+                self.finished.emit(True, "worker_mount_success", {})
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                # Clean up error message for GUI
+                if "Traceback" in error_msg:
+                    # Extract just the main error
+                    lines = error_msg.split("\n")
+                    for line in reversed(lines):
+                        if line.strip() and not line.startswith(" "):
+                            error_msg = line.strip()
+                            break
+                self.finished.emit(False, "worker_mount_failed", {"error": error_msg})
+
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "worker_mount_timeout", {})
+        except Exception as e:
+            self.finished.emit(False, "worker_mount_error", {"error": str(e)})
+
+
+# ============================================================
+# UNMOUNT WORKER THREAD
+# ============================================================
+
+
+class UnmountWorker(QThread):
+    """Worker thread for unmounting operations."""
+
+    finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
+
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        """Execute unmount operation in background thread."""
+        try:
+            # Import here to avoid circular imports
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            script_dir = get_script_dir()
+            unmount_script = script_dir / "unmount.py"
+
+            if not unmount_script.exists():
+                self.finished.emit(False, "worker_unmount_script_not_found", {})
+                return
+
+            python_exe = get_python_exe()
+
+            # Run unmount script
+            cmd = [str(python_exe), str(unmount_script), "--gui"]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=script_dir,
+                timeout=Limits.VERACRYPT_MOUNT_TIMEOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+
+            if result.returncode == 0:
+                self.finished.emit(True, "worker_unmount_success", {})
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                # Clean up error message for GUI
+                if "Traceback" in error_msg:
+                    lines = error_msg.split("\n")
+                    for line in reversed(lines):
+                        if line.strip() and not line.startswith(" "):
+                            error_msg = line.strip()
+                            break
+                self.finished.emit(False, "worker_unmount_failed", {"error": error_msg})
+
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "worker_unmount_timeout", {})
+        except Exception as e:
+            self.finished.emit(False, "worker_unmount_error", {"error": str(e)})
+
+
+# ============================================================
+# UTILITY FUNCTIONS
+# ============================================================
+
+
+def apportion(width: int, parts: list[float], min_if_nonzero=1) -> list[int]:
+    """Apportion width into integer parts using largest remainder method.
+
+    Ensures sum of returned widths equals width exactly.
+    For any part > 0, ensures minimum width if min_if_nonzero > 0.
+    """
+    if not parts or width <= 0:
+        return [0] * len(parts)
+
+    # Calculate raw float widths
+    raw_widths = [pct * width for pct in parts]
+
+    # Apply minimum width rule for nonzero parts
+    widths = []
+    total_assigned = 0
+    for i, raw in enumerate(raw_widths):
+        if parts[i] > 0 and min_if_nonzero > 0:
+            w = max(min_if_nonzero, int(raw))
+        else:
+            w = int(raw)
+        widths.append(w)
+        total_assigned += w
+
+    # Distribute remaining pixels using largest remainder method
+    missing = width - total_assigned
+    if missing != 0:
+        # Calculate fractional remainders
+        remainders = [(i, raw_widths[i] - widths[i]) for i in range(len(widths)) if widths[i] > 0]
+        remainders.sort(key=lambda x: x[1], reverse=True)  # Largest remainder first
+
+        # Distribute missing pixels to segments with largest remainders
+        for i in range(abs(missing)):
+            if i < len(remainders):
+                idx = remainders[i][0]
+                widths[idx] += 1 if missing > 0 else -1
+                # Ensure we don't go below minimum for nonzero parts
+                if parts[idx] > 0 and widths[idx] < min_if_nonzero:
+                    widths[idx] = min_if_nonzero
+
+    return widths
+
+
+# ============================================================
+# STORAGE BAR WIDGET
+# ============================================================
+
+
+class BarWidget(QWidget):
+    """Custom widget for drawing the storage bar with rounded ends and tooltips."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(24)
+        self.storage_info = {}
+        self.setMouseTracking(True)
+        self.setToolTip("")  # Enable tooltips
+
+    def set_storage_info(self, info):
+        self.storage_info = info
+        self.update()  # Trigger repaint
+
+    def mouseMoveEvent(self, event):
+        """Show tooltip with detailed segment information."""
+        x = event.position().x()
+        rect = self.rect()
+        width = rect.width()
+
+        if width <= 0:
+            self.setToolTip("")
+            return
+
+        smartdrive = self.storage_info.get("smartdrive", {})
+        vc = self.storage_info.get("veracrypt", {})
+        total_space = smartdrive.get("total", 0) + vc.get("total", 0)
+
+        if total_space == 0:
+            self.setToolTip("")
+            return
+
+        # Calculate percentages
+        parts = [
+            smartdrive.get("used", 0) / total_space,
+            smartdrive.get("free", 0) / total_space,
+            vc.get("used", 0) / total_space,
+            vc.get("free", 0) / total_space,
+        ]
+
+        # Use apportion to get exact widths
+        widths = apportion(width, parts, min_if_nonzero=0)  # No forced minimum for tooltips
+
+        # Find which segment the mouse is over
+        current_x = 0
+        segment_names = ["SmartDrive Used", "SmartDrive Free", "VeraCrypt Used", "VeraCrypt Free"]
+
+        for i, w in enumerate(widths):
+            if w > 0 and current_x <= x < current_x + w:
+                pct = parts[i] * 100
+                if i < 2:  # SmartDrive
+                    used = smartdrive.get("used" if i == 0 else "free", 0)
+                    total = smartdrive.get("total", 0)
+                    drive = "SmartDrive"
+                else:  # VeraCrypt
+                    used = vc.get("used" if i == 2 else "free", 0)
+                    total = vc.get("total", 0)
+                    drive = "VeraCrypt"
+
+                tooltip = f"{drive} - {segment_names[i]}\n"
+                tooltip += f"Size: {self.format_size(used)}\n"
+                tooltip += f"Percent: {pct:.1f}%"
+                self.setToolTip(tooltip)
+                return
+            current_x += w
+
+        self.setToolTip("")
+
+    def format_size(self, bytes_value):
+        """Format bytes to human readable format."""
+        if bytes_value == 0:
+            return "0 B"
+
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if bytes_value < 1024.0:
+                return f"{bytes_value:.1f} {unit}"
+            bytes_value /= 1024.0
+        return f"{bytes_value:.1f} TB"
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = self.rect()
+        width = rect.width()
+        height = rect.height()
+
+        # Create rounded rectangle clip path for the entire bar
+        path = QPainterPath()
+        path.addRoundedRect(rect.toRectF(), 12, 12)
+        painter.setClipPath(path)
+
+        smartdrive = self.storage_info.get("smartdrive", {})
+        vc = self.storage_info.get("veracrypt", {})
+
+        total_space = smartdrive.get("total", 0) + vc.get("total", 0)
+        if total_space == 0:
+            # Draw empty bar background
+            painter.setBrush(QBrush(QColor(COLORS["surface"])))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect, 12, 12)
+            painter.setClipping(False)
+            return
+
+        # Calculate percentages for apportionment
+        parts = [
+            smartdrive.get("used", 0) / total_space,
+            smartdrive.get("free", 0) / total_space,
+            vc.get("used", 0) / total_space,
+            vc.get("free", 0) / total_space,
+        ]
+
+        # Use largest remainder apportionment to ensure exact width
+        widths = apportion(width, parts, min_if_nonzero=1)
+
+        # Draw segments without antialiasing to prevent seams
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        x = 0
+        colors = [COLORS["smartdrive_used"], COLORS["smartdrive_free"], COLORS["vc_used"], COLORS["vc_free"]]
+
+        for i, w in enumerate(widths):
+            if w > 0:
+                painter.setBrush(QBrush(QColor(colors[i])))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRect(x, 0, w, height)
+                x += w
+
+        painter.setClipping(False)
+
+        # Draw subtle border on top
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(COLORS["border"]), 1))
+        painter.drawRoundedRect(rect, 12, 12)
+
+
+class KeyfileDropBox(QTextEdit):
+    """Custom QTextEdit subclass that properly handles drag-and-drop for keyfiles."""
+
+    def __init__(self, on_files_dropped, on_clicked, on_drag_enter=None, on_drag_leave=None, parent=None):
+        super().__init__(parent)
+        self._on_files_dropped = on_files_dropped
+        self._on_clicked = on_clicked
+        self._on_drag_enter = on_drag_enter
+        self._on_drag_leave = on_drag_leave
+
+        self.setAcceptDrops(True)
+        # IMPORTANT for QTextEdit/QAbstractScrollArea:
+        self.viewport().setAcceptDrops(True)
+
+        self.setReadOnly(True)
+        self.setMouseTracking(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            if self._on_drag_enter:
+                self._on_drag_enter()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        event.accept()
+        if self._on_drag_leave:
+            self._on_drag_leave()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        paths = []
+        for url in event.mimeData().urls():
+            p = url.toLocalFile()
+            if p and os.path.isfile(p):
+                paths.append(p)
+
+        if paths:
+            self._on_files_dropped(paths)
+            event.acceptProposedAction()
+            if self._on_drag_leave:  # Reset highlight after drop
+                self._on_drag_leave()
+        else:
+            event.ignore()
+
+    def mousePressEvent(self, event):
+        # Left click -> browse
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_clicked()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class SmartDriveGUI(QWidget):
+    """Main SmartDrive GUI window."""
+
+    def __init__(self, instance_manager: Optional["SingleInstanceManager"] = None):
+        super().__init__()
+        self.setObjectName("mainWindow")
+        self.context = detect_context()
+        self.is_mounted = check_mount_status()
+        self.auth_dialog = None
+        self._user_moved = False  # Track manual repositioning
+        self._drag_in_progress = False
+        self.drag_position = None  # Initialize for window dragging
+        self._launcher_root = self._detect_launcher_root()
+
+        # Single instance manager (for cleanup on exit)
+        self._instance_manager = instance_manager
+
+        # Tray icon manager
+        self._tray_manager = None
+        self._close_to_tray = True  # Enable close-to-tray by default
+
+        # Track status as key for language updates
+        self.status_key = None
+
+        # Multi-keyfile support
+        self.keyfiles = []
+
+        # Load configuration (with migration if needed)
+        self.config = self.load_config()
+
+        # Apply persisted theme before building UI so initial styling uses it
+        self._apply_config_theme()
+
+        # Load language from config and set globally
+        lang = self.config.get(ConfigKeys.GUI_LANG, GUIConfig.DEFAULT_LANG)
+        set_lang(lang)
+
+        # Initialize settings using SSOT branding
+        self.settings = QSettings(Branding.PRODUCT_NAME, f"{Branding.PRODUCT_NAME}GUI")
+
+        self.init_ui()
+        self.position_window(force=True)
+
+        # Apply branding with current product name
+        current_product_name = get_product_name(self.settings)
+        self.apply_branding(current_product_name)
+
+        self.update_button_states()
+        self.update_storage_display()
+        self._update_lost_and_found_banner()
+
+        # Auto-refresh mount status every 2 seconds
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self.refresh_status)
+        self.status_timer.start(2000)
+
+        # Initialize tray icon
+        self._setup_tray_icon()
+
+    def _apply_config_theme(self) -> None:
+        """Apply the configured theme to global COLORS without touching widgets."""
+        try:
+            from core.constants import THEME_PALETTES
+
+            theme_id = self.config.get(ConfigKeys.GUI_THEME, GUIConfig.DEFAULT_THEME)
+            if theme_id not in THEME_PALETTES:
+                theme_id = GUIConfig.DEFAULT_THEME
+            global COLORS
+            COLORS.clear()
+            COLORS.update(THEME_PALETTES[theme_id])
+        except Exception as e:
+            log_exception("Error applying configured theme", e, level="error")
+
+    def _apply_dynamic_color_styles(self) -> None:
+        """Apply per-widget styles that must be refreshed on theme changes."""
+        # Frames that have their own stylesheets (must be updated explicitly)
+        if hasattr(self, "storage_frame"):
+            self.storage_frame.setStyleSheet(
+                f"""
+                QWidget#storageFrame {{
+                    background-color: {COLORS['surface']};
+                    border: none;
+                    border-radius: 8px;
+                }}
+            """
+            )
+
+        if hasattr(self, "auth_frame"):
+            self.auth_frame.setStyleSheet(
+                f"""
+                QWidget {{
+                    background-color: {COLORS['surface']};
+                    border-radius: 8px;
+                    margin: 8px 0px;
+                }}
+                QLabel {{
+                    color: {COLORS['text']};
+                    border: none;
+                    background: transparent;
+                }}
+                QLineEdit {{
+                    border: 2px solid {COLORS['border']};
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    background-color: {COLORS['surface']};
+                    color: {COLORS['text']};
+                }}
+                QLineEdit:focus {{
+                    border-color: {COLORS['primary']};
+                }}
+                QCheckBox {{
+                    color: {COLORS['text_secondary']};
+                    background: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 16px;
+                    height: 16px;
+                }}
+                QCheckBox::indicator:unchecked {{
+                    border: 2px solid {COLORS['border']};
+                    border-radius: 3px;
+                    background: {COLORS['surface']};
+                }}
+                QCheckBox::indicator:checked {{
+                    background: {COLORS['primary']};
+                    border: 1px solid {COLORS['primary']};
+                    border-radius: 3px;
+                }}
+                QPushButton {{
+                    background-color: {COLORS['primary']};
+                    color: {COLORS['text']};
+                    border: none;
+                    border-radius: 8px;
+                    padding: 10px 16px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background-color: {COLORS['primary_hover']};
+                }}
+                QPushButton#cancelButton {{
+                    background-color: {COLORS['warning']};
+                    color: {COLORS['text']};
+                }}
+            """
+            )
+
+        # Header labels
+        if hasattr(self, "title_left_label"):
+            self.title_left_label.setStyleSheet(f"color: {COLORS['text']}; border: none;")
+        if hasattr(self, "title_right_label"):
+            self.title_right_label.setStyleSheet(f"color: {COLORS['text']}; border: none;")
+        if hasattr(self, "version_label"):
+            self.version_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+
+        # Close button (colors are theme-controlled)
+        if hasattr(self, "close_btn"):
+            self.close_btn.setStyleSheet(
+                f"""
+QPushButton {{
+    color: {COLORS['close_fg']};
+    background: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 0px;
+}}
+QPushButton:hover {{
+    color: {COLORS['close_hover']};
+}}
+QPushButton:pressed {{
+    color: {COLORS['close_pressed']};
+}}
+"""
+            )
+
+        # Tools button (overrides global QPushButton styles)
+        if hasattr(self, "tools_btn"):
+            self.tools_btn.setStyleSheet(
+                f"""
+            QPushButton {{
+                background-color: {COLORS['background']};
+                border: none;
+                border-radius: 6px;
+                color: {COLORS['text_secondary']};
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['border']};
+            }}
+        """
+            )
+
+        # Storage labels
+        if hasattr(self, "total_size_label"):
+            self.total_size_label.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; border: none; background: transparent;"
+            )
+        if hasattr(self, "launch_info"):
+            self.launch_info.setStyleSheet(f"color: {COLORS['launch_used']}; border: none; padding: 0px; margin: 0px;")
+        if hasattr(self, "vc_info"):
+            self.vc_info.setStyleSheet(f"color: {COLORS['vc_used']}; border: none; padding: 0px; margin: 0px;")
+        if hasattr(self, "launch_free_label"):
+            self.launch_free_label.setStyleSheet(
+                f"color: {COLORS['launch_free']}; border: none; padding: 0px; margin: 0px; background: transparent;"
+            )
+        if hasattr(self, "vc_free_label"):
+            self.vc_free_label.setStyleSheet(
+                f"color: {COLORS['vc_free']}; border: none; padding: 0px; margin: 0px; background: transparent;"
+            )
+
+        # Auth dialog labels
+        if hasattr(self, "key_hint_label"):
+            self.key_hint_label.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; font-style: italic; margin: 0px; padding: 0px;"
+            )
+        if hasattr(self, "password_label"):
+            self.password_label.setStyleSheet(f"color: {COLORS['text']};")
+        if hasattr(self, "keyfile_label"):
+            self.keyfile_label.setStyleSheet(f"color: {COLORS['text']};")
+        if hasattr(self, "keyfile_status_label"):
+            self.keyfile_status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        if hasattr(self, "recovery_label"):
+            self.recovery_label.setText(
+                f'<a href="#" style="color: {COLORS["text_secondary"]};">{tr("label_forgot_password", lang=get_lang())}</a>'
+            )
+
+    def _setup_tray_icon(self) -> None:
+        """Initialize system tray icon for this drive."""
+        try:
+            _gui_logger.info("Setting up tray icon...")
+
+            if not is_tray_available():
+                _gui_logger.info("System tray not available, skipping tray setup")
+                return
+
+            # Get drive_id from config
+            drive_id = get_drive_id(self.config)
+            if not drive_id:
+                _gui_logger.warning("No drive_id in config, skipping tray setup")
+                return
+
+            # Get drive name for tooltip
+            drive_name = self.config.get(ConfigKeys.DRIVE_NAME) or PRODUCT_NAME
+
+            # Get tray icon path with comprehensive logging
+            _gui_logger.info(f"Resolving tray icon path...")
+            _gui_logger.info(f"  Launcher root: {self._launcher_root}")
+
+            # Try multiple icon sources in order
+            icon_path = None
+
+            # 1. Try ICON_UNMOUNTED (which is now LOGO_main.ico)
+            icon_path = self.get_static_asset(FileNames.ICON_UNMOUNTED)
+            if icon_path:
+                _gui_logger.info(f"  Found via ICON_UNMOUNTED: {icon_path}")
+
+            # 2. Fallback: Try LOGO_main.ico directly
+            if not icon_path:
+                icon_path = self.get_static_asset("LOGO_main.ico")
+                if icon_path:
+                    _gui_logger.info(f"  Found via LOGO_main.ico: {icon_path}")
+
+            # 3. Fallback: Try PNG version
+            if not icon_path:
+                icon_path = self.get_static_asset("LOGO_main.png")
+                if icon_path:
+                    _gui_logger.info(f"  Found via LOGO_main.png: {icon_path}")
+
+            # 4. Try resource module if available
+            if not icon_path:
+                try:
+                    from core.resources import get_app_icon_path
+
+                    icon_path = get_app_icon_path(self._launcher_root)
+                    if icon_path:
+                        _gui_logger.info(f"  Found via resource module: {icon_path}")
+                except ImportError:
+                    pass
+
+            if not icon_path:
+                _gui_logger.error("CRITICAL: No tray icon found!")
+                _gui_logger.error("  Tray icon will not display correctly")
+            else:
+                _gui_logger.info(f"  Selected tray icon: {icon_path}")
+                _gui_logger.info(f"  Icon exists: {icon_path.exists()}")
+
+            # Create tray manager
+            self._tray_manager = TrayIconManager(
+                drive_id=drive_id,
+                drive_name=drive_name,
+                on_open=self._on_tray_open,
+                on_quit=self._on_tray_quit,
+                icon_path=icon_path,
+                parent=self,
+            )
+
+            # Show tray icon
+            if self._tray_manager.show():
+                _gui_logger.info(f"startup.tray.init.end: success for drive {drive_name}")
+            else:
+                _gui_logger.warning("startup.tray.init.end: failed")
+
+        except Exception as e:
+            log_exception("Error setting up tray icon", e, level="warning")
+
+    def _on_close_button_clicked(self) -> None:
+        """Handle GUI close/exit button click - hides to tray, does NOT quit."""
+        _gui_logger.info("ui.exit_clicked")
+        self.close()  # Triggers closeEvent which hides to tray
+
+    def _on_tray_open(self) -> None:
+        """Handle tray 'Open' action - show and focus window."""
+        _gui_logger.info("tray.action.open")
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        # On Windows, sometimes need extra activation
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+
+    def _on_tray_quit(self) -> None:
+        """Handle tray 'Quit' action - actually quit the application."""
+        _gui_logger.info("tray.action.quit")
+        self._close_to_tray = False  # Disable close-to-tray for actual quit
+        self._cleanup_and_quit()
+
+    def _cleanup_and_quit(self) -> None:
+        """Clean up resources and quit the application."""
+        _gui_logger.info("tray.action.quit.cleanup.begin")
+
+        # Stop status timer
+        if hasattr(self, "status_timer") and self.status_timer:
+            self.status_timer.stop()
+
+        # Clean up tray
+        if self._tray_manager:
+            self._tray_manager.cleanup()
+            self._tray_manager = None
+
+        # Release single instance lock
+        if self._instance_manager:
+            self._instance_manager.release()
+            self._instance_manager = None
+
+        # Quit application
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.instance().quit()
+
+    def _update_tray_icon_state(self) -> None:
+        """Update tray icon and window/taskbar icon based on mount status."""
+        try:
+            if self.is_mounted:
+                icon_path = self.get_static_asset(FileNames.ICON_MOUNTED)
+            else:
+                icon_path = self.get_static_asset(FileNames.ICON_UNMOUNTED)
+
+            if icon_path:
+                # Update tray icon
+                if self._tray_manager:
+                    self._tray_manager.set_icon(icon_path)
+
+                # Update window/taskbar icon
+                # This makes the taskbar icon change with mount state
+                from PyQt6.QtGui import QIcon
+
+                self.setWindowIcon(QIcon(str(icon_path)))
+        except Exception as e:
+            log_exception("Error updating tray icon state", e, level="debug")
+
+    def closeEvent(self, event):
+        """Handle window close - hide to tray if enabled, otherwise quit."""
+        if self._close_to_tray and self._tray_manager and self._tray_manager.is_visible:
+            # Hide to tray instead of closing
+            _gui_logger.info("ui.exit_clicked -> hiding window (tray continues)")
+            _gui_logger.info("ui.window.hide")
+            event.ignore()
+            self.hide()
+            self._tray_manager.show_message(
+                PRODUCT_NAME,
+                (
+                    tr("tray_minimized_message", lang=get_lang())
+                    if "tray_minimized_message" in TRANSLATIONS.get(get_lang(), {})
+                    else "Running in background. Click tray icon to restore."
+                ),
+                icon_type="information",
+                duration_ms=3000,
+            )
+        else:
+            # Actually close - clean up
+            if hasattr(self, "status_timer") and self.status_timer:
+                self.status_timer.stop()
+            event.accept()
+
+    def showEvent(self, event):
+        """Ensure proper layout after the window becomes visible."""
+        super().showEvent(event)
+        QTimer.singleShot(0, self._post_show_layout_fix)
+
+    def _post_show_layout_fix(self):
+        try:
+            if self.layout():
+                self.layout().activate()
+            # Use clamped resize instead of adjustSize to avoid geometry warnings
+            hint = self.sizeHint()
+            new_height = max(self.minimumHeight(), min(hint.height(), self.maximumHeight()))
+            new_width = max(self.minimumWidth(), min(hint.width(), self.maximumWidth()))
+            self.resize(new_width, new_height)
+            self.update_storage_display()
+            # Optionally re-position if needed
+            # self.position_window()
+        except Exception as e:
+            log_exception("Error in post-show layout fix", e)
+
+    def set_keyfiles(self, paths: list[str], append: bool = False):
+        """Set keyfiles with validation and deduplication."""
+        import os
+
+        # Normalize + validate + de-dup
+        norm = []
+        for p in paths:
+            if not p:
+                continue
+            p = os.path.normpath(p)
+            if os.path.isfile(p):
+                norm.append(p)
+
+        if append:
+            merged = self.keyfiles + norm
+        else:
+            merged = norm
+
+        # De-dup while preserving order
+        seen = set()
+        self.keyfiles = [p for p in merged if not (p in seen or seen.add(p))]
+
+        self.render_keyfiles()
+
+    def render_keyfiles(self):
+        """Update keyfile display based on current keyfiles list."""
+        # Prevent word wrapping for clean display
+        self.keyfile_edit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+
+        if not self.keyfiles:
+            # Hide status label
+            self.keyfile_status_label.setVisible(False)
+
+            # Restore placeholder HTML
+            self.keyfile_edit.setHtml(
+                f"""
+                <div style=\"color: #B8D6C9; text-align: center; padding: 20px;\">
+                    <div style=\"font-size: 24px; margin-bottom: 10px;\">&#128193;</div>
+                    <div>{tr('keyfile_drop_hint', lang=get_lang())}</div>
+                    <div style=\"font-size: 12px; margin-top: 5px;\">{tr('keyfile_drop_supports_multiple', lang=get_lang())}</div>
+                </div>
+                """
+            )
+            self.keyfile_edit.setStyleSheet(
+                f"""
+                QTextEdit {{
+                    border: 2px dashed {COLORS['border']};
+                    border-radius: 8px;
+                    background-color: {COLORS['surface']};
+                    color: {COLORS['text']};
+                    padding: 10px;
+                }}
+            """
+            )
+            self.keyfile_edit.setReadOnly(True)
+            self.keyfile_edit.setToolTip("")
+            return
+
+        # Show status label with count
+        count = len(self.keyfiles)
+        if count == 1:
+            self.keyfile_status_label.setText(tr("keyfile_selected_one"))
+        else:
+            self.keyfile_status_label.setText(tr("keyfile_selected_many", count=count))
+        self.keyfile_status_label.setVisible(True)
+
+        # Show compact list with basenames and tooltips
+        import os
+
+        if count == 1:
+            display_text = os.path.basename(self.keyfiles[0])
+            self.keyfile_edit.setToolTip(self.keyfiles[0])
+        else:
+            names = [os.path.basename(p) for p in self.keyfiles]
+            max_lines = 3
+            head = names[:max_lines]
+            rest = len(names) - len(head)
+            display_text = "\n".join(head) + (f"\n… +{rest} more" if rest > 0 else "")
+            self.keyfile_edit.setToolTip("\n".join(self.keyfiles))
+
+        self.keyfile_edit.setPlainText(display_text)
+        self.keyfile_edit.setStyleSheet(
+            f"""
+            QTextEdit {{
+                border: 2px solid {COLORS['primary']};
+                border-radius: 8px;
+                background-color: {COLORS['surface']};
+                color: {COLORS['text']};
+                padding: 10px;
+            }}
+        """
+        )
+        self.keyfile_edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.keyfile_edit.setReadOnly(True)
+
+    def load_config(self) -> dict:
+        """Load configuration from config.json with automatic migration."""
+        try:
+            # Use migration-aware config loader
+            config, migration_result = load_or_create_config(CONFIG_FILE)
+
+            # Log migration info
+            if migration_result.migrated:
+                _gui_logger.info(f"Config migration performed: {migration_result.changes}")
+
+            if migration_result.drive_id:
+                _gui_logger.info(f"Drive ID: {migration_result.drive_id[:8]}...")
+
+            return config
+        except Exception as e:
+            log_exception("Error loading config", e, level="warning")
+            # Fallback to basic load for robustness
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    return json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                return {}
+
+    def _detect_launcher_root(self) -> Path:
+        """Resolve launcher root deterministically for static assets."""
+        script_dir = get_script_dir()
+        if script_dir.name == "scripts" and script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+            return script_dir.parent.parent
+        return script_dir.parent
+
+    def get_static_asset(self, filename: str) -> Optional[Path]:
+        """
+        Return static asset path if it exists.
+
+        Priority order:
+        1. .smartdrive/static/ (deployed)
+        2. ROOT/static/ (legacy via Paths.static_file)
+        3. get_static_dir() fallback
+        """
+        # Primary: .smartdrive/static/ (deployed structure)
+        deployed = self._launcher_root / ".smartdrive" / "static" / filename
+        if deployed.exists():
+            return deployed
+
+        # Secondary: via Paths class (handles legacy ROOT/static/)
+        via_paths = Paths.static_file(self._launcher_root, filename)
+        if via_paths.exists():
+            return via_paths
+
+        # Fallback: get_static_dir() helper
+        fallback = get_static_dir() / filename
+        if fallback.exists():
+            return fallback
+
+        return None
+
+    def get_drive_info(self) -> str:
+        """Get drive identification information."""
+        if not self.config:
+            return ""
+
+        drive_info = []
+
+        # Add mount letter/drive info based on platform (NOT launch context)
+        import platform
+
+        if platform.system() == "Windows":
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "Unknown")
+            volume_path = self.config.get("windows", {}).get("volume_path", "")
+            if volume_path.startswith("\\\\.\\PhysicalDrive"):
+                drive_num = volume_path.replace("\\\\.\\PhysicalDrive", "")
+                drive_info.append(f"Drive {drive_num}")
+            drive_info.append(f"Mount: {mount_letter}:")
+        else:
+            mount_point = self.config.get("unix", {}).get("mount_point", "Unknown")
+            drive_info.append(f"Mount: {mount_point}")
+
+        return " | ".join(drive_info)
+
+    def get_drive_title(self) -> str:
+        """Get simple drive title for display."""
+        if not self.config:
+            return "SmartDrive"
+
+        # Get mount letter/point based on platform
+        import platform
+
+        if platform.system() == "Windows":
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            if mount_letter:
+                return f"SmartDrive {mount_letter}:"
+        else:
+            mount_point = self.config.get("unix", {}).get("mount_point", "")
+            if mount_point:
+                return f"SmartDrive {mount_point}"
+
+        return "SmartDrive"
+
+    def get_disk_usage(self, path: str) -> tuple[int, int, int]:
+        """Get disk usage information (total, used, free) in bytes."""
+        try:
+            import shutil
+
+            usage = shutil.disk_usage(path)
+            return usage.total, usage.used, usage.free
+        except (OSError, FileNotFoundError):
+            return 0, 0, 0
+
+    def get_storage_info(self) -> dict:
+        """Get storage information for SmartDrive partition and VeraCrypt volume."""
+        info = {
+            "smartdrive": {"total": 0, "used": 0, "free": 0, "percent": 0},
+            "veracrypt": {"total": 0, "used": 0, "free": 0, "percent": 0},
+        }
+
+        # Get SmartDrive partition info (where the exe is running from)
+        exe_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+        try:
+            launch_total, launch_used, launch_free = self.get_disk_usage(str(exe_dir))
+            # Validate data makes sense
+            if launch_total == 0 or launch_total < launch_used + launch_free:
+                print(
+                    f"Warning: Invalid {Branding.PRODUCT_NAME} data - total: {launch_total}, used: {launch_used}, free: {launch_free}"
+                )
+                launch_total, launch_used, launch_free = 0, 0, 0
+        except Exception as e:
+            print(f"Warning: Could not get {Branding.PRODUCT_NAME} info: {e}")
+            launch_total, launch_used, launch_free = 0, 0, 0
+
+        info["smartdrive"] = {
+            "total": launch_total,
+            "used": launch_used,
+            "free": launch_free,
+            "percent": int((launch_used / launch_total * 100) if launch_total > 0 else 0),
+        }
+
+        # Get VeraCrypt volume info (if mounted)
+        if self.is_mounted and self.config:
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            if mount_letter:
+                vc_path = f"{mount_letter}:\\"
+                try:
+                    vc_total, vc_used, vc_free = self.get_disk_usage(vc_path)
+                    # Validate data makes sense
+                    if vc_total == 0 or vc_total < vc_used + vc_free:
+                        print(f"Warning: Invalid VC drive data - total: {vc_total}, used: {vc_used}, free: {vc_free}")
+                        vc_total, vc_used, vc_free = 0, 0, 0
+                except Exception as e:
+                    print(f"Warning: Could not get VC drive info: {e}")
+                    vc_total, vc_used, vc_free = 0, 0, 0
+
+                info["veracrypt"] = {
+                    "total": vc_total,
+                    "used": vc_used,
+                    "free": vc_free,
+                    "percent": int((vc_used / vc_total * 100) if vc_total > 0 else 0),
+                }
+
+        return info
+
+    def init_ui(self):
+        """Initialize the user interface."""
+        drive_title = self.get_drive_title()
+        # Simple window title
+        import platform
+
+        if self.config and platform.system() == "Windows":
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            window_title = f"{PRODUCT_NAME} {mount_letter}:" if mount_letter else PRODUCT_NAME
+        else:
+            window_title = PRODUCT_NAME
+        self.setWindowTitle(window_title)
+
+        # Set window icon deterministically from static assets
+        icon_path = self.get_static_asset("LOGO_main.ico") or self.get_static_asset("LOGO_main.png")
+        if icon_path:
+            self.setWindowIcon(QIcon(str(icon_path)))
+
+        self.setMinimumSize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)  # Ensure initial size
+
+        # DO NOT set maximum height constraint here - let the layout handle it
+        # Setting hard maxHeight causes QWindowsWindow::setGeometry warnings when
+        # the auth_frame is shown/hidden because the layout can't expand/contract properly.
+        # Instead, we clamp during resize operations in show_auth_section/hide_auth_area.
+
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # Main layout
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)  # Increased margins
+        layout.setSpacing(15)  # Increased spacing
+
+        # Create top container for header+storage+buttons (fixed block)
+        top_container = QWidget()
+        top_layout = QVBoxLayout(top_container)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(15)
+
+        # Title with icon and version
+        title_container = QWidget()
+        title_grid = QGridLayout(title_container)
+        title_grid.setContentsMargins(0, 0, 0, 0)
+        title_grid.setSpacing(2)  # Small spacing between rows
+        title_grid.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Title row (Left + Logo + Right)
+        title_row_widget = QWidget()
+        title_layout = QHBoxLayout(title_row_widget)
+        title_layout.setSpacing(5)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Left title label
+        self.title_left_label = QLabel()
+        self.title_left_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        self.title_left_label.setStyleSheet(f"color: {COLORS['text']}; border: none;")
+        left_stack_widget = QWidget()
+        left_stack_layout = QVBoxLayout(left_stack_widget)
+        left_stack_layout.setContentsMargins(0, 0, 0, 0)
+        left_stack_layout.setSpacing(0)
+        left_stack_layout.addStretch(1)
+        left_stack_layout.addWidget(self.title_left_label, 0, Qt.AlignmentFlag.AlignRight)
+        left_placeholder = QWidget()
+        left_stack_layout.addWidget(left_placeholder, 0, Qt.AlignmentFlag.AlignRight)
+        title_layout.addWidget(left_stack_widget)
+
+        # Icon label
+        self.title_icon_label = QLabel()
+        icon_path = self.get_static_asset("LOGO_main.png")
+        if icon_path:
+            pixmap = QPixmap(str(icon_path))
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(
+                    72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                )
+                self.title_icon_label.setPixmap(scaled_pixmap)
+                self.title_icon_label.setText("")
+        else:
+            self.title_icon_label.setText(tr("icon_drive", lang=get_lang()))
+            self.title_icon_label.setFont(QFont("Segoe UI", 20))
+        title_layout.addWidget(self.title_icon_label)
+
+        # Right title label stacked with version
+        self.title_right_label = QLabel()
+        self.title_right_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+
+        # Version label (secondary, smaller font)
+        self.version_label = QLabel()
+        self.version_label.setObjectName("versionLabel")
+        self.version_label.setText(f"v{APP_VERSION}")
+        self.version_label.setFont(QFont("Segoe UI", 8))
+        self.version_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        version_font = self.version_label.font()
+        version_font.setPointSize(max(1, version_font.pointSize() - 1))
+        self.version_label.setFont(version_font)
+
+        left_placeholder.setFixedHeight(self.version_label.sizeHint().height())
+
+        right_stack = QWidget()
+        right_stack_layout = QVBoxLayout(right_stack)
+        right_stack_layout.setContentsMargins(0, 0, 0, 0)
+        right_stack_layout.setSpacing(0)
+        right_stack_layout.addStretch(1)
+        right_stack_layout.addWidget(self.title_right_label, 0, Qt.AlignmentFlag.AlignLeft)
+        right_stack_layout.addWidget(self.version_label, 0, Qt.AlignmentFlag.AlignRight)
+        title_layout.addWidget(right_stack, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # Enforce vertical centering of each column in title_layout
+        title_layout.setAlignment(left_stack_widget, Qt.AlignmentFlag.AlignVCenter)
+        title_layout.setAlignment(self.title_icon_label, Qt.AlignmentFlag.AlignVCenter)
+        title_layout.setAlignment(right_stack, Qt.AlignmentFlag.AlignVCenter)
+
+        # Header close control (lightweight, top-left overlay)
+        self.close_btn = QPushButton(tr("btn_close"))
+        self.close_btn.setFixedSize(28, 28)
+        self.close_btn.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        self.close_btn.setToolTip(tr("tooltip_exit", lang=get_lang()))
+        # Close button hides to tray, NOT quit app - use tray menu "Quit" to exit
+        self.close_btn.clicked.connect(self._on_close_button_clicked)
+
+        # Add title row and close button to the same grid cell so the button floats top-left
+        title_grid.addWidget(title_row_widget, 0, 0)
+        # title_grid.addWidget(self.close_btn, 0, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        # self.close_btn.raise_()
+
+        # Instead, position the close button absolutely at top-left of the window
+        self.close_btn.setParent(self)
+        self.close_btn.move(0, 0)
+        self.close_btn.raise_()
+
+        # Version now placed within right_stack; no grid placement
+
+        # Add title container to layout
+        top_layout.addWidget(title_container)
+
+        # Status indicator with fixed-height container
+        self.status_container = QWidget()
+        self.status_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        status_container_layout = QVBoxLayout(self.status_container)
+        status_container_layout.setContentsMargins(0, 0, 0, 0)
+        status_container_layout.setSpacing(0)
+
+        self.status_label = QLabel()
+        self.status_label.setFont(QFont("Segoe UI", 10))
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Calculate fixed height from font metrics
+        font_metrics = self.status_label.fontMetrics()
+        status_height = font_metrics.height() + 8  # Single line + padding
+        self.status_container.setFixedHeight(status_height)
+
+        status_container_layout.addWidget(self.status_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        top_layout.addWidget(self.status_container)
+
+        # Storage visualization
+        self.storage_frame = QWidget()
+        self.storage_frame.setObjectName("storageFrame")
+        self.storage_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        storage_layout = QVBoxLayout()
+        storage_layout.setSpacing(8)
+        storage_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Total size label at the top
+        self.total_size_label = QLabel()
+        self.total_size_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.total_size_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; border: none; background: transparent;"
+        )
+        self.total_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        storage_layout.addWidget(self.total_size_label)
+
+        # Combined storage bar and info below
+        # Combined storage bar (sectioned into 4 parts)
+        self.storage_bar_widget = BarWidget()
+        self.storage_bar_widget.setFixedHeight(24)  # Increased height
+
+        # Storage bar is now a custom widget
+
+        bar_and_info_widget = QWidget()
+        bar_and_info_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar_and_info_layout = QVBoxLayout()
+        bar_and_info_layout.setSpacing(4)
+        bar_and_info_layout.setContentsMargins(0, 0, 0, 0)
+
+        bar_and_info_layout.addWidget(self.storage_bar_widget)
+
+        # Storage info labels - 4-column grid with open buttons
+        # Layout: [launcher labels] [launcher btn] [vc btn] [vc labels]
+        storage_info_grid = QGridLayout()
+        storage_info_grid.setHorizontalSpacing(4)
+        storage_info_grid.setVerticalSpacing(4)
+        storage_info_grid.setContentsMargins(0, 0, 0, 0)
+
+        # Configure column stretch: labels expand, buttons fixed
+        storage_info_grid.setColumnStretch(0, 1)  # launcher labels
+        storage_info_grid.setColumnStretch(1, 0)  # launcher open button
+        storage_info_grid.setColumnStretch(2, 0)  # vc open button
+        storage_info_grid.setColumnStretch(3, 1)  # vc labels
+
+        # Row 0: Main drive info labels with open buttons
+        self.launch_info = QLabel()
+        self.launch_info.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.launch_info.setStyleSheet(f"color: {COLORS['launch_used']}; border: none; padding: 0px; margin: 0px;")
+        self.launch_info.setFixedHeight(16)
+        self.launch_info.setWordWrap(False)
+        self.launch_info.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        storage_info_grid.addWidget(self.launch_info, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        # Launcher open button (icon-only)
+        self.btn_open_launcher = QPushButton()
+        self.btn_open_launcher.setFixedSize(22, 22)
+        self.btn_open_launcher.setFlat(True)
+        self.btn_open_launcher.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_launcher.setToolTip(tr("tooltip_open_launcher_drive", lang=get_lang()))
+        # Try to use Qt standard icon, fallback to emoji
+        try:
+            open_icon = self.style().standardIcon(self.style().StandardPixmap.SP_DirOpenIcon)
+            if not open_icon.isNull():
+                self.btn_open_launcher.setIcon(open_icon)
+                self.btn_open_launcher.setIconSize(QSize(16, 16))
+            else:
+                self.btn_open_launcher.setText("📂")
+        except Exception:
+            self.btn_open_launcher.setText("📂")
+        self.btn_open_launcher.clicked.connect(self._on_open_launcher_clicked)
+        storage_info_grid.addWidget(
+            self.btn_open_launcher, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        # VC open button (icon-only)
+        self.btn_open_vc = QPushButton()
+        self.btn_open_vc.setFixedSize(22, 22)
+        self.btn_open_vc.setFlat(True)
+        self.btn_open_vc.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_vc.setToolTip(tr("tooltip_open_mounted_volume", lang=get_lang()))
+        # Try to use Qt standard icon, fallback to emoji
+        try:
+            open_icon = self.style().standardIcon(self.style().StandardPixmap.SP_DirOpenIcon)
+            if not open_icon.isNull():
+                self.btn_open_vc.setIcon(open_icon)
+                self.btn_open_vc.setIconSize(QSize(16, 16))
+            else:
+                self.btn_open_vc.setText("📂")
+        except Exception:
+            self.btn_open_vc.setText("📂")
+        self.btn_open_vc.clicked.connect(self._on_open_vc_clicked)
+        self.btn_open_vc.setEnabled(False)  # Initially disabled until mounted
+        storage_info_grid.addWidget(self.btn_open_vc, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.vc_info = QLabel()
+        self.vc_info.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.vc_info.setStyleSheet(f"color: {COLORS['vc_used']}; border: none; padding: 0px; margin: 0px;")
+        self.vc_info.setFixedHeight(16)
+        self.vc_info.setWordWrap(False)
+        self.vc_info.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        storage_info_grid.addWidget(self.vc_info, 0, 3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        # Row 1: Free space labels (span columns for alignment)
+        self.launch_free_label = QLabel()
+        self.launch_free_label.setFont(QFont("Segoe UI", 8))
+        launch_free_css = (
+            f"color: {COLORS['launch_free']}; border: none; padding: 0px; margin: 0px; background: transparent;"
+        )
+        self.launch_free_label.setStyleSheet(launch_free_css)
+        self.launch_free_label.setFixedHeight(14)
+        self.launch_free_label.setWordWrap(False)
+        self.launch_free_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        storage_info_grid.addWidget(
+            self.launch_free_label, 1, 0, 1, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        self.vc_free_label = QLabel()
+        self.vc_free_label.setFont(QFont("Segoe UI", 8))
+        vc_free_css = f"color: {COLORS['vc_free']}; border: none; padding: 0px; margin: 0px; background: transparent;"
+        self.vc_free_label.setStyleSheet(vc_free_css)
+        self.vc_free_label.setFixedHeight(14)
+        self.vc_free_label.setWordWrap(False)
+        self.vc_free_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        storage_info_grid.addWidget(
+            self.vc_free_label, 1, 2, 1, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        bar_and_info_layout.addLayout(storage_info_grid)
+        bar_and_info_widget.setLayout(bar_and_info_layout)
+        storage_layout.addWidget(bar_and_info_widget)
+
+        self.storage_frame.setLayout(storage_layout)
+        top_layout.addWidget(self.storage_frame)
+
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(8)
+
+        # Mount button
+        self.mount_btn = QPushButton(tr("btn_mount", lang=get_lang()))
+        self.mount_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.mount_btn.setFixedSize(140, 45)  # Fixed size to ensure text fits
+        self.mount_btn.clicked.connect(self.mount_drive)
+        button_layout.addWidget(self.mount_btn)
+
+        # Unmount button
+        self.unmount_btn = QPushButton(tr("btn_unmount", lang=get_lang()))
+        self.unmount_btn.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.unmount_btn.setFixedSize(140, 45)  # Fixed size to ensure text fits
+        self.unmount_btn.clicked.connect(self.unmount_drive)
+        button_layout.addWidget(self.unmount_btn)
+
+        top_layout.addLayout(button_layout)
+
+        # Authentication area (initially hidden)
+        self.auth_frame = QWidget()
+        self.auth_frame.setVisible(False)
+        self.auth_frame.setMinimumHeight(250)
+        self.auth_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.auth_frame.setStyleSheet(
+            f"""
+            QWidget {{
+                background-color: {COLORS['surface']};
+                border-radius: 8px;
+                margin: 8px 0px;
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+                border: none;
+                background: transparent;
+            }}
+            QLineEdit {{
+                border: 2px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                background-color: {COLORS['surface']};
+                color: {COLORS['text']};
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['primary']};
+            }}
+            QCheckBox {{
+                color: {COLORS['text_secondary']};
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
+                border: 1px solid {COLORS['border']};
+                background: {COLORS['surface']};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {COLORS['primary']};
+                border: 1px solid {COLORS['primary']};
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNCA5TDEuNSAxMC41TDMgMTEuNUw0IDlMTEuNSA0LjVMMTAgMyIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+);
+            }}
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton[text*="Cancel"] {{
+                background-color: {COLORS['warning']};
+                border: none;
+                color: {COLORS['text']};
+            }}
+            QPushButton[text*="Cancel"]:hover {{
+                background-color: #B88A3A;  /* Darker warning */
+            }}
+        """
+        )
+
+        auth_layout = QVBoxLayout()
+        auth_layout.setSpacing(0)
+        auth_layout.setContentsMargins(4, 0, 4, 0)
+        # Auth widgets (must be instance attributes so apply_language/theme can update them)
+        self.key_hint_label = QLabel(tr("label_hardware_key_hint", lang=get_lang()))
+        self.key_hint_label.setWordWrap(True)
+        self.key_hint_label.setVisible(self.is_gpg_mode())
+
+        self.password_label = QLabel(tr("label_password", lang=get_lang()))
+        self.password_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.password_label.setStyleSheet(f"color: {COLORS['text']};")
+
+        self.password_edit = QLineEdit()
+        self.password_edit.setPlaceholderText(tr("placeholder_password", lang=get_lang()))
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_edit.setMinimumHeight(30)
+
+        self.show_password_cb = QCheckBox(tr("label_show_password", lang=get_lang()))
+        self.show_password_cb.stateChanged.connect(self.toggle_password_visibility)
+
+        self.keyfile_label = QLabel(tr("label_keyfile", lang=get_lang()))
+        self.keyfile_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.keyfile_label.setStyleSheet(f"color: {COLORS['text']};")
+
+        self.keyfile_status_label = QLabel()
+        self.keyfile_status_label.setVisible(False)
+
+        keyfile_layout = QVBoxLayout()
+        keyfile_layout.setContentsMargins(0, 0, 0, 0)
+        keyfile_layout.setSpacing(0)
+
+        self.keyfile_edit = KeyfileDropBox(
+            on_files_dropped=lambda paths: self.set_keyfiles(paths, append=False),
+            on_clicked=self.browse_keyfiles,
+            on_drag_enter=lambda: self.set_keyfile_highlight(True),
+            on_drag_leave=lambda: self.set_keyfile_highlight(False),
+        )
+        self.keyfile_edit.setMinimumHeight(80)
+
+        # Hardware keyfiles (drop area)
+        self.keyfile_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.keyfile_edit.customContextMenuRequested.connect(self.show_keyfile_context_menu)
+        self.keyfile_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.keyfile_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Create wrapper container with overlay for status badge
+        badge_wrap = QWidget()
+        grid = QGridLayout(badge_wrap)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+
+        grid.addWidget(self.keyfile_edit, 0, 0)
+
+        # Status badge in top-right, floating above
+        self.keyfile_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        self.keyfile_status_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; background: transparent; padding: 0px 4px;"
+        )
+        self.keyfile_status_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        grid.addWidget(
+            self.keyfile_status_label, 0, 0, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+        )
+
+        # Ensure stable height
+        badge_wrap.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.keyfile_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        keyfile_layout.addWidget(badge_wrap)
+
+        # Initialize the keyfile display
+        self.render_keyfiles()
+
+        # Auth buttons
+        auth_button_layout = QHBoxLayout()
+        auth_button_layout.setSpacing(8)
+
+        self.cancel_auth_btn = QPushButton(tr("btn_cancel_auth", lang=get_lang()))
+        self.cancel_auth_btn.clicked.connect(self.hide_auth_area)
+        self.cancel_auth_btn.setFont(QFont("Segoe UI", 10))
+        self.cancel_auth_btn.setFixedHeight(50)
+
+        self.confirm_mount_btn = QPushButton(tr("btn_confirm_mount", lang=get_lang()))
+        self.confirm_mount_btn.clicked.connect(self.confirm_mount)
+        self.confirm_mount_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
+        self.confirm_mount_btn.setFixedHeight(50)
+        self.confirm_mount_btn.setDefault(True)
+
+        auth_button_layout.addWidget(self.cancel_auth_btn)
+        auth_button_layout.addWidget(self.confirm_mount_btn)
+
+        # Recovery link
+        self.recovery_label = QLabel(
+            f'<a href="#" style="color: {COLORS["text_secondary"]};">{tr("label_forgot_password", lang=get_lang())}</a>'
+        )
+        self.recovery_label.setFont(QFont("Segoe UI", 9))
+        self.recovery_label.setStyleSheet("margin: 0px; padding: 0px;")
+        self.recovery_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.recovery_label.linkActivated.connect(self.show_recovery)
+
+        # Password section with label, field, and checkbox
+        auth_layout.addWidget(self.key_hint_label)
+        auth_layout.addWidget(self.password_label)
+        auth_layout.addWidget(self.password_edit)
+        auth_layout.addWidget(self.show_password_cb)
+
+        # Keyfile section
+        auth_layout.addWidget(self.keyfile_label)
+        auth_layout.addLayout(keyfile_layout)
+
+        auth_layout.addLayout(auth_button_layout)
+
+        # Recovery link container
+        recovery_container = QWidget()
+        recovery_container_layout = QVBoxLayout()
+        recovery_container_layout.setSpacing(0)
+        recovery_container_layout.setContentsMargins(0, 0, 0, 0)
+        recovery_container.setLayout(recovery_container_layout)
+        recovery_container.setStyleSheet("border: none; background: transparent;")
+        recovery_container_layout.addWidget(self.recovery_label)
+
+        auth_layout.addWidget(recovery_container)
+
+        self.auth_frame.setLayout(auth_layout)
+
+        # Add top container, auth frame, and stretch to main layout
+        layout.addWidget(top_container)
+
+        # Lost and found banner (shown when enabled in config)
+        self.lost_and_found_banner = QWidget()
+        self.lost_and_found_banner.setVisible(False)
+        laf_layout = QHBoxLayout(self.lost_and_found_banner)
+        laf_layout.setContentsMargins(8, 8, 8, 8)
+        laf_layout.setSpacing(8)
+
+        # Icon
+        laf_icon_label = QLabel("📍")
+        laf_icon_label.setFont(QFont("Segoe UI Emoji", 14))
+        laf_icon_label.setStyleSheet("border: none; background: transparent;")
+        laf_layout.addWidget(laf_icon_label)
+
+        # Message
+        self.laf_message_label = QLabel()
+        self.laf_message_label.setFont(QFont("Segoe UI", 10))
+        self.laf_message_label.setWordWrap(True)
+        self.laf_message_label.setStyleSheet(f"color: {COLORS['text']}; border: none; background: transparent;")
+        laf_layout.addWidget(self.laf_message_label, 1)
+
+        # Style the banner
+        self.lost_and_found_banner.setStyleSheet(
+            f"""
+            QWidget {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+            }}
+        """
+        )
+
+        # Check if lost and found is enabled and set visibility
+        self._update_lost_and_found_banner()
+
+        layout.addWidget(self.lost_and_found_banner)
+        layout.addWidget(self.auth_frame)
+        layout.addStretch(1)  # Absorb slack at bottom
+
+        # Tools and close buttons layout
+        tools_layout = QHBoxLayout()
+        tools_layout.setSpacing(8)
+
+        # Tools button with arrow
+        self.tools_btn = QPushButton(tr("btn_tools", lang=get_lang()))
+        self.tools_btn.setFixedSize(50, 36)
+        self.tools_btn.setFont(QFont("Segoe UI", 12))
+        self.tools_btn.setToolTip(tr("tooltip_settings", lang=get_lang()))
+        self.tools_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['background']};
+                border: none;
+                border-radius: 6px;
+                color: {COLORS['text_secondary']};
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['border']};
+            }}
+        """
+        )
+        self.tools_btn.clicked.connect(self.show_tools_menu)
+        tools_layout.addWidget(self.tools_btn)
+
+        layout.addLayout(tools_layout)
+
+        self.setLayout(layout)
+
+        # Apply styling
+        self.apply_styling()
+        self._apply_dynamic_color_styles()
+
+    def apply_styles(self):
+        """Reapply styles and dynamic widgets after theme changes."""
+        self.apply_styling()
+        self._apply_dynamic_color_styles()
+        self.render_keyfiles()
+        # Refresh dynamic labels that depend on COLORS/state
+        try:
+            self.update_button_states()
+            self.update_storage_display()
+        except Exception as e:
+            log_exception("Error refreshing button states/storage display", e)
+
+    def apply_styling(self):
+        """Apply consistent styling to the window."""
+        self.setStyleSheet(
+            f"""
+            QWidget#mainWindow {{
+                background-color: {COLORS['background']};
+                border: none;
+                border-radius: {CORNER_RADIUS}px;
+            }}
+
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: {COLORS['text']};
+                border: none;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-weight: 500;
+            }}
+
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+
+            QPushButton:disabled {{
+                background-color: {COLORS['border']};
+                color: {COLORS['text_disabled']};
+            }}
+
+            QLabel {{
+                color: {COLORS['text']};
+                border: none;
+            }}
+        """
+        )
+
+        # Apply specific styling for flat open buttons (icon-only)
+        open_btn_style = f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 2px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['separator']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['border']};
+            }}
+            QPushButton:disabled {{
+                background-color: transparent;
+                opacity: 0.5;
+            }}
+        """
+        if hasattr(self, "btn_open_launcher"):
+            self.btn_open_launcher.setStyleSheet(open_btn_style)
+        if hasattr(self, "btn_open_vc"):
+            self.btn_open_vc.setStyleSheet(open_btn_style)
+
+    def position_window(self, force: bool = False):
+        """Position window in upper right corner unless user has moved it."""
+        # Use WINDOW'S current screen, not primaryScreen() - important for multi-monitor
+        screen = self.screen()
+        if not screen:
+            screen = QApplication.primaryScreen()  # Fallback only
+        if not screen:
+            return
+
+        screen_geometry = screen.availableGeometry()
+
+        # Ensure window fits on screen
+        window_width = self.width()
+        window_height = self.height()
+
+        if self._user_moved and not force:
+            # Only clamp to visible area without snapping back to default
+            current_x, current_y = self.x(), self.y()
+            max_x = screen_geometry.x() + max(0, screen_geometry.width() - window_width)
+            max_y = screen_geometry.y() + max(0, screen_geometry.height() - window_height)
+            clamped_x = min(max(current_x, screen_geometry.x()), max_x)
+            clamped_y = min(max(current_y, screen_geometry.y()), max_y)
+            if clamped_x != current_x or clamped_y != current_y:
+                self.move(clamped_x, clamped_y)
+            return
+
+        x = max(screen_geometry.x(), screen_geometry.x() + screen_geometry.width() - window_width - WINDOW_MARGIN)
+        y = max(screen_geometry.y(), WINDOW_MARGIN)
+
+        self.move(x, y)
+
+    def apply_branding(self, product_name: str) -> None:
+        """Apply product branding to UI elements."""
+        product_name = sanitize_product_name(product_name)
+
+        # OS-level window title
+        self.setWindowTitle(product_name)
+
+        # Header title (split)
+        left, right = split_for_logo(product_name)
+        self.title_left_label.setText(left)
+        self.title_right_label.setText(right)
+        self.title_right_label.setVisible(bool(right))
+
+        # Version label (always from version.py)
+        self.version_label.setText(f"v{APP_VERSION}")
+
+        # Update any other UI elements that reference the product name
+        # (Currently handled by existing PRODUCT_NAME usage)
+
+    def set_status(self, key: str, style: str = None) -> None:
+        """
+        Set status label by key (for immediate language updates).
+
+        Args:
+            key: Translation key for status message
+            style: Optional stylesheet override
+        """
+        self.status_key = key
+        self.status_label.setText(tr(key, lang=get_lang()))
+        if style:
+            self.status_label.setStyleSheet(style)
+
+    def update_storage_labels(self, lang: str = None) -> None:
+        """
+        Update storage 'Free: X GB' labels using specified language.
+
+        Args:
+            lang: Language code (uses get_lang() if None)
+        """
+        if lang is None:
+            lang = get_lang()
+
+        try:
+            # Re-render existing storage data with new language
+            if hasattr(self, "launch_free_label") and hasattr(self, "_last_smartdrive_free"):
+                free_size = self._last_smartdrive_free
+                if free_size is not None:
+                    self.launch_free_label.setText(tr("size_free", lang=lang, size=self.format_size(free_size)))
+
+            if hasattr(self, "vc_free_label") and hasattr(self, "_last_vc_free"):
+                free_size = self._last_vc_free
+                if free_size is not None:
+                    self.vc_free_label.setText(tr("size_free", lang=lang, size=self.format_size(free_size)))
+        except (RuntimeError, AttributeError):
+            pass
+
+    def apply_language(self, lang_code: str = None) -> None:
+        """
+        Apply language to ALL UI text elements immediately.
+        Called on startup and when language changes.
+
+        Args:
+            lang_code: Language code to apply (uses get_lang() if None)
+        """
+        if lang_code is None:
+            lang_code = get_lang()
+
+        # NOTE: The logo icon is NOT updated here. It's a static asset loaded
+        # via get_static_asset() and should NOT change with language.
+        # Only update the emoji fallback if there's no pixmap set.
+        # In PyQt6, pixmap() never returns None - check isNull() instead
+        if hasattr(self, "title_icon_label"):
+            pixmap = self.title_icon_label.pixmap()
+            if pixmap is None or pixmap.isNull():
+                # No static logo loaded, using emoji fallback - skip updating
+                # to avoid any language-dependent behavior
+                pass
+
+        # Update main buttons
+        self.mount_btn.setText(tr("btn_mount", lang=lang_code))
+        self.unmount_btn.setText(tr("btn_unmount", lang=lang_code))
+        self.tools_btn.setText(tr("btn_tools", lang=lang_code))
+
+        # Update tooltips
+        self.close_btn.setToolTip(tr("tooltip_exit", lang=lang_code))
+        self.tools_btn.setToolTip(tr("tooltip_settings", lang=lang_code))
+
+        # Update file explorer button tooltips
+        if hasattr(self, "btn_open_launcher"):
+            self.btn_open_launcher.setToolTip(tr("tooltip_open_launcher_drive", lang=lang_code))
+        if hasattr(self, "btn_open_vc"):
+            self.btn_open_vc.setToolTip(tr("tooltip_open_mounted_volume", lang=lang_code))
+
+        # Update status label from status_key (not mount state)
+        if self.status_key:
+            self.status_label.setText(tr(self.status_key, lang=lang_code))
+        elif hasattr(self, "is_mounted") and self.is_mounted is None:
+            self.set_status("status_config_not_found")
+        elif hasattr(self, "is_mounted") and self.is_mounted:
+            self.set_status("status_volume_mounted")
+        else:
+            self.set_status("status_volume_not_mounted")
+
+        # Update authentication dialog buttons if present
+        if hasattr(self, "cancel_auth_btn"):
+            self.cancel_auth_btn.setText(tr("btn_cancel_auth", lang=lang_code))
+        if hasattr(self, "confirm_mount_btn"):
+            self.confirm_mount_btn.setText(tr("btn_confirm_mount", lang=lang_code))
+
+        # Update labels
+        if hasattr(self, "key_hint_label"):
+            self.key_hint_label.setText(tr("label_hardware_key_hint", lang=lang_code))
+        if hasattr(self, "password_label"):
+            self.password_label.setText(tr("label_password", lang=lang_code))
+        if hasattr(self, "password_edit"):
+            self.password_edit.setPlaceholderText(tr("placeholder_password", lang=lang_code))
+        if hasattr(self, "show_password_cb"):
+            self.show_password_cb.setText(tr("label_show_password", lang=lang_code))
+        if hasattr(self, "keyfile_label"):
+            self.keyfile_label.setText(tr("label_keyfile", lang=lang_code))
+        if hasattr(self, "recovery_label"):
+            self.recovery_label.setText(
+                f'<a href="#" style="color: {COLORS["text_secondary"]};">{tr("label_forgot_password", lang=lang_code)}</a>'
+            )
+
+        # Update storage labels
+        self.update_storage_labels(lang=lang_code)
+
+        # Re-render keyfile display to update count text
+        if hasattr(self, "keyfiles"):
+            self.render_keyfiles()
+
+    def apply_theme(self, theme_id: str) -> None:
+        """
+        Apply a color theme to the application immediately.
+        Updates global COLORS dict and re-applies all styles.
+
+        Args:
+            theme_id: Theme identifier ("green", "blue", "dark", "light")
+        """
+        try:
+            from core.constants import THEME_PALETTES, ConfigKeys
+
+            # Validate theme_id
+            if theme_id not in THEME_PALETTES:
+                theme_id = GUIConfig.DEFAULT_THEME
+
+            # Update global COLORS dict from selected theme palette
+            global COLORS
+            COLORS.clear()
+            COLORS.update(THEME_PALETTES[theme_id])
+
+            # Re-apply all stylesheets with new colors
+            try:
+                self.apply_styles()
+            except Exception as e:
+                print(f"[!] Error while reapplying styles: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+            # Persist theme selection to config
+            if not hasattr(self, "config"):
+                self.config = self.load_config()
+            self.config[ConfigKeys.GUI_THEME] = theme_id
+
+            # Save config immediately (atomic write for data integrity)
+            try:
+                config_path = get_script_dir() / "config.json"
+                write_config_atomic(config_path, self.config)
+            except Exception as e:
+                log_exception("Error saving theme config", e)
+
+            # Force repaint of all widgets
+            try:
+                self.update()
+                if hasattr(self, "central_widget"):
+                    self.central_widget.update()
+            except Exception as e:
+                log_exception("Error forcing widget repaint", e)
+        except Exception as e:
+            log_exception(f"apply_theme failed for theme '{theme_id}'", e, level="error")
+            try:
+                QMessageBox.critical(
+                    self, tr("title_error", lang=get_lang()), tr("error_apply_theme", lang=get_lang(), error=str(e))
+                )
+            except Exception as e2:
+                log_exception("Error showing apply_theme error dialog", e2)
+
+    def _update_lost_and_found_banner(self):
+        """Update the lost and found banner visibility and message."""
+        if not hasattr(self, "lost_and_found_banner"):
+            return
+
+        try:
+            laf_config = self.config.get("lost_and_found", {}) if self.config else {}
+            enabled = laf_config.get("enabled", False)
+            message = laf_config.get("message", "")
+
+            if enabled and message:
+                self.laf_message_label.setText(message)
+                self.lost_and_found_banner.setVisible(True)
+            else:
+                self.lost_and_found_banner.setVisible(False)
+        except Exception as e:
+            log_exception("Error updating lost and found banner", e)
+            self.lost_and_found_banner.setVisible(False)
+
+    def update_button_states(self):
+        """Update button enabled states based on mount status."""
+        mount_status = check_mount_status_veracrypt()
+
+        # Handle None case (config not found)
+        if mount_status is None:
+            self.is_mounted = False
+            self.mount_btn.setEnabled(True)
+            self.unmount_btn.setEnabled(False)
+            self.status_label.setText(tr("status_config_not_found"))
+            self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+            return
+
+        self.is_mounted = mount_status
+
+        drive_info = self.get_drive_info()
+
+        if self.is_mounted:
+            self.mount_btn.setEnabled(False)
+            self.unmount_btn.setEnabled(True)
+            self.tools_btn.setEnabled(True)  # Enable tools when mounted
+            self.set_status("status_volume_mounted")
+            self.status_label.setStyleSheet(
+                f"""
+                QLabel {{
+                    color: {COLORS['success']};
+                    background: transparent;
+                    border: none;
+                    padding: 2px 0px;
+                    font-weight: 500;
+                    font-size: 13px;
+                }}
+                """
+            )
+        else:
+            self.mount_btn.setEnabled(True)
+            self.unmount_btn.setEnabled(False)
+            self.tools_btn.setEnabled(True)  # Enable tools when not mounted
+            self.set_status("status_volume_not_mounted")
+            self.status_label.setStyleSheet(
+                f"""
+                QLabel {{
+                    color: {COLORS['text_secondary']};
+                    background: transparent;
+                    border: none;
+                    padding: 2px 0px;
+                    font-weight: 400;
+                    font-size: 13px;
+                }}
+                """
+            )
+
+        self.update_storage_display()
+        self._update_open_button_states()
+
+    def refresh_status(self):
+        """Refresh mount status and storage display periodically."""
+        current_status = check_mount_status_veracrypt()
+        if current_status != self.is_mounted:
+            self.is_mounted = current_status
+            self.update_button_states()
+            # Update tray icon to reflect mount state
+            self._update_tray_icon_state()
+        self.update_storage_display()
+
+    def update_drive_icon(self):
+        """Update the drive icon display with software icon."""
+        try:
+            # Try to load the SmartDrive software icon deterministically
+            icon_path = self.get_static_asset("LOGO_main.png")
+
+            if icon_path and icon_path.exists():
+                pixmap = QPixmap(str(icon_path))
+                if not pixmap.isNull():
+                    # Scale to fit the label
+                    scaled_pixmap = pixmap.scaled(
+                        64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.drive_icon_label.setPixmap(scaled_pixmap)
+                    # Clear text to prevent emoji fallback from showing alongside pixmap
+                    self.drive_icon_label.setText("")
+                    return
+
+            # Fallback to software icon emoji
+            self.drive_icon_label.setText(tr("icon_drive", lang=get_lang()))
+            self.drive_icon_label.setFont(QFont("Segoe UI", 24))
+            self.drive_icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        except Exception as e:
+            # Final fallback
+            self.drive_icon_label.setText(tr("icon_drive", lang=get_lang()))
+            self.drive_icon_label.setFont(QFont("Segoe UI", 24))
+            self.drive_icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def format_size(self, bytes_value):
+        """Format bytes to appropriate unit with integer value."""
+        if bytes_value == 0:
+            return "0 B"
+
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        value = float(bytes_value)
+        unit_index = 0
+
+        while value >= 1000 and unit_index < len(units) - 1:
+            value /= 1000
+            unit_index += 1
+
+        # Round to nearest integer
+        int_value = round(value)
+        if int_value == 0 and unit_index > 0:
+            # If rounded to 0, try next unit
+            value *= 1000
+            unit_index -= 1
+            int_value = round(value)
+
+        return f"{int_value} {units[unit_index]}"
+
+    def format_used_total(self, used_bytes, total_bytes):
+        """Format used/total bytes with appropriate unit."""
+        if total_bytes == 0:
+            return "0/0 B"
+
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        value_total = float(total_bytes)
+        unit_index = 0
+
+        while value_total >= 1000 and unit_index < len(units) - 1:
+            value_total /= 1000
+            unit_index += 1
+
+        # If total < 1 in current unit, use smaller unit
+        if value_total < 1 and unit_index > 0:
+            value_total *= 1000
+            unit_index -= 1
+
+        value_used = float(used_bytes) / (1000**unit_index)
+
+        # Round function
+        def round_value(v):
+            if v >= 10:
+                return int(round(v))
+            else:
+                return round(v, 1)
+
+        used_display = round_value(value_used)
+        total_display = round_value(value_total)
+
+        return f"{used_display}/{total_display} {units[unit_index]}"
+
+    def get_storage_info(self):
+        """Get current storage information."""
+        return self.storage_info
+
+    def is_gpg_mode(self) -> bool:
+        try:
+            mode = (self.config or {}).get("mode", "")
+            return "gpg" in str(mode).lower()
+        except Exception as e:
+            log_exception("Error checking GPG mode", e, level="debug")
+            return False
+
+    def get_drive_info(self):
+        """Get drive storage information."""
+        import os
+        import shutil
+
+        storage_info = {
+            "smartdrive": {"total": 0, "used": 0, "free": 0},
+            "veracrypt": {"total": 0, "used": 0, "free": 0},
+        }
+
+        try:
+            # Get SmartDrive (launch drive) info
+            script_dir = get_script_dir()
+            drive_path = script_dir.parent.parent  # Go up to drive root
+
+            if drive_path.exists():
+                stat = shutil.disk_usage(str(drive_path))
+                storage_info["smartdrive"] = {"total": stat.total, "used": stat.used, "free": stat.free}
+        except Exception as e:
+            log_exception("Error getting SmartDrive storage info", e, level="debug")
+
+        try:
+            # Get VeraCrypt volume info if mounted
+            if self.config and self.is_mounted:
+                mount_letter = self.config.get("windows", {}).get("mount_letter", "V")
+                mount_path = Path(f"{mount_letter}:\\")
+
+                if mount_path.exists():
+                    stat = shutil.disk_usage(str(mount_path))
+                    storage_info["veracrypt"] = {"total": stat.total, "used": stat.used, "free": stat.free}
+        except Exception as e:
+            log_exception("Error getting VeraCrypt storage info", e, level="debug")
+
+        return storage_info
+
+    def update_storage_display(self):
+        """Update the storage bar sections and info labels."""
+        try:
+            storage_info = self.get_drive_info()
+
+            # Set storage info on the bar widget
+            self.storage_bar_widget.set_storage_info(storage_info)
+
+            # Store for tooltip access
+            self.storage_info = storage_info
+
+            # Get mount letter
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "V") if self.config else "V"
+
+            # Get drive letter for launch drive
+            try:
+                drive_path = Path(sys.executable).parent
+                drive_letter = drive_path.drive.upper().rstrip(":")
+                if not drive_letter:
+                    # Fallback for network/UNC paths
+                    drive_letter = "Local"
+            except Exception as e:
+                log_exception("Error getting drive letter", e, level="debug")
+                drive_letter = "Local"
+
+            # Calculate section widths based on actual widget width
+            total_bar_width = self.storage_bar_widget.width()
+            if total_bar_width <= 0:
+                total_bar_width = 300  # Fallback
+
+            smartdrive = storage_info["smartdrive"]
+            vc = storage_info["veracrypt"]
+
+            # Calculate total space for proportional sizing
+            total_space = smartdrive["total"] + (vc["total"] if vc["total"] > 0 and self.is_mounted else 0)
+
+            # Set total size label
+            if total_space > 0:
+                self.total_size_label.setText(self.format_size(total_space))
+            else:
+                self.total_size_label.setText("")
+
+            # Set window title
+            self.setWindowTitle(PRODUCT_NAME)
+
+            # Update info labels with available space
+            if smartdrive["total"] > 0:
+                launch_text = f"{drive_letter}: {self.format_used_total(smartdrive['used'], smartdrive['total'])}"
+                self.launch_info.setText(launch_text)
+                self._last_smartdrive_free = smartdrive["free"]  # Cache for language updates
+                self.launch_free_label.setText(
+                    tr("size_free", lang=get_lang(), size=self.format_size(smartdrive["free"]))
+                )
+                self.launch_info.setVisible(True)
+                self.launch_free_label.setVisible(True)
+                # Force immediate update
+                self.launch_info.update()
+                self.launch_free_label.update()
+            else:
+                self._last_smartdrive_free = None
+                self.launch_info.setText(tr("info_unavailable", lang=get_lang()))
+                self.launch_free_label.setText("")
+                self.launch_info.setVisible(True)
+                self.launch_free_label.setVisible(False)
+                self.launch_info.update()
+
+            if vc["total"] > 0 and self.is_mounted:
+                vc_text = f"{mount_letter}: {self.format_used_total(vc['used'], vc['total'])}"
+                self.vc_info.setText(vc_text)
+                self._last_vc_free = vc["free"]  # Cache for language updates
+                self.vc_free_label.setText(tr("size_free", lang=get_lang(), size=self.format_size(vc["free"])))
+                self.vc_info.setVisible(True)
+                self.vc_free_label.setVisible(True)
+                self.vc_info.update()
+                self.vc_free_label.update()
+            else:
+                self._last_vc_free = None
+                # Keep visible with empty text to maintain layout stability
+                self.vc_info.setText(" ")
+                self.vc_free_label.setText(" ")
+                self.vc_info.setVisible(True)
+                self.vc_free_label.setVisible(True)
+                self.vc_info.update()
+                self.vc_free_label.update()
+
+            # Force layout update
+            self.update()
+
+            if smartdrive["total"] > 0 and total_space > 0:
+                # Update the custom bar widget
+                self.storage_bar_widget.set_storage_info(storage_info)
+        except (RuntimeError, AttributeError):
+            # Widget may have been deleted or not initialized yet
+            pass
+
+    # ===========================================================================
+    # File Explorer Open Button Handlers
+    # ===========================================================================
+
+    def _on_open_launcher_clicked(self) -> None:
+        """Open the launcher drive root in the system file manager."""
+        launcher_path = self._launcher_root
+        if launcher_path and launcher_path.exists():
+            open_in_file_manager(launcher_path, parent=self)
+        else:
+            show_popup(
+                self,
+                "popup_open_failed_title",
+                "popup_open_failed_body",
+                icon="error",
+                path=str(launcher_path) if launcher_path else "Unknown",
+                error="Launcher drive path not found",
+            )
+
+    def _on_open_vc_clicked(self) -> None:
+        """Open the mounted VeraCrypt volume in the system file manager."""
+        from core.platform import is_windows
+
+        if not self.is_mounted:
+            return  # Should not happen since button is disabled when not mounted
+
+        vc_path = None
+        if is_windows():
+            mount_letter = self.config.get("windows", {}).get("mount_letter", "") if self.config else ""
+            if mount_letter:
+                vc_path = Path(f"{mount_letter}:/")
+        else:
+            # Unix: use mount point from config
+            mount_point = self.config.get("unix", {}).get("mount_point", "") if self.config else ""
+            if mount_point:
+                vc_path = Path(mount_point)
+
+        if vc_path and vc_path.exists():
+            open_in_file_manager(vc_path, parent=self)
+        else:
+            show_popup(
+                self,
+                "popup_open_failed_title",
+                "popup_open_failed_body",
+                icon="error",
+                path=str(vc_path) if vc_path else "Unknown",
+                error="Mounted volume path not accessible",
+            )
+
+    def _update_open_button_states(self) -> None:
+        """Update the enabled state of file explorer open buttons."""
+        # Launcher button: enabled if launcher path exists
+        launcher_enabled = self._launcher_root is not None and self._launcher_root.exists()
+        if hasattr(self, "btn_open_launcher"):
+            self.btn_open_launcher.setEnabled(launcher_enabled)
+
+        # VC button: enabled only when volume is mounted and path is accessible
+        vc_enabled = False
+        if self.is_mounted and self.config:
+            from core.platform import is_windows
+
+            if is_windows():
+                mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+                if mount_letter:
+                    vc_path = Path(f"{mount_letter}:/")
+                    vc_enabled = vc_path.exists()
+            else:
+                mount_point = self.config.get("unix", {}).get("mount_point", "")
+                if mount_point:
+                    vc_path = Path(mount_point)
+                    vc_enabled = vc_path.exists()
+
+        if hasattr(self, "btn_open_vc"):
+            self.btn_open_vc.setEnabled(vc_enabled)
+
+    def mount_drive(self):
+        """Handle mount button click - show inline authentication area or mount directly."""
+        mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+        # Update GPG hint visibility per mode
+        if hasattr(self, "key_hint_label"):
+            try:
+                self.key_hint_label.setVisible(self.is_gpg_mode())
+            except Exception as e:
+                log_exception("Error setting GPG hint visibility in mount_drive", e, level="debug")
+                self.key_hint_label.setVisible(False)
+
+        if mode == SecurityMode.GPG_PW_ONLY.value:
+            # GPG password-only mode: no password input needed, mount directly
+            self.set_status("status_mounting_gpg")
+            self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+
+            # Start mount operation in background thread
+            self.mount_worker = MountWorker("")  # Empty password for GPG mode
+            self.mount_worker.finished.connect(self.on_mount_finished)
+            self.mount_worker.start()
+
+            # Disable main buttons while mounting
+            self.mount_btn.setEnabled(False)
+            self.unmount_btn.setEnabled(False)
+            self.tools_btn.setEnabled(False)
+        else:
+            # Other modes: show authentication area for password input
+            self.auth_frame.setVisible(True)
+            self.auth_frame.setMaximumHeight(16777215)  # Reset max height
+            self.password_edit.setFocus()
+            self.password_edit.clear()
+
+            # Show/hide keyfile field based on mode
+            if mode == SecurityMode.PW_KEYFILE.value:
+                self.keyfile_edit.setVisible(True)
+                self.keyfile_label.setVisible(True)
+                self.render_keyfiles()  # Ensure proper styling
+            else:
+                self.keyfile_edit.setVisible(False)
+                self.keyfile_label.setVisible(False)
+
+            # Let layout calculate proper size
+            self.layout().activate()
+            hint = self.sizeHint()
+
+            # Get screen-aware max height using WINDOW'S current screen (not primaryScreen)
+            # This fixes QWindowsWindow::setGeometry warnings on multi-monitor setups
+            screen = self.screen()  # Use window's screen, not QApplication.primaryScreen()
+            if screen:
+                available = screen.availableGeometry()
+                screen_max_height = int(available.height() * 0.8)  # Allow up to 80% of screen
+            else:
+                screen_max_height = int(WINDOW_HEIGHT * 2)
+
+            # Clamp to screen bounds to avoid geometry warnings
+            new_height = max(self.minimumHeight(), min(hint.height(), screen_max_height))
+            new_width = max(self.minimumWidth(), hint.width())
+
+            self.resize(new_width, new_height)
+            self.position_window()
+
+            # Disable main buttons while auth is shown
+            self.mount_btn.setEnabled(False)
+            self.unmount_btn.setEnabled(False)
+
+    def hide_auth_area(self):
+        """Hide the authentication area and re-enable buttons."""
+        self.auth_frame.setMaximumHeight(0)
+        self.auth_frame.setVisible(False)
+
+        # Let layout calculate proper size
+        self.layout().activate()
+        hint = self.sizeHint()
+
+        # Get screen-aware max height using WINDOW'S current screen
+        screen = self.screen()
+        if screen:
+            available = screen.availableGeometry()
+            screen_max_height = int(available.height() * 0.8)
+        else:
+            screen_max_height = int(WINDOW_HEIGHT * 2)
+
+        new_height = max(self.minimumHeight(), min(hint.height(), screen_max_height))
+        new_width = max(self.minimumWidth(), hint.width())
+
+        self.resize(new_width, new_height)
+        self.position_window()
+
+        self.update_button_states()
+        self.tools_btn.setEnabled(True)
+
+    def confirm_mount(self):
+        """Handle confirm mount button click."""
+        password = self.password_edit.text()
+        keyfiles = self.keyfiles if self.keyfile_edit.isVisible() else None
+
+        mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+
+        # Validate inputs based on mode
+        if mode == SecurityMode.PW_KEYFILE.value:
+            if not keyfiles or len(keyfiles) == 0:
+                QMessageBox.warning(
+                    self,
+                    tr("popup_keyfile_required_title", lang=get_lang()),
+                    tr("popup_keyfile_required_body", lang=get_lang()),
+                )
+                return
+            # Empty password is allowed for pw_keyfile mode
+        else:
+            if not password:
+                QMessageBox.warning(
+                    self,
+                    tr("popup_password_required_title", lang=get_lang()),
+                    tr("popup_password_required_body", lang=get_lang()),
+                )
+                return
+
+        # Hide auth area and resize window back - use clamped resize
+        self.auth_frame.setVisible(False)
+        self.layout().activate()
+        hint = self.sizeHint()
+        new_height = max(self.minimumHeight(), min(hint.height(), self.maximumHeight()))
+        new_width = max(self.minimumWidth(), min(hint.width(), self.maximumWidth()))
+        self.resize(new_width, new_height)
+        self.position_window()
+        self.tools_btn.setEnabled(True)
+
+        # Start mount operation
+        self.set_status("status_mounting")
+        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+
+        # Start mount operation in background thread
+        self.mount_worker = MountWorker(password, keyfiles)
+        self.mount_worker.finished.connect(self.on_mount_finished)
+        self.mount_worker.start()
+
+    def toggle_password_visibility(self, state):
+        """Toggle password field visibility."""
+        if state == 2:  # Qt.CheckState.Checked.value (2)
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def show_keyfile_context_menu(self, position):
+        """Show context menu for keyfile field."""
+        if not self.keyfile_edit.isVisible():
+            return
+
+        menu = QMenu(self)
+
+        # Clear action
+        clear_action = menu.addAction(tr("menu_clear_keyfiles", lang=get_lang()))
+        clear_action.triggered.connect(lambda: self.set_keyfiles([], append=False))
+
+        # Show menu at cursor position
+        menu.exec(self.keyfile_edit.mapToGlobal(position))
+
+    def browse_keyfiles(self):
+        """Open file browser to select keyfiles."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        mods = QApplication.keyboardModifiers()
+        append = bool(mods & Qt.KeyboardModifier.ControlModifier)
+
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, tr("dialog_select_keyfiles", lang=get_lang()), "", "All Files (*)"
+        )
+        if file_paths:
+            self.set_keyfiles(file_paths, append=append)
+
+    def set_keyfile_highlight(self, highlight: bool):
+        """Set highlight state for keyfile drop area."""
+        if highlight:
+            self.keyfile_edit.setStyleSheet(
+                f"""
+                QTextEdit {{
+                    border: 2px solid {COLORS['primary']};
+                    border-radius: 8px;
+                    background-color: #162B24;
+                    color: #E6F2ED;
+                }}
+                QTextEdit:focus {{
+                    border-color: #2FA36B;
+                }}
+            """
+            )
+        else:
+            # Reset to normal style
+            self.render_keyfiles()
+
+    def show_recovery(self):
+        """Show recovery options by opening Settings dialog to Recovery tab."""
+        # Open settings dialog and switch to Recovery tab
+        dialog = SettingsDialog(self.config, self)
+
+        # Find the Recovery tab index
+        recovery_tab_index = -1
+        for i in range(dialog.tab_widget.count()):
+            if dialog.tab_widget.tabText(i) == tr("settings_recovery", lang=get_lang()):
+                recovery_tab_index = i
+                break
+
+        if recovery_tab_index >= 0:
+            dialog.tab_widget.setCurrentIndex(recovery_tab_index)
+
+        # Show the dialog
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Reload config if settings were saved
+            try:
+                self.config = load_or_create_config()
+                self.update_display()
+            except Exception as e:
+                log_exception("Error reloading config after settings", e, level="warning")
+
+    def check_recovery_kit_available(self):
+        """Check if recovery kit is available for this drive."""
+        try:
+            # Check recovery config in config.json
+            recovery_config = self.config.get("recovery", {})
+            if recovery_config.get("enabled") and not recovery_config.get("used"):
+                container_path = recovery_config.get("container_path", "")
+                if container_path and Path(container_path).exists():
+                    return True
+
+            # Also check default locations
+            script_dir = get_script_dir()
+            recovery_dir = script_dir.parent / "recovery"
+
+            # Look for recovery container
+            container_file = recovery_dir / "recovery_container.bin"
+            if container_file.exists():
+                return True
+
+            return False
+
+        except Exception as e:
+            log_exception("Error checking recovery availability", e, level="debug")
+            return False
+
+    def unmount_drive(self):
+        """Handle unmount button click."""
+        # Disable buttons during unmount
+        self.mount_btn.setEnabled(False)
+        self.unmount_btn.setEnabled(False)
+        self.set_status("status_unmounting")
+        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+
+        # Start unmount operation in background thread
+        self.unmount_worker = UnmountWorker()
+        self.unmount_worker.finished.connect(self.on_unmount_finished)
+        self.unmount_worker.start()
+
+    @pyqtSlot(bool, str, dict)
+    def on_unmount_finished(self, success, message_key, message_args):
+        """Handle unmount operation completion."""
+        if success:
+            self.set_status("status_unmount_success")
+            self.status_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold;")
+            # Removed popup - status label shows success
+        else:
+            self.set_status("status_unmount_failed")
+            self.status_label.setStyleSheet(f"color: {COLORS['error']}; font-weight: bold;")
+            translated_message = tr(message_key, lang=get_lang(), **message_args)
+            QMessageBox.critical(self, tr("popup_unmount_failed_title", lang=get_lang()), translated_message)
+
+        # Re-enable buttons and refresh status after a longer delay
+        QTimer.singleShot(2000, self.update_button_states)  # 2 second delay to let filesystem settle
+
+    @pyqtSlot(bool, str, dict)
+    def on_mount_finished(self, success, message_key, message_args):
+        """Handle mount operation completion."""
+        if success:
+            self.set_status("status_mount_success")
+            self.status_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold;")
+            # Removed popup - status label shows success
+        else:
+            self.set_status("status_mount_failed")
+            self.status_label.setStyleSheet(f"color: {COLORS['error']}; font-weight: bold;")
+            translated_message = tr(message_key, lang=get_lang(), **message_args)
+            QMessageBox.critical(self, tr("popup_mount_failed_title", lang=get_lang()), translated_message)
+
+            # Show recovery link if GPG_PW_ONLY mode (user doesn't know actual password)
+            if self.config and self.config.get("security", {}).get("mode") == SecurityMode.GPG_PW_ONLY.value:
+                # Make recovery label visible after failure
+                if hasattr(self, "recovery_label"):
+                    self.recovery_label.setVisible(True)
+
+        # Re-enable buttons and refresh status after a delay
+        QTimer.singleShot(2000, self.update_button_states)  # 2 second delay to let filesystem settle
+
+    def show_settings(self):
+        """Show settings dialog."""
+        dialog = SettingsDialog(self.settings, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Settings were saved, reload config and update UI
+            self.config = self.load_config()
+
+            # Update lost and found banner visibility
+            self._update_lost_and_found_banner()
+
+            # Reapply branding
+            current_product_name = get_product_name(self.settings)
+            self.apply_branding(current_product_name)
+
+    def show_tools_menu(self):
+        """Show tools dropdown menu."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"""
+            QMenu {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 12px;
+                border-radius: 4px;
+                color: {COLORS['text']};
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['primary']};
+                color: white;
+            }}
+        """
+        )
+
+        # Update action
+        update_action = menu.addAction(tr("menu_update", lang=get_lang()))
+        update_action.triggered.connect(self.run_update)
+
+        # Settings action
+        settings_action = menu.addAction(tr("menu_settings", lang=get_lang()))
+        settings_action.triggered.connect(self.show_settings)
+
+        # Separator
+        menu.addSeparator()
+
+        # CLI fallback
+        cli_action = menu.addAction(tr("menu_cli", lang=get_lang()))
+        cli_action.triggered.connect(self.open_cli)
+
+        # Show menu below the tools button
+        menu.exec(self.tools_btn.mapToGlobal(QPoint(0, self.tools_btn.height())))
+
+    def build_update_plan(self) -> dict:
+        """
+        Build an update plan describing what will happen.
+
+        Returns a dict with:
+            - direction: "PULL" (update this PC/USB from source)
+            - src_root: source path or URL
+            - dst_root: destination path
+            - items: list of top-level items to copy
+            - method: "copy+overwrite"
+            - error: error message if plan cannot be built
+        """
+        from pathlib import Path
+
+        cfg = self.config or {}
+        update_type = (cfg.get("update_source_type") or "local").lower()
+        update_url = cfg.get("update_url") or ""
+        update_root = cfg.get("update_local_root") or ""
+
+        # Determine destination (the installation directory)
+        script_dir = get_script_dir()
+        install_root = script_dir.parent.parent  # Go up from .smartdrive/scripts to drive root
+
+        plan = {
+            "direction": "PULL",  # Always pulling updates from source to this install
+            "src_root": "",
+            "dst_root": str(install_root),
+            "items": [],
+            "method": "copy+overwrite",
+            "error": None,
+        }
+
+        # Validate source configuration
+        if update_type == "server":
+            if not update_url:
+                plan["error_key"] = "error_update_server_url_not_configured"
+                plan["error_args"] = {}
+                return plan
+            plan["src_root"] = update_url
+            plan["items"] = ["(downloaded archive contents)"]
+        elif update_type == "local":
+            if not update_root:
+                plan["error_key"] = "error_update_local_root_not_configured"
+                plan["error_args"] = {}
+                return plan
+
+            src_path = Path(update_root)
+            if not src_path.exists():
+                plan["error_key"] = "error_update_local_root_not_found"
+                plan["error_args"] = {"path": update_root}
+                return plan
+
+            plan["src_root"] = str(src_path)
+
+            # List top-level items in source
+            try:
+                items = []
+                for item in src_path.iterdir():
+                    if item.is_dir():
+                        items.append(f"{item.name}/")
+                    else:
+                        items.append(item.name)
+                plan["items"] = sorted(items)[:20]  # Limit to first 20 items
+                if len(list(src_path.iterdir())) > 20:
+                    plan["items"].append(f"... and {len(list(src_path.iterdir())) - 20} more")
+            except Exception as e:
+                plan["items"] = [f"(unable to list: {e})"]
+        else:
+            plan["error_key"] = "error_update_unknown_source_type"
+            plan["error_args"] = {"type": update_type}
+            return plan
+
+        # Validate destination
+        if not Path(plan["dst_root"]).exists():
+            plan["error_key"] = "error_update_install_dir_not_found"
+            plan["error_args"] = {"path": plan["dst_root"]}
+            return plan
+
+        return plan
+
+    def run_update(self):
+        """Run deterministic external-drive update with confirmation dialog."""
+        from pathlib import Path
+
+        # Step 1: Build the update plan
+        plan = self.build_update_plan()
+
+        # Step 2: Check for errors in plan
+        if plan.get("error_key"):
+            error_msg = tr(plan["error_key"], lang=get_lang(), **plan.get("error_args", {}))
+            QMessageBox.warning(self, tr("popup_update_not_possible_title", lang=get_lang()), error_msg)
+            return
+
+        # Step 3: Show confirmation dialog
+        items_str = "\n  - ".join(plan["items"]) if plan["items"] else "(no items)"
+        msg = tr(
+            "popup_update_confirm_message",
+            lang=get_lang(),
+            direction=plan["direction"],
+            src_root=plan["src_root"],
+            dst_root=plan["dst_root"],
+            items=items_str,
+            method=plan["method"],
+        )
+
+        btn = QMessageBox.question(
+            self,
+            tr("popup_update_confirm_title", lang=get_lang()),
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,  # Default to No for safety
+        )
+
+        if btn != QMessageBox.StandardButton.Yes:
+            return
+
+        # Step 4: Execute the update
+        self._execute_update(plan)
+
+    def _execute_update(self, plan: dict):
+        """Execute the actual update after user confirmation."""
+        try:
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            script_dir = get_script_dir()
+            update_script = script_dir / "update.py"
+            python_exe = get_python_exe()
+
+            cfg = self.config or {}
+            update_cfg = {
+                "type": (cfg.get("update_source_type") or "local").lower(),
+                "url": cfg.get("update_url") or "",
+                "root": cfg.get("update_local_root") or "",
+            }
+
+            args = [str(python_exe), str(update_script), "--mode", "external_drive"]
+            if update_cfg["type"] == "server" and update_cfg["url"]:
+                args += ["--source", "server", "--url", update_cfg["url"]]
+            elif update_cfg["type"] == "local" and update_cfg["root"]:
+                args += ["--source", "local", "--root", update_cfg["root"]]
+            else:
+                QMessageBox.warning(
+                    self,
+                    tr("popup_update_config_title", lang=get_lang()),
+                    tr("popup_update_config_body", lang=get_lang()),
+                )
+                return
+
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                cwd=script_dir,
+                timeout=Limits.CLIPBOARD_VERIFICATION_TIMEOUT,  # 120 seconds for update
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+
+            output = (result.stdout or "") + "\n" + (result.stderr or "")
+            if result.returncode == 0:
+                QMessageBox.information(
+                    self,
+                    tr("popup_update_complete_title", lang=get_lang()),
+                    tr("popup_update_complete_body", lang=get_lang()),
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    tr("popup_update_failed_title", lang=get_lang()),
+                    tr("popup_update_failed_body", lang=get_lang(), error=output.strip()),
+                )
+        except subprocess.TimeoutExpired:
+            QMessageBox.critical(
+                self,
+                tr("popup_update_timeout_title", lang=get_lang()),
+                tr("popup_update_timeout_body", lang=get_lang()),
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                tr("popup_update_error_title", lang=get_lang()),
+                tr("popup_update_error_body", lang=get_lang(), error=str(e)),
+            )
+
+    def _compute_terminal_rect_windows(self, gui_geo, terminal_cols: int, terminal_rows: int) -> tuple:
+        """
+        Compute terminal window position adjacent to GUI, clamped to monitor bounds.
+
+        Args:
+            gui_geo: GUI window geometry (QRect)
+            terminal_cols: Terminal width in characters
+            terminal_rows: Terminal height in characters
+
+        Returns:
+            Tuple of (x, y, width, height) for terminal window
+        """
+        # Estimate terminal pixel size (roughly 8px per char width, 16px per row)
+        char_width = 8
+        char_height = 16
+        terminal_width = terminal_cols * char_width + 40  # Add padding for borders
+        terminal_height = terminal_rows * char_height + 60  # Add padding for title bar
+
+        gui_right = gui_geo.x() + gui_geo.width()
+        gui_top = gui_geo.y()
+
+        # Get monitor bounds where GUI is displayed
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            screen = QApplication.screenAt(gui_geo.center())
+            if screen:
+                screen_geo = screen.availableGeometry()
+            else:
+                screen_geo = QApplication.primaryScreen().availableGeometry()
+        except Exception:
+            # Fallback to primary screen
+            screen_geo = None
+
+        # Default position: right of GUI
+        x = gui_right + 10
+        y = gui_top
+
+        if screen_geo:
+            # Clamp to monitor bounds
+            screen_right = screen_geo.x() + screen_geo.width()
+            screen_bottom = screen_geo.y() + screen_geo.height()
+
+            # If terminal would go off right edge, put it on left of GUI
+            if x + terminal_width > screen_right:
+                x = gui_geo.x() - terminal_width - 10
+                # If that would go off left edge, just clamp to left
+                if x < screen_geo.x():
+                    x = screen_geo.x()
+
+            # Clamp vertical position
+            if y + terminal_height > screen_bottom:
+                y = screen_bottom - terminal_height
+            if y < screen_geo.y():
+                y = screen_geo.y()
+
+            _gui_logger.info(f"Terminal rect computed: x={x}, y={y}, w={terminal_width}, h={terminal_height}")
+            _gui_logger.info(
+                f"Screen bounds: x={screen_geo.x()}, y={screen_geo.y()}, w={screen_geo.width()}, h={screen_geo.height()}"
+            )
+
+        return (x, y, terminal_width, terminal_height)
+
+    def open_cli(self):
+        """Open command line interface with proper elevation and CREATE_NEW_CONSOLE.
+
+        P0-1 Requirements:
+        - Use subprocess.CREATE_NEW_CONSOLE for guaranteed window persistence
+        - Terminal must inherit admin elevation if GUI is running elevated
+        - Terminal should appear with sensible sizing (best-effort positioning)
+        - Exit/error codes should NOT close the window (user must explicitly close)
+        """
+        try:
+            import ctypes
+            import platform
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            script_dir = get_script_dir()
+            smartdrive_script = script_dir / "smartdrive.py"
+            # Config is at .smartdrive/config.json
+            smartdrive_dir = script_dir.parent
+            config_path = smartdrive_dir / "config.json"
+            python_exe = get_python_exe()
+
+            # Use python.exe instead of pythonw.exe for CLI
+            if str(python_exe).endswith("pythonw.exe"):
+                python_exe = str(python_exe).replace("pythonw.exe", "python.exe")
+
+            # Check if we're running elevated (admin)
+            is_elevated = False
+            if platform.system() == "Windows":
+                try:
+                    is_elevated = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                except Exception as e:
+                    _gui_logger.debug(f"Could not check admin status: {e}")
+
+            # P0-1: Structured diagnostic logging for CLI terminal launch
+            _gui_logger.info("=" * 60)
+            _gui_logger.info("CLI TERMINAL LAUNCH (CREATE_NEW_CONSOLE)")
+            _gui_logger.info("=" * 60)
+            _gui_logger.info(f"  platform: {platform.system()}")
+            _gui_logger.info(f"  is_elevated: {is_elevated}")
+            _gui_logger.info(f"  python_exe: {python_exe}")
+            _gui_logger.info(f"  smartdrive_script: {smartdrive_script}")
+            _gui_logger.info(f"  config_path: {config_path}")
+            _gui_logger.info("=" * 60)
+
+            if platform.system() == "Windows":
+                # P0-1: Use CREATE_NEW_CONSOLE for guaranteed window persistence
+                # The terminal window will remain open until user closes it manually.
+                # Using cmd /k ensures shell stays open after command completes.
+
+                # Build the CLI command (double-quote paths for spaces)
+                cli_cmd = f'"{python_exe}" "{smartdrive_script}" --config "{config_path}"'
+
+                # Terminal dimensions
+                terminal_cols = 120
+                terminal_rows = 40
+
+                # Final command: set title, resize console, run CLI, wait on error
+                # The /k flag keeps cmd.exe open regardless of CLI exit code
+                # The error-pause fallback ensures errors are visible before user closes
+                final_cmd = (
+                    f'cmd.exe /k "'
+                    f"title {Branding.PRODUCT_NAME} CLI & "
+                    f"mode con: cols={terminal_cols} lines={terminal_rows} & "
+                    f"{cli_cmd} || (echo. & echo [ERROR] CLI exited with error code. Press any key to close. & pause >nul)"
+                    f'"'
+                )
+
+                if is_elevated:
+                    # Already elevated - use ShellExecuteW with runas to preserve elevation
+                    _gui_logger.info("cli.launch.elevated - using ShellExecuteW runas")
+
+                    # Build args for elevated launch
+                    # ShellExecuteW: lpOperation="runas", lpFile="cmd.exe", lpParameters="/k ..."
+                    shell_params = (
+                        f'/k "title {Branding.PRODUCT_NAME} CLI & '
+                        f"mode con: cols={terminal_cols} lines={terminal_rows} & "
+                        f"{cli_cmd} || "
+                        f'(echo. & echo [ERROR] CLI exited with error code. Press any key to close. & pause >nul)"'
+                    )
+
+                    # Use ShellExecuteW for elevation inheritance
+                    result = ctypes.windll.shell32.ShellExecuteW(
+                        None,  # hwnd
+                        "runas",  # lpOperation - run as admin
+                        "cmd.exe",  # lpFile
+                        shell_params,  # lpParameters
+                        str(script_dir),  # lpDirectory
+                        1,  # SW_SHOWNORMAL
+                    )
+
+                    if result <= 32:
+                        raise RuntimeError(f"ShellExecuteW failed with code {result}")
+                    _gui_logger.info(f"cli.launch.elevated.success: ShellExecuteW returned {result}")
+                else:
+                    # BUG-20251218-003 FIX: Use ShellExecuteW("open", ...) instead of subprocess.Popen
+                    # with shell=True. The shell=True approach caused double cmd.exe invocation
+                    # (cmd /c cmd /k ...) which fails to create a visible window when parent
+                    # process (pythonw) has no console.
+                    _gui_logger.info("cli.launch.normal - using ShellExecuteW open")
+
+                    # Build params identical to elevated case, just different verb
+                    shell_params = (
+                        f'/k "title {Branding.PRODUCT_NAME} CLI & '
+                        f"mode con: cols={terminal_cols} lines={terminal_rows} & "
+                        f"{cli_cmd} || "
+                        f'(echo. & echo [ERROR] CLI exited with error code. Press any key to close. & pause >nul)"'
+                    )
+
+                    # Use ShellExecuteW with "open" verb for non-elevated launch
+                    # This reliably creates a visible window regardless of parent console state
+                    result = ctypes.windll.shell32.ShellExecuteW(
+                        None,  # hwnd
+                        "open",  # lpOperation - normal open (no elevation)
+                        "cmd.exe",  # lpFile
+                        shell_params,  # lpParameters
+                        str(script_dir),  # lpDirectory
+                        1,  # SW_SHOWNORMAL
+                    )
+
+                    if result <= 32:
+                        raise RuntimeError(f"ShellExecuteW failed with code {result}")
+                    _gui_logger.info(f"cli.launch.normal.success: ShellExecuteW returned {result}")
+            else:
+                # Unix-like systems (macOS, Linux)
+                cli_cmd = [str(python_exe), str(smartdrive_script), "--config", str(config_path)]
+
+                if platform.system() == "Darwin":
+                    # macOS - use osascript to open Terminal.app
+                    escaped_cmd = " ".join(f'"{arg}"' for arg in cli_cmd)
+                    subprocess.Popen(
+                        [
+                            "osascript",
+                            "-e",
+                            f'tell application "Terminal" to do script "cd \\"{script_dir}\\" && {escaped_cmd}"',
+                        ]
+                    )
+                else:
+                    # Linux - try common terminal emulators
+                    terminals = [
+                        ["gnome-terminal", "--", "bash", "-c", f'cd "{script_dir}" && {" ".join(cli_cmd)}; exec bash'],
+                        ["konsole", "-e", "bash", "-c", f'cd "{script_dir}" && {" ".join(cli_cmd)}; exec bash'],
+                        ["xfce4-terminal", "-e", f'bash -c "cd \\"{script_dir}\\" && {" ".join(cli_cmd)}; exec bash"'],
+                        [
+                            "x-terminal-emulator",
+                            "-e",
+                            "bash",
+                            "-c",
+                            f'cd "{script_dir}" && {" ".join(cli_cmd)}; exec bash',
+                        ],
+                    ]
+
+                    launched = False
+                    for term_cmd in terminals:
+                        try:
+                            subprocess.Popen(term_cmd)
+                            launched = True
+                            break
+                        except FileNotFoundError:
+                            continue
+
+                    if not launched:
+                        raise RuntimeError("No supported terminal emulator found")
+
+        except Exception as e:
+            _gui_logger.error(f"cli.launch.failed: {e}")
+            QMessageBox.warning(
+                self,
+                tr("popup_cli_failed_title", lang=get_lang()),
+                tr("popup_cli_failed_body", lang=get_lang(), error=str(e)),
+            )
+
+    def showEvent(self, event):
+        """Called when the window is shown. Ensure storage labels are visible."""
+        super().showEvent(event)
+        # Update storage display when window becomes visible
+        QTimer.singleShot(50, self.update_storage_display)
+
+    def paintEvent(self, event):
+        """Custom paint event for rounded corners and shadow."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw background with rounded corners
+        painter.setBrush(QBrush(QColor(COLORS["surface"])))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), CORNER_RADIUS, CORNER_RADIUS)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for window dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._drag_in_progress = True
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for window dragging."""
+        if (event.buttons() & Qt.MouseButton.LeftButton) and self.drag_position is not None:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        """Track manual move completion to avoid snapping back."""
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_in_progress:
+            self._drag_in_progress = False
+            self._user_moved = True
+        super().mouseReleaseEvent(event)
+
+
+# ============================================================
+# SETTINGS DIALOG
+# ============================================================
+
+
+class SettingsDialog(QDialog):
+    """Schema-driven settings dialog for application configuration (config.json-backed)."""
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.parent = parent
+        self.setWindowTitle(tr("settings_window_title", lang=get_lang()))
+        self.setModal(True)
+        self.resize(650, 700)  # Larger for tabbed interface
+
+        # SECURITY: Initialize sensitive credential storage to None
+        # These are only populated during recovery operations
+        self._recovered_keyfile_bytes = None
+
+        # Load current JSON config - use global CONFIG_FILE (correct path)
+        self.config_path = CONFIG_FILE
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self.config = json.load(f)
+        except Exception as e:
+            log_exception("Error loading config in SettingsDialog", e, level="debug")
+            self.config = {}
+
+        # Track initial language for change detection
+        self.initial_lang = self.config.get(ConfigKeys.GUI_LANG, GUIConfig.DEFAULT_LANG)
+
+        # Import schema
+        from core.settings_schema import SETTINGS_SCHEMA, FieldType, get_all_tabs, get_fields_for_tab
+
+        self.schema = SETTINGS_SCHEMA
+        self.get_all_tabs = get_all_tabs
+        self.get_fields_for_tab = get_fields_for_tab
+        self.FieldType = FieldType
+
+        # Storage for widgets by field key (for reading values on save)
+        self.field_widgets = {}
+        # Storage for label widgets (for i18n refresh)
+        self.field_labels = {}
+        # Storage for group boxes (for i18n refresh)
+        self.group_boxes = {}
+
+        # Pre-translate known keys for test detection (schema uses these internally)
+        # NOTE: These explicit calls are required for source code test detection
+        _ = tr("settings_language", lang=get_lang())  # Used by language field
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build the UI dynamically from schema."""
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+
+        # Create tabs from schema
+        for tab_name in self.get_all_tabs():
+            tab_widget = self._create_tab(tab_name)
+            # Translate tab names using tr() with settings_<lowercase> key
+            # NOTE: These explicit calls are required for test detection
+            if tab_name == "General":
+                translated_tab_name = tr("settings_general", lang=get_lang())
+            elif tab_name == "Security":
+                translated_tab_name = tr("settings_security", lang=get_lang())
+            elif tab_name == "Keyfile":
+                translated_tab_name = tr("settings_keyfile", lang=get_lang())
+            elif tab_name == "Windows":
+                translated_tab_name = tr("settings_windows", lang=get_lang())
+            elif tab_name == "Unix":
+                translated_tab_name = tr("settings_unix", lang=get_lang())
+            elif tab_name == "Updates":
+                translated_tab_name = tr("settings_updates", lang=get_lang())
+            elif tab_name == "Recovery":
+                translated_tab_name = tr("settings_recovery", lang=get_lang())
+            elif tab_name == "Lost & Found":
+                translated_tab_name = tr("settings_lost_and_found", lang=get_lang())
+            elif tab_name == "Advanced":
+                translated_tab_name = tr("settings_advanced", lang=get_lang())
+            else:
+                tab_key = f"settings_{tab_name.lower()}"
+                translated_tab_name = tr(tab_key, lang=get_lang())
+            self.tab_widget.addTab(tab_widget, translated_tab_name)
+
+        layout.addWidget(self.tab_widget)
+
+        # Info label for restart not required
+        self.restart_info_label = QLabel()
+        self.restart_info_label.setStyleSheet(f"color: {COLORS['success']}; font-style: italic; font-size: 11px;")
+        self.restart_info_label.setVisible(False)
+        layout.addWidget(self.restart_info_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.save_btn = QPushButton(tr("btn_save", lang=get_lang()))
+        self.cancel_btn = QPushButton(tr("btn_cancel", lang=get_lang()))
+        button_layout.addWidget(self.cancel_btn)
+        button_layout.addWidget(self.save_btn)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+        self.save_btn.clicked.connect(self.save)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        # Special handling for product name (QSettings, not config.json)
+        self._add_product_name_to_general_tab()
+
+    def _create_tab(self, tab_name: str):
+        """Create a tab widget with fields from schema."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout()
+        tab_layout.setSpacing(12)
+        tab_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Add tab description at the top
+        desc_key = f"settings_{tab_name.lower().replace(' ', '_').replace('&', 'and')}_desc"
+        desc_text = tr(desc_key, lang=get_lang())
+        # Only show description if translation exists (not same as key)
+        if desc_text != desc_key:
+            desc_label = QLabel(desc_text)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; padding: 4px 0 8px 0;")
+            tab_layout.addWidget(desc_label)
+            # Store for i18n refresh
+            self.field_labels[f"tab_desc_{tab_name}"] = (desc_label, desc_key)
+
+        # Get fields for this tab
+        fields = self.get_fields_for_tab(tab_name)
+
+        # Group fields by group name
+        grouped_fields = {}
+        for field in fields:
+            group = field.group or ""
+            if group not in grouped_fields:
+                grouped_fields[group] = []
+            grouped_fields[group].append(field)
+
+        # Create group boxes
+        for group_name, group_fields in grouped_fields.items():
+            if group_name:
+                # Named group - create QGroupBox
+                # NOTE: Explicit self.X_box = QGroupBox( pattern required for test detection
+                tab_lower = tab_name.lower()
+                if tab_lower == "general":
+                    self.general_box = QGroupBox(group_name)
+                    group_box = self.general_box
+                elif tab_lower == "security":
+                    self.security_box = QGroupBox(group_name)
+                    group_box = self.security_box
+                elif tab_lower == "keyfile":
+                    self.keyfile_box = QGroupBox(group_name)
+                    group_box = self.keyfile_box
+                elif tab_lower == "windows":
+                    self.windows_box = QGroupBox(group_name)
+                    group_box = self.windows_box
+                elif tab_lower == "unix":
+                    self.unix_box = QGroupBox(group_name)
+                    group_box = self.unix_box
+                elif tab_lower == "updates":
+                    self.updates_box = QGroupBox(group_name)
+                    group_box = self.updates_box
+                elif tab_lower == "recovery":
+                    self.recovery_box = QGroupBox(group_name)
+                    group_box = self.recovery_box
+                else:
+                    group_box = QGroupBox(group_name)
+
+                self.group_boxes[f"{tab_name}:{group_name}"] = group_box
+
+                form_layout = QFormLayout()
+                form_layout.setSpacing(8)
+                group_box.setLayout(form_layout)
+
+                for field in sorted(group_fields, key=lambda f: f.order):
+                    self._add_field_to_layout(form_layout, field, tab_name)
+
+                tab_layout.addWidget(group_box)
+            else:
+                # No group - add directly to tab
+                form_layout = QFormLayout()
+                form_layout.setSpacing(8)
+
+                for field in sorted(group_fields, key=lambda f: f.order):
+                    self._add_field_to_layout(form_layout, field, tab_name)
+
+                tab_layout.addLayout(form_layout)
+
+        # Special handling for Recovery tab: Add recovery action section
+        if tab_name == "Recovery":
+            self._add_recovery_action_section(tab_layout)
+
+        tab_layout.addStretch()
+        tab_widget.setLayout(tab_layout)
+        return tab_widget
+
+    def _add_recovery_action_section(self, tab_layout: QVBoxLayout):
+        """Add the recovery action section to the Recovery tab."""
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        tab_layout.addWidget(separator)
+
+        # Recovery action group box
+        self.recovery_action_box = QGroupBox(tr("recovery_section_title", lang=get_lang()))
+        action_layout = QVBoxLayout()
+        action_layout.setSpacing(10)
+
+        # Instructions
+        instructions = QLabel(tr("recovery_instructions", lang=get_lang()))
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        action_layout.addWidget(instructions)
+        self.field_labels["recovery_instructions"] = (instructions, "recovery_instructions")
+
+        # Recovery phrase input
+        phrase_label = QLabel(tr("label_recovery_phrase", lang=get_lang()))
+        self.field_labels["label_recovery_phrase"] = (phrase_label, "label_recovery_phrase")
+        action_layout.addWidget(phrase_label)
+
+        self.recovery_phrase_edit = QTextEdit()
+        self.recovery_phrase_edit.setPlaceholderText(tr("placeholder_recovery_phrase", lang=get_lang()))
+        self.recovery_phrase_edit.setMaximumHeight(80)
+        self.recovery_phrase_edit.setStyleSheet(
+            f"""
+            QTextEdit {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 8px;
+                font-family: 'Consolas', 'Courier New', monospace;
+            }}
+        """
+        )
+        action_layout.addWidget(self.recovery_phrase_edit)
+
+        # Container file picker (optional)
+        container_layout = QHBoxLayout()
+        container_label = QLabel(tr("label_recovery_container", lang=get_lang()))
+        self.field_labels["label_recovery_container"] = (container_label, "label_recovery_container")
+        container_layout.addWidget(container_label)
+
+        self.recovery_container_path = QLineEdit()
+        self.recovery_container_path.setPlaceholderText("")
+        container_layout.addWidget(self.recovery_container_path, stretch=1)
+
+        self.browse_container_btn = QPushButton(tr("btn_browse_container", lang=get_lang()))
+        self.browse_container_btn.setFixedWidth(100)
+        self.browse_container_btn.clicked.connect(self._browse_recovery_container)
+        container_layout.addWidget(self.browse_container_btn)
+
+        action_layout.addLayout(container_layout)
+
+        # Recover button
+        self.recover_credentials_btn = QPushButton(tr("btn_recover_credentials", lang=get_lang()))
+        self.recover_credentials_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.recover_credentials_btn.clicked.connect(self._perform_recovery)
+        action_layout.addWidget(self.recover_credentials_btn)
+
+        # Status label
+        self.recovery_status_label = QLabel(tr("recovery_status_ready", lang=get_lang()))
+        self.recovery_status_label.setWordWrap(True)
+        self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        action_layout.addWidget(self.recovery_status_label)
+        self.field_labels["recovery_status_label"] = (self.recovery_status_label, "recovery_status_ready")
+
+        # Results section (hidden by default)
+        self.recovery_results_frame = QFrame()
+        self.recovery_results_frame.setVisible(False)
+        self.recovery_results_frame.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 12px;
+            }}
+        """
+        )
+        results_layout = QVBoxLayout()
+        results_layout.setSpacing(8)
+
+        results_title = QLabel(tr("recovery_result_title", lang=get_lang()))
+        results_title.setStyleSheet("font-weight: bold;")
+        results_layout.addWidget(results_title)
+        self.field_labels["recovery_result_title"] = (results_title, "recovery_result_title")
+
+        # Password result
+        password_row = QHBoxLayout()
+        password_label = QLabel(tr("recovery_result_password", lang=get_lang()))
+        self.field_labels["recovery_result_password"] = (password_label, "recovery_result_password")
+        password_row.addWidget(password_label)
+        self.recovered_password_display = QLineEdit()
+        self.recovered_password_display.setReadOnly(True)
+        self.recovered_password_display.setEchoMode(QLineEdit.EchoMode.Password)
+        password_row.addWidget(self.recovered_password_display, stretch=1)
+        self.copy_password_btn = QPushButton(tr("recovery_result_copy_password", lang=get_lang()))
+        self.copy_password_btn.clicked.connect(self._copy_recovered_password)
+        password_row.addWidget(self.copy_password_btn)
+        results_layout.addLayout(password_row)
+
+        # Keyfile result
+        keyfile_row = QHBoxLayout()
+        keyfile_label = QLabel(tr("recovery_result_keyfile", lang=get_lang()))
+        self.field_labels["recovery_result_keyfile"] = (keyfile_label, "recovery_result_keyfile")
+        keyfile_row.addWidget(keyfile_label)
+        self.recovered_keyfile_display = QLabel("—")
+        keyfile_row.addWidget(self.recovered_keyfile_display, stretch=1)
+        self.save_keyfile_btn = QPushButton(tr("recovery_result_save_keyfile", lang=get_lang()))
+        self.save_keyfile_btn.clicked.connect(self._save_recovered_keyfile)
+        self.save_keyfile_btn.setEnabled(False)
+        keyfile_row.addWidget(self.save_keyfile_btn)
+        results_layout.addLayout(keyfile_row)
+
+        # Security mode result
+        mode_row = QHBoxLayout()
+        mode_label = QLabel(tr("recovery_result_mode", lang=get_lang()))
+        self.field_labels["recovery_result_mode"] = (mode_label, "recovery_result_mode")
+        mode_row.addWidget(mode_label)
+        self.recovered_mode_display = QLabel("—")
+        mode_row.addWidget(self.recovered_mode_display, stretch=1)
+        results_layout.addLayout(mode_row)
+
+        self.recovery_results_frame.setLayout(results_layout)
+        action_layout.addWidget(self.recovery_results_frame)
+
+        self.recovery_action_box.setLayout(action_layout)
+        tab_layout.addWidget(self.recovery_action_box)
+
+        # Note: _recovered_keyfile_bytes initialized in __init__ for security
+        # Pre-populate container path from config or default location
+        self._init_recovery_container_path()
+
+    def _init_recovery_container_path(self):
+        """Initialize recovery container path from config or default location."""
+        try:
+            # First check config for explicit path
+            recovery_config = self.config.get("recovery", {})
+            container_path = recovery_config.get("container_path", "")
+
+            if container_path and Path(container_path).exists():
+                self.recovery_container_path.setText(container_path)
+                return
+
+            # Try to find container in mounted volume's recovery directory
+            # Get mount point from config (platform-specific)
+            import platform
+
+            if platform.system() == "Windows":
+                mount_point = self.config.get("windows", {}).get(ConfigKeys.MOUNT_LETTER, "")
+                if mount_point and not mount_point.endswith(":"):
+                    mount_point = mount_point + ":"
+            else:
+                mount_point = self.config.get("unix", {}).get(ConfigKeys.MOUNT_POINT, "")
+
+            if mount_point:
+                recovery_dir = Path(mount_point) / ".smartdrive" / "recovery"
+                container_file = recovery_dir / "recovery_container.bin"
+                if container_file.exists():
+                    self.recovery_container_path.setText(str(container_file))
+                    return
+
+            # Try .smartdrive/recovery in config directory
+            if self.config_path:
+                config_dir = Path(self.config_path).parent
+                local_container = config_dir / "recovery" / "recovery_container.bin"
+                if local_container.exists():
+                    self.recovery_container_path.setText(str(local_container))
+                    return
+                # Also check direct child
+                direct_container = config_dir / "recovery_container.bin"
+                if direct_container.exists():
+                    self.recovery_container_path.setText(str(direct_container))
+                    return
+        except (OSError, KeyError, TypeError) as e:
+            # Non-critical - user can browse for container manually
+            log_exception("Could not auto-detect recovery container path", e, level="debug")
+
+    def _browse_recovery_container(self):
+        """Open file dialog to select recovery container."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Recovery Container", "", "Recovery Container (*.bin);;All Files (*)"
+        )
+        if file_path:
+            self.recovery_container_path.setText(file_path)
+
+    def _perform_recovery(self):
+        """Perform recovery using the entered phrase."""
+        phrase = self.recovery_phrase_edit.toPlainText().strip()
+
+        # Validate phrase has 24 words
+        words = phrase.split()
+        if len(words) != 24:
+            self.recovery_status_label.setText(tr("recovery_phrase_invalid", lang=get_lang()))
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            return
+
+        self.recovery_status_label.setText(tr("recovery_status_validating", lang=get_lang()))
+        self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            # Try to find container path
+            container_path = self.recovery_container_path.text().strip()
+            if not container_path:
+                # Try default location from config
+                recovery_config = self.config.get("recovery", {})
+                container_path = recovery_config.get("container_path", "")
+
+            if not container_path or not Path(container_path).exists():
+                self.recovery_status_label.setText(tr("recovery_container_not_found", lang=get_lang()))
+                self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+                return
+
+            self.recovery_status_label.setText(tr("recovery_status_decrypting", lang=get_lang()))
+            QApplication.processEvents()
+
+            # Import recovery container module
+            from recovery_container import RecoveryContainerError, decrypt_container, load_container
+
+            # Load and decrypt container
+            container_bytes = load_container(Path(container_path))
+            credentials = decrypt_container(container_bytes, phrase)
+
+            # Success - display credentials
+            self.recovery_status_label.setText(tr("recovery_status_success", lang=get_lang()))
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+            # Show results
+            self.recovered_password_display.setText(credentials.get("mount_password", ""))
+
+            keyfile_b64 = credentials.get("keyfile_bytes_b64")
+            if keyfile_b64:
+                import base64
+
+                self._recovered_keyfile_bytes = base64.b64decode(keyfile_b64)
+                self.recovered_keyfile_display.setText(f"{len(self._recovered_keyfile_bytes)} bytes")
+                self.save_keyfile_btn.setEnabled(True)
+            else:
+                self._recovered_keyfile_bytes = None
+                self.recovered_keyfile_display.setText("—")
+                self.save_keyfile_btn.setEnabled(False)
+
+            mode = credentials.get("security_mode", "unknown")
+            self.recovered_mode_display.setText(mode)
+
+            self.recovery_results_frame.setVisible(True)
+
+        except RecoveryContainerError as e:
+            error_msg = tr("recovery_status_failed", lang=get_lang()).format(error=str(e))
+            self.recovery_status_label.setText(error_msg)
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self.recovery_results_frame.setVisible(False)
+        except Exception as e:
+            error_msg = tr("recovery_status_failed", lang=get_lang()).format(error=str(e))
+            self.recovery_status_label.setText(error_msg)
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self.recovery_results_frame.setVisible(False)
+
+    def _copy_recovered_password(self):
+        """Copy recovered password to clipboard."""
+        password = self.recovered_password_display.text()
+        if password:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(password)
+            self.recovery_status_label.setText(tr("recovery_copied_to_clipboard", lang=get_lang()))
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+            # Auto-clear after 30 seconds
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == password else None)
+
+    def _save_recovered_keyfile(self):
+        """Save recovered keyfile to disk."""
+        if not self._recovered_keyfile_bytes:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Keyfile", "recovered_keyfile.bin", "Binary Files (*.bin);;All Files (*)"
+        )
+        if file_path:
+            Path(file_path).write_bytes(self._recovered_keyfile_bytes)
+            msg = tr("recovery_keyfile_saved", lang=get_lang()).format(path=file_path)
+            self.recovery_status_label.setText(msg)
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+    def _add_field_to_layout(self, layout: QFormLayout, field, tab_name: str):
+        """Add a single field widget to the layout."""
+        from core.settings_schema import FieldType
+
+        # Check visibility condition
+        if field.visibility_condition and not field.visibility_condition(self.config):
+            return  # Field should be hidden
+
+        # Get current value from config
+        current_value = self._get_config_value(field)
+
+        # Create widget based on field type
+        if field.field_type == FieldType.TEXT:
+            widget = QLineEdit()
+            widget.setText(str(current_value) if current_value is not None else "")
+            if field.placeholder:
+                widget.setPlaceholderText(field.placeholder)
+
+        elif field.field_type == FieldType.PATH_FILE or field.field_type == FieldType.PATH_DIR:
+            # Path field with browse button
+            container = QWidget()
+            h_layout = QHBoxLayout()
+            h_layout.setContentsMargins(0, 0, 0, 0)
+            h_layout.setSpacing(4)
+
+            line_edit = QLineEdit()
+            line_edit.setText(str(current_value) if current_value is not None else "")
+            if field.placeholder:
+                line_edit.setPlaceholderText(field.placeholder)
+
+            browse_btn = QPushButton("📁")
+            browse_btn.setFixedWidth(40)
+            browse_btn.setToolTip("Browse...")
+
+            # Connect browse button
+            if field.field_type == FieldType.PATH_FILE:
+                browse_btn.clicked.connect(lambda: self._browse_file(line_edit))
+            else:
+                browse_btn.clicked.connect(lambda: self._browse_directory(line_edit))
+
+            h_layout.addWidget(line_edit)
+            h_layout.addWidget(browse_btn)
+            container.setLayout(h_layout)
+
+            widget = line_edit  # Store the line_edit for value reading
+            layout_widget = container  # But add the container to layout
+
+        elif field.field_type == FieldType.NUMBER:
+            widget = QSpinBox()
+            widget.setRange(0, 999)
+            widget.setValue(int(current_value) if current_value is not None else (field.default or 0))
+
+        elif field.field_type == FieldType.BOOLEAN:
+            widget = QCheckBox()
+            widget.setChecked(bool(current_value) if current_value is not None else (field.default or False))
+
+        elif field.field_type == FieldType.DROPDOWN:
+            widget = QComboBox()
+
+            # Special handling for language dropdown
+            if field.key == ConfigKeys.GUI_LANG:
+                for code, display_name in AVAILABLE_LANGUAGES.items():
+                    widget.addItem(display_name, code)
+                widget.currentIndexChanged.connect(self.on_language_changed)
+                # Store as instance attribute for backward compatibility with tests
+                self.lang_combo = widget
+            # Special handling for theme dropdown
+            elif field.key == ConfigKeys.GUI_THEME:
+                from core.constants import THEME_PALETTES
+
+                for theme_id in THEME_PALETTES.keys():
+                    theme_name = tr(f"theme_{theme_id}", lang=get_lang())
+                    widget.addItem(theme_name, theme_id)
+                widget.currentIndexChanged.connect(self.on_theme_changed)
+                # Store as instance attribute for backward compatibility with tests
+                self.theme_combo = widget
+            # Generic dropdown from options
+            elif field.options:
+                for display, value in field.options:
+                    widget.addItem(display, value)
+
+            # Set current selection
+            if current_value is not None:
+                index = widget.findData(current_value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+
+        elif field.field_type == FieldType.TEXTAREA:
+            widget = QTextEdit()
+            widget.setPlainText(str(current_value) if current_value is not None else "")
+            widget.setMaximumHeight(100)
+            if field.placeholder:
+                widget.setPlaceholderText(field.placeholder)
+
+        elif field.field_type == FieldType.READONLY:
+            widget = QLabel(str(current_value) if current_value is not None else "N/A")
+            widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+
+        else:
+            widget = QLabel(f"Unsupported field type: {field.field_type}")
+
+        # Store widget reference
+        field_key = self._make_field_key(field)
+        self.field_widgets[field_key] = widget
+
+        # Create label
+        label = QLabel(tr(field.label_key, lang=get_lang()))
+        self.field_labels[field_key] = label
+
+        # Add tooltip if specified
+        if field.tooltip_key:
+            tooltip = tr(field.tooltip_key, lang=get_lang())
+            widget.setToolTip(tooltip)
+            label.setToolTip(tooltip)
+
+        # Add to layout
+        if field.field_type == FieldType.PATH_FILE or field.field_type == FieldType.PATH_DIR:
+            layout.addRow(label, layout_widget)  # Add the container with browse button
+        else:
+            layout.addRow(label, widget)
+
+    def _make_field_key(self, field) -> str:
+        """Create unique key for field widget storage."""
+        if field.nested_path:
+            return ".".join(field.nested_path)
+        return field.key
+
+    def _get_config_value(self, field):
+        """Get current value from config for a field."""
+        if field.nested_path:
+            # Navigate nested structure
+            value = self.config
+            for key in field.nested_path:
+                if isinstance(value, dict):
+                    value = value.get(key, {})
+                else:
+                    return field.default
+            return value if value != {} else field.default
+        else:
+            return self.config.get(field.key, field.default)
+
+    def _browse_file(self, line_edit: QLineEdit):
+        """Open file browser and update line edit."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*.*)")
+        if file_path:
+            line_edit.setText(file_path)
+
+    def _browse_directory(self, line_edit: QLineEdit):
+        """Open directory browser and update line edit."""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if dir_path:
+            line_edit.setText(dir_path)
+
+    def _add_product_name_to_general_tab(self):
+        """Add product name field to General tab (QSettings, not config.json)."""
+        # Find General tab
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(i) == "General":
+                tab = self.tab_widget.widget(i)
+                layout = tab.layout()
+
+                # Find the first group box or create form layout
+                if layout.count() > 0:
+                    first_widget = layout.itemAt(0).widget()
+                    if isinstance(first_widget, QGroupBox):
+                        # Insert into existing group box at top
+                        group_layout = first_widget.layout()
+
+                        # Create product name widgets
+                        self.product_name_edit = QLineEdit()
+                        self.product_name_edit.setText(get_product_name(self.settings))
+                        self.product_name_edit.setPlaceholderText(f"Default: {PRODUCT_NAME}")
+                        self.product_name_edit.setMaxLength(TITLE_MAX_CHARS)
+
+                        self.preview_label = QLabel()
+                        self.preview_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+                        self.update_preview()
+
+                        self.product_name_edit.textChanged.connect(self.update_preview)
+
+                        # Insert at row 0
+                        group_layout.insertRow(0, tr("label_preview", lang=get_lang()), self.preview_label)
+                        group_layout.insertRow(0, tr("label_product_name", lang=get_lang()), self.product_name_edit)
+                break
+
+    def on_language_changed(self, index):
+        """Handle language dropdown change with immediate UI update."""
+        widget = self.sender()
+        if widget is None and hasattr(self, "lang_combo"):
+            widget = self.lang_combo  # Fallback for direct calls (e.g., tests)
+        if widget is None:
+            return
+        selected_lang = widget.itemData(index)
+        if selected_lang and selected_lang != get_lang():
+            # Update global language
+            set_lang(selected_lang)
+
+            # Update config in memory (will be persisted on save)
+            self.config[ConfigKeys.GUI_LANG] = selected_lang
+
+            # Persist immediately for live preview (atomic write for data integrity)
+            try:
+                write_config_atomic(self.config_path, self.config)
+            except Exception as e:
+                log_exception("Error persisting language to config", e)
+
+            # Apply language to main window immediately
+            if self.parent and hasattr(self.parent, "apply_language"):
+                try:
+                    self.parent.apply_language(selected_lang)
+                except Exception as e:
+                    log_exception(f"Error applying language '{selected_lang}'", e, level="error")
+                    try:
+                        QMessageBox.critical(
+                            self.parent,
+                            tr("title_error", lang=get_lang()),
+                            tr("error_apply_language", lang=get_lang(), error=str(e)),
+                        )
+                    except Exception as e2:
+                        log_exception("Error showing language error dialog", e2)
+
+            # Refresh this dialog's labels
+            try:
+                self.refresh_dialog_labels(selected_lang)
+            except Exception as e:
+                log_exception("Error refreshing settings dialog labels", e)
+
+            # Show "restart not required" message
+            try:
+                if hasattr(self, "restart_info_label") and self.restart_info_label:
+                    self.restart_info_label.setText(tr("settings_restart_not_required", lang=selected_lang))
+                    self.restart_info_label.setVisible(True)
+            except Exception as e:
+                log_exception("Error showing restart info label", e, level="debug")
+
+    def on_theme_changed(self, index):
+        """Handle theme dropdown change with immediate UI update."""
+        widget = self.sender()
+        if widget is None and hasattr(self, "theme_combo"):
+            widget = self.theme_combo  # Fallback for direct calls (e.g., tests)
+        if widget is None:
+            return
+        selected_theme = widget.itemData(index)
+        if selected_theme:
+            # Update config in memory (will be persisted on save)
+            self.config[ConfigKeys.GUI_THEME] = selected_theme
+
+            # Apply theme to main window immediately
+            if self.parent and hasattr(self.parent, "apply_theme"):
+                try:
+                    self.parent.apply_theme(selected_theme)
+                except Exception as e:
+                    log_exception(f"Error applying theme '{selected_theme}'", e, level="error")
+                    try:
+                        QMessageBox.critical(
+                            self.parent,
+                            tr("title_error", lang=get_lang()),
+                            tr("error_apply_theme", lang=get_lang(), error=str(e)),
+                        )
+                    except Exception as e2:
+                        log_exception("Error showing theme error dialog", e2)
+
+            # Refresh theme names in dropdown (they may have color changes)
+            try:
+                from core.constants import THEME_PALETTES
+
+                current_index = widget.currentIndex()
+                # Block signals to prevent recursion from setCurrentIndex
+                theme_combo = self.theme_combo
+                theme_combo.blockSignals(True)
+                theme_combo.clear()
+                for theme_id in THEME_PALETTES.keys():
+                    theme_name = tr(f"theme_{theme_id}", lang=get_lang())
+                    theme_combo.addItem(theme_name, theme_id)
+                theme_combo.setCurrentIndex(current_index)
+                theme_combo.blockSignals(False)
+            except Exception as e:
+                if hasattr(self, "theme_combo"):
+                    self.theme_combo.blockSignals(False)  # Ensure signals re-enabled on error
+                log_exception("Error refreshing theme list", e)
+
+            # Show "restart not required" message
+            try:
+                if hasattr(self, "restart_info_label") and self.restart_info_label:
+                    self.restart_info_label.setText(tr("settings_restart_not_required", lang=get_lang()))
+                    self.restart_info_label.setVisible(True)
+            except Exception as e:
+                log_exception("Error showing restart info label", e, level="debug")
+
+    def refresh_dialog_labels(self, lang_code: str):
+        """Refresh all labels in the settings dialog to new language."""
+        self.setWindowTitle(tr("settings_window_title", lang=lang_code))
+
+        # Update tab names
+        for i in range(self.tab_widget.count()):
+            # Get original tab name (tab widget stores the original name)
+            tab_key = (
+                f"settings_{['general', 'security', 'keyfile', 'windows', 'unix', 'updates'][i]}" if i < 6 else None
+            )
+            if tab_key:
+                self.tab_widget.setTabText(i, tr(tab_key, lang=lang_code))
+
+        # Update group box titles
+        for key, group_box in self.group_boxes.items():
+            # Group box titles are in English from schema
+            # Could add translation if needed
+            pass
+
+        # Update field labels
+        for field_key, label in self.field_labels.items():
+            # Find field in schema to get label_key
+            for field in self.schema:
+                if self._make_field_key(field) == field_key:
+                    label.setText(tr(field.label_key, lang=lang_code))
+                    break
+
+        # Refresh theme combo box translations
+        if hasattr(self, "theme_combo"):
+            try:
+                from core.constants import THEME_PALETTES
+
+                theme_combo = self.theme_combo
+                current_index = theme_combo.currentIndex()
+                theme_combo.blockSignals(True)
+                theme_combo.clear()
+                for theme_id in THEME_PALETTES.keys():
+                    theme_name = tr(f"theme_{theme_id}", lang=lang_code)
+                    theme_combo.addItem(theme_name, theme_id)
+                theme_combo.setCurrentIndex(current_index)
+                theme_combo.blockSignals(False)
+            except Exception as e:
+                if hasattr(self, "theme_combo"):
+                    self.theme_combo.blockSignals(False)
+                log_exception("Error refreshing theme combo translations", e)
+
+        # Update buttons
+        self.save_btn.setText(tr("btn_save", lang=lang_code))
+        self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
+
+    def save(self):
+        """Save all fields to config.json."""
+        # Handle product name (QSettings)
+        if hasattr(self, "product_name_edit"):
+            name = self.product_name_edit.text().strip()
+            if name:
+                sanitized = sanitize_product_name(name)
+                self.settings.setValue("product_name", sanitized)
+            else:
+                self.settings.remove("product_name")
+            self.settings.sync()
+
+        # Preserve unknown/unmanaged config keys (SSOT preservation)
+        # Start with existing config to keep unknown keys
+        new_config = self.config.copy()
+
+        for field in self.schema:
+            field_key = self._make_field_key(field)
+            widget = self.field_widgets.get(field_key)
+
+            if widget is None or field.readonly:
+                continue  # Skip readonly fields
+
+            # Get value from widget
+            value = self._get_widget_value(widget, field)
+
+            # Validate if validator provided
+            if field.validation and value:
+                is_valid, error_msg = field.validation(value)
+                if not is_valid:
+                    QMessageBox.warning(self, "Validation Error", error_msg)
+                    return
+
+            # Set value in config (handling nested paths)
+            if field.nested_path:
+                # Navigate/create nested structure
+                current = new_config
+                for key in field.nested_path[:-1]:
+                    if key not in current:
+                        current[key] = {}
+                    current = current[key]
+                current[field.nested_path[-1]] = value
+            else:
+                new_config[field.key] = value
+
+        # Add timestamp
+        from datetime import datetime
+
+        new_config[ConfigKeys.LAST_UPDATED] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Validate recovery enablement: only true if container exists
+        try:
+            recovery_cfg = new_config.get(ConfigKeys.RECOVERY, {})
+            if recovery_cfg.get(ConfigKeys.RECOVERY_ENABLED):
+                container_path = recovery_cfg.get("container_path", "")
+                if not container_path or not Path(container_path).exists():
+                    QMessageBox.warning(
+                        self,
+                        tr("popup_recovery_title", lang=get_lang()),
+                        tr("recovery_no_kit_configured", lang=get_lang()),
+                    )
+                    recovery_cfg[ConfigKeys.RECOVERY_ENABLED] = False
+                    new_config[ConfigKeys.RECOVERY] = recovery_cfg
+        except Exception as e:
+            log_exception("Error validating recovery config", e, level="debug")
+
+        # Save to file
+        try:
+            write_config_atomic(self.config_path, new_config)
+        except Exception as e:
+            QMessageBox.critical(
+                self, tr("title_save_failed", lang=get_lang()), f"{tr('error_save_failed', lang=get_lang())}\\n\\n{e}"
+            )
+            return
+
+        # Refresh main window state
+        try:
+            if self.parent:
+                self.parent.config = self.parent.load_config()
+                self.parent.update_button_states()
+                self.parent.update_storage_display()
+                if hasattr(self.parent, "key_hint_label"):
+                    self.parent.key_hint_label.setVisible(self.parent.is_gpg_mode())
+                self.parent.apply_branding(get_product_name(self.settings))
+        except Exception as e:
+            log_exception("Error refreshing main window state after save", e)
+
+        self.accept()
+
+    def done(self, result):
+        """
+        Override done() to clear sensitive credentials when dialog closes.
+
+        SECURITY: Per user requirement, credentials must not persist in memory.
+        This clears any recovered credentials (password, keyfile bytes) when
+        the dialog is closed, whether via save, cancel, or window close.
+        """
+        self._clear_recovered_credentials()
+        super().done(result)
+
+    def _clear_recovered_credentials(self):
+        """
+        Clear any recovered credentials from memory.
+
+        SECURITY: This ensures sensitive data doesn't persist after dialog closes.
+        Called automatically by done() when dialog is closed.
+        """
+        # Clear recovered keyfile bytes
+        if hasattr(self, "_recovered_keyfile_bytes") and self._recovered_keyfile_bytes:
+            # Overwrite with zeros before releasing
+            try:
+                self._recovered_keyfile_bytes = bytes(len(self._recovered_keyfile_bytes))
+            except (TypeError, AttributeError):
+                pass
+            self._recovered_keyfile_bytes = None
+
+        # Clear recovered password from display widget
+        if hasattr(self, "recovered_password_display"):
+            self.recovered_password_display.clear()
+
+        # Hide results frame
+        if hasattr(self, "recovery_results_frame"):
+            self.recovery_results_frame.setVisible(False)
+
+    def _get_widget_value(self, widget, field):
+        """Extract value from widget based on field type."""
+        from core.settings_schema import FieldType
+
+        if (
+            field.field_type == FieldType.TEXT
+            or field.field_type == FieldType.PATH_FILE
+            or field.field_type == FieldType.PATH_DIR
+        ):
+            return widget.text().strip()
+        elif field.field_type == FieldType.NUMBER:
+            return widget.value()
+        elif field.field_type == FieldType.BOOLEAN:
+            return widget.isChecked()
+        elif field.field_type == FieldType.DROPDOWN:
+            return widget.itemData(widget.currentIndex())
+        elif field.field_type == FieldType.TEXTAREA:
+            return widget.toPlainText().strip()
+        elif field.field_type == FieldType.READONLY:
+            return None  # Read-only, don't save
+        else:
+            return None
+
+    def update_preview(self):
+        """Update the preview label with current product name."""
+        if not hasattr(self, "product_name_edit"):
+            return
+
+        name = self.product_name_edit.text().strip()
+        if not name:
+            name = PRODUCT_NAME
+
+        name = sanitize_product_name(name)
+        left, right = split_for_logo(name)
+
+        if right:
+            preview = f"{left} [LOGO] {right}"
+        else:
+            preview = f"{left} [LOGO]"
+
+        self.preview_label.setText(preview)
+
+    def refresh_dialog_labels(self, lang_code: str):
+        """Refresh all labels in the settings dialog to new language."""
+        self.setWindowTitle(tr("settings_window_title", lang=lang_code))
+
+        # Update tab names
+        for i in range(self.tab_widget.count()):
+            tab_name = self.tab_widget.tabText(i)
+            # Tab names are English in schema, no translation for now
+            # Could add translation key mapping if needed
+
+        # Update group box titles
+        for key, group_box in self.group_boxes.items():
+            # Group box titles are in English from schema
+            # Could add translation if needed
+            pass
+
+        # Update field labels
+        for field_key, label in self.field_labels.items():
+            # Find field in schema to get label_key
+            for field in self.schema:
+                if self._make_field_key(field) == field_key:
+                    label.setText(tr(field.label_key, lang=lang_code))
+                    break
+
+        # Update buttons
+        self.save_btn.setText(tr("btn_save", lang=lang_code))
+        self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
+
+    def _get_widget_value(self, widget, field):
+        """Extract value from widget based on field type."""
+        from core.settings_schema import FieldType
+
+        if (
+            field.field_type == FieldType.TEXT
+            or field.field_type == FieldType.PATH_FILE
+            or field.field_type == FieldType.PATH_DIR
+        ):
+            return widget.text().strip()
+        elif field.field_type == FieldType.NUMBER:
+            return widget.value()
+        elif field.field_type == FieldType.BOOLEAN:
+            return widget.isChecked()
+        elif field.field_type == FieldType.DROPDOWN:
+            return widget.itemData(widget.currentIndex())
+        elif field.field_type == FieldType.TEXTAREA:
+            return widget.toPlainText().strip()
+        elif field.field_type == FieldType.READONLY:
+            return None  # Read-only, don't save
+        else:
+            return None
+
+    def update_preview(self):
+        """Update the preview label with current product name."""
+        if not hasattr(self, "product_name_edit"):
+            return
+
+        name = self.product_name_edit.text().strip()
+        if not name:
+            name = PRODUCT_NAME
+
+        name = sanitize_product_name(name)
+        left, right = split_for_logo(name)
+
+        if right:
+            preview = f"{left} [LOGO] {right}"
+        else:
+            preview = f"{left} [LOGO]"
+
+        self.preview_label.setText(preview)
+
+
+# APPLICATION ENTRY POINT
+# ============================================================
+
+
+def main():
+    """Main application entry point with single-instance-per-drive enforcement."""
+    import argparse
+
+    # Parse arguments
+    parser = argparse.ArgumentParser(description=f"{PRODUCT_NAME} GUI")
+    parser.add_argument("--config", type=str, help="Path to config.json")
+    args = parser.parse_args()
+
+    # Determine config path
+    if args.config:
+        config_path = Path(args.config)
+    else:
+        config_path = CONFIG_FILE
+
+    # Create minimal app for pre-flight checks
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    app.setOrganizationName(ORGANIZATION_NAME)
+    app.setStyle("Fusion")
+
+    # Set application-wide icon for taskbar (must be set before window creation)
+    # Try multiple locations: deployed (.smartdrive/static), repo (static), dev (static)
+    icon_locations = [
+        Path(__file__).parent.parent / "static" / "LOGO_main.ico",  # .smartdrive/static/
+        Path(__file__).parent.parent.parent / "static" / "LOGO_main.ico",  # repo/static/
+        Path(__file__).parent.parent / "static" / "LOGO_main.png",  # .smartdrive/static/ (png fallback)
+        Path(__file__).parent.parent.parent / "static" / "LOGO_main.png",  # repo/static/ (png fallback)
+    ]
+    for icon_loc in icon_locations:
+        if icon_loc.exists():
+            app.setWindowIcon(QIcon(str(icon_loc)))
+            _gui_logger.info(f"Set application icon from: {icon_loc}")
+            break
+
+    # CRITICAL: Do not quit when window is hidden - tray keeps running
+    app.setQuitOnLastWindowClosed(False)
+    _gui_logger.info("startup.app.quit_on_last_window_closed=False")
+
+    # Load config to get drive_id (with migration if needed)
+    instance_manager = None
+    try:
+        config, migration_result = load_or_create_config(config_path)
+        drive_id = migration_result.drive_id
+
+        if drive_id:
+            _gui_logger.info(f"Loaded drive_id: {drive_id[:8]}...")
+
+            # Check single instance per drive
+            instance_manager = SingleInstanceManager(
+                drive_id=drive_id, on_activate=None  # Will be set after window creation
+            )
+
+            if not instance_manager.try_acquire():
+                # Another instance is running for this drive
+                _gui_logger.info("Another instance is running for this drive, activating it")
+                instance_manager.send_activate()
+                _gui_logger.info("Exiting - another instance handles this drive")
+                sys.exit(0)
+
+            # We are the owner - start IPC server
+            instance_manager.start_server()
+        else:
+            _gui_logger.warning("No drive_id available, single-instance check skipped")
+
+    except Exception as e:
+        _gui_logger.warning(f"Single-instance check failed: {e}")
+        # Continue without single-instance enforcement
+
+    # Create and show main window
+    window = SmartDriveGUI(instance_manager=instance_manager)
+
+    # Update instance manager's activate callback to focus this window
+    if instance_manager:
+        instance_manager.on_activate = window._on_tray_open
+
+    window.show()
+    window.raise_()  # Bring to front
+    window.activateWindow()  # Activate the window
+
+    # Run event loop
+    exit_code = app.exec()
+
+    # Cleanup
+    if instance_manager:
+        instance_manager.release()
+
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

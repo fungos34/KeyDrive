@@ -1,0 +1,67 @@
+# SmartDrive .gitignore
+
+# Sensitive files - NEVER commit these!
+keys/keyfile.bin
+keys/*.bin
+.smartdrive/keys/*.bin
+*.key
+*.keyfile
+
+# Config files may contain system-specific paths
+scripts/config.json
+.smartdrive/scripts/config.json
+
+# Integrity signatures (user-specific)
+.smartdrive/integrity/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+ENV/
+env/
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# docs
+*.pdf
+*.docx
+*.md
+# Exception: keep README.md in sync.
+!README.md

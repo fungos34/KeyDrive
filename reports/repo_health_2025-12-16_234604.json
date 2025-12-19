@@ -1,0 +1,2341 @@
+{
+  "timestamp": "2025-12-16T23:44:59.341346",
+  "project_root": "C:\\Users\\accou\\Code\\VeraCrypt_Yubikey_2FA",
+  "summary": {
+    "total_python_files": 76,
+    "issues_found": 43
+  },
+  "module_analysis": {
+    "total_modules": 76,
+    "potentially_unused": [
+      {
+        "file": "challenge_request.py",
+        "module": "challenge_request",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "challenge_verification.py",
+        "module": "challenge_verification",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "hash_server.py",
+        "module": "hash_server",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": ".tmp\\import_gui_debug.py",
+        "module": "import_gui_debug",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "scripts\\manual_test_mount_status.py",
+        "module": "manual_test_mount_status",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\integration\\test_disk_identity.py",
+        "module": "test_disk_identity",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\integration\\test_partition_resolver.py",
+        "module": "test_partition_resolver",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_atomic_config.py",
+        "module": "test_atomic_config",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_cli_language.py",
+        "module": "test_cli_language",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_drive_id.py",
+        "module": "test_drive_id",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_gui_i18n.py",
+        "module": "test_gui_i18n",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_gui_immediate_language_update.py",
+        "module": "test_gui_immediate_language_update",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_gui_language.py",
+        "module": "test_gui_language",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_gui_no_hardcoded_strings.py",
+        "module": "test_gui_no_hardcoded_strings",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_gui_regressions.py",
+        "module": "test_gui_regressions",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_language_validation.py",
+        "module": "test_language_validation",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_mount_letter.py",
+        "module": "test_mount_letter",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_open_file_manager.py",
+        "module": "test_open_file_manager",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_recovery_setup.py",
+        "module": "test_recovery_setup",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_resource_resolution.py",
+        "module": "test_resource_resolution",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_runtime_context.py",
+        "module": "test_runtime_context",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_scripts_syntax.py",
+        "module": "test_scripts_syntax",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_settings_live_refresh.py",
+        "module": "test_settings_live_refresh",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_single_instance.py",
+        "module": "test_single_instance",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_terminal_placement.py",
+        "module": "test_terminal_placement",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_theme_language_no_crash.py",
+        "module": "test_theme_language_no_crash",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_theme_system.py",
+        "module": "test_theme_system",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_unified_menu.py",
+        "module": "test_unified_menu",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": "tests\\unit\\test_volume_identifier.py",
+        "module": "test_volume_identifier",
+        "string_references": 0,
+        "reason": "Module not imported by any other Python file"
+      },
+      {
+        "file": ".smartdrive\\core\\tray.py",
+        "module": "tray",
+        "string_references": 1,
+        "reason": "Module not imported by any other Python file"
+      }
+    ]
+  },
+  "deprecated_references": [
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\keyfile.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 475,
+          "context": "word/key rotation\n\u2502       \u251c\u2500\u2500 keyfile.py              # Keyfile manage"
+        },
+        {
+          "file": "README.md",
+          "line": 685,
+          "context": "password/keyfile\n\u2502       \u251c\u2500\u2500 keyfile.py           # Keyfile utilities"
+        },
+        {
+          "file": "README.md",
+          "line": 714,
+          "context": "\u2502   \u251c\u2500\u2500 rekey.py\n    \u2502   \u251c\u2500\u2500 keyfile.py\n    \u2502   \u2514\u2500\u2500 config.json"
+        },
+        {
+          "file": "README.md",
+          "line": 1919,
+          "context": "---\n\n## \ud83d\udd11 Keyfile Utility (`keyfile.py`)\n\nManual utility for YubiKey"
+        },
+        {
+          "file": "README.md",
+          "line": 1927,
+          "context": "encrypted to YubiKeys\npython keyfile.py create\npython keyfile.py crea"
+        },
+        {
+          "file": "README.md",
+          "line": 1928,
+          "context": "thon keyfile.py create\npython keyfile.py create --output /path/to/keyf"
+        },
+        {
+          "file": "README.md",
+          "line": 1931,
+          "context": "t any file to YubiKeys\npython keyfile.py encrypt secrets.txt\npython ke"
+        },
+        {
+          "file": "README.md",
+          "line": 1932,
+          "context": "py encrypt secrets.txt\npython keyfile.py encrypt data.bin --output enc"
+        },
+        {
+          "file": "README.md",
+          "line": 1935,
+          "context": "any GPG-encrypted file\npython keyfile.py decrypt keyfile.vc.gpg\npython"
+        },
+        {
+          "file": "README.md",
+          "line": 1936,
+          "context": "decrypt keyfile.vc.gpg\npython keyfile.py decrypt data.gpg --output dec"
+        },
+        {
+          "file": "README.md",
+          "line": 1943,
+          "context": "-|\n| Manual keyfile backup | `keyfile.py create` |\n| Recover from reke"
+        },
+        {
+          "file": "README.md",
+          "line": 1944,
+          "context": "Recover from rekey failure | `keyfile.py decrypt keys/keyfile.vc.gpg.o"
+        },
+        {
+          "file": "README.md",
+          "line": 1945,
+          "context": "Migrate away from YubiKey | `keyfile.py decrypt` \u2192 use plain keyfile"
+        },
+        {
+          "file": "README.md",
+          "line": 1946,
+          "context": "rypt other sensitive files | `keyfile.py encrypt myfile` |\n\n### Securi"
+        },
+        {
+          "file": "README.md",
+          "line": 1950,
+          "context": "Security Warning\n\nWhen using `keyfile.py decrypt`, the output is a **p"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 83,
+          "context": "ate.py\",\n    \"rekey.py\",\n    \"keyfile.py\",\n}\n\n# Scripts that are stand"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 277,
+          "context": "\"rekey.py\",\n        \"keyfile.py\",\n        \"gui_launcher.py\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 163,
+          "context": "unting\", True),\n            (\"keyfile.py\", \"Keyfile management\", True)"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 17,
+          "context": "o YubiKeys\n\nUsage:\n    python keyfile.py create [--output FILE]     #"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 18,
+          "context": "ncrypt to YubiKeys\n    python keyfile.py encrypt <file>             #"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 19,
+          "context": "y file to YubiKeys\n    python keyfile.py decrypt <file.gpg> [-o FILE]"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 43,
+          "context": "on drive: .smartdrive/scripts/keyfile.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 50,
+          "context": "e:\n    # Development: scripts/keyfile.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 476,
+          "context": "epilog=\"\"\"\nExamples:\n  python keyfile.py create                    # C"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 477,
+          "context": "ew VeraCrypt keyfile\n  python keyfile.py create --output my.gpg   # Cr"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 478,
+          "context": "h custom output path\n  python keyfile.py encrypt secrets.txt       # E"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 479,
+          "context": "t a file to YubiKeys\n  python keyfile.py decrypt secrets.txt.gpg   # D"
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 480,
+          "context": "g   # Decrypt a file\n  python keyfile.py decrypt data.gpg -o out   # D"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "\", \"unmount.py\", \"rekey.py\", \"keyfile.py\", \"gui_launcher.py\", \"gui.py\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3164,
+          "context": "IONAL_SCRIPTS = [\"rekey.py\", \"keyfile.py\", \"gui_launcher.py\", \"gui.py\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3382,
+          "context": "unt.py\",\n        \"rekey.py\", \"keyfile.py\"\n    ])\n    \n    for script_n"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1132,
+          "context": "nt.py\", \n        \"rekey.py\", \"keyfile.py\"\n    ])\n    \n    for script_n"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1569,
+          "context": "\"1\":\n            run_script(\"keyfile.py\", [\"create\"])\n        elif ch"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1577,
+          "context": "gpg\")\n            run_script(\"keyfile.py\", [\"decrypt\", filepath])"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1582,
+          "context": ":\n                run_script(\"keyfile.py\", [\"encrypt\", filepath])"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\mount.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 468,
+          "context": "main entry point)\n\u2502       \u251c\u2500\u2500 mount.py                # Mount volume"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 488,
+          "context": "tdrive/scripts/gui.py\n\u2502   \u251c\u2500\u2500 mount.py                    # -> .smar"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 488,
+          "context": "# -> .smartdrive/scripts/mount.py\n\u2502   \u251c\u2500\u2500 unmount.py"
+        },
+        {
+          "file": "README.md",
+          "line": 402,
+          "context": "-|----------|----------|\n| **`mount.py`** | ~1-5 seconds | Temp dir"
+        },
+        {
+          "file": "README.md",
+          "line": 492,
+          "context": "pering** | Attacker modifies `mount.py` to steal password | Verify s"
+        },
+        {
+          "file": "README.md",
+          "line": 606,
+          "context": "al scripts on drive** | Only `mount.py`, `unmount.py`, `config.json`"
+        },
+        {
+          "file": "README.md",
+          "line": 611,
+          "context": "ystem)\nGet-FileHash .\\scripts\\mount.py -Algorithm SHA256 | Select-Ob"
+        },
+        {
+          "file": "README.md",
+          "line": 611,
+          "context": "SHA256 | Select-Object Hash > mount.py.sha256\n\n# Verify before use\n$"
+        },
+        {
+          "file": "README.md",
+          "line": 614,
+          "context": "use\n$expected = Get-Content .\\mount.py.sha256\n$actual = (Get-FileHas"
+        },
+        {
+          "file": "README.md",
+          "line": 615,
+          "context": "ual = (Get-FileHash .\\scripts\\mount.py -Algorithm SHA256).Hash\nif ($"
+        },
+        {
+          "file": "README.md",
+          "line": 682,
+          "context": "rive setup wizard\n\u2502       \u251c\u2500\u2500 mount.py             # Mount encrypted"
+        },
+        {
+          "file": "README.md",
+          "line": 711,
+          "context": "\u251c\u2500\u2500 smartdrive.py\n    \u2502   \u251c\u2500\u2500 mount.py\n    \u2502   \u251c\u2500\u2500 unmount.py\n    \u2502"
+        },
+        {
+          "file": "README.md",
+          "line": 806,
+          "context": "recovery_container.py\n\u2502   \u251c\u2500\u2500 mount.py\n\u2502   \u251c\u2500\u2500 unmount.py\n\u2502   \u2514\u2500\u2500 .."
+        },
+        {
+          "file": "README.md",
+          "line": 1719,
+          "context": "on is auto-generated!**\n\nRun `mount.py` to generate config:\n\n```bash"
+        },
+        {
+          "file": "README.md",
+          "line": 1723,
+          "context": "g:\n\n```bash\ncd scripts\npython mount.py\n```\n\nOn first run, it creates"
+        },
+        {
+          "file": "README.md",
+          "line": 1753,
+          "context": "s)\n\n**Mount:**\n```bash\npython mount.py\n```\n\n**Unmount:**\n```bash\npyt"
+        },
+        {
+          "file": "README.md",
+          "line": 1887,
+          "context": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n  \ud83d\udca1 Test mount.py before deleting the .old back"
+        },
+        {
+          "file": "README.md",
+          "line": 2023,
+          "context": "~500 MB, exFAT)\n   - `scripts/mount.py`\n   - `scripts/unmount.py`"
+        },
+        {
+          "file": "README.md",
+          "line": 2051,
+          "context": "n:**\n   ```bash\n   cp scripts/mount.py <LAUNCHER>/scripts/mount.py"
+        },
+        {
+          "file": "README.md",
+          "line": 2051,
+          "context": "s/mount.py <LAUNCHER>/scripts/mount.py\n   cp scripts/unmount.py <LAU"
+        },
+        {
+          "file": "README.md",
+          "line": 2140,
+          "context": "- Path should be relative to `mount.py` location\n- **Alternative:**"
+        },
+        {
+          "file": "README.md",
+          "line": 2155,
+          "context": "- May need sudo: `sudo python mount.py`\n- Or add user to disk group:"
+        },
+        {
+          "file": "README.md",
+          "line": 2190,
+          "context": "vel logger not initialized in mount.py\n- **Fix:** Update to latest v"
+        },
+        {
+          "file": "README.md",
+          "line": 2192,
+          "context": "smartdrive.mount\")` at top of mount.py\n- **Verification:** Run `pyth"
+        },
+        {
+          "file": "README.md",
+          "line": 2229,
+          "context": "# Runtime scripts\n\u2502   \u2502   \u251c\u2500\u2500 mount.py, unmount.py    # Volume opera"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 74,
+          "context": "INTS = {\n    \"setup.py\",\n    \"mount.py\",\n    \"unmount.py\",\n    \"reco"
+        },
+        {
+          "file": "scripts\\mount.py",
+          "line": 3,
+          "context": "rwards to .smartdrive/scripts/mount.py\n\nThis wrapper allows running"
+        },
+        {
+          "file": "scripts\\mount.py",
+          "line": 5,
+          "context": "llows running `python scripts/mount.py` from the repo root during de"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 315,
+          "context": "script:SmartDriveDir \"scripts\\mount.py\"),\n        (Join-Path $script"
+        },
+        {
+          "file": "tests\\unit\\test_runtime_context.py",
+          "line": 145,
+          "context": "mount_path = ctx.script_path(\"mount.py\")\n        self.assertEqual(mo"
+        },
+        {
+          "file": "tests\\unit\\test_runtime_context.py",
+          "line": 146,
+          "context": "ount_path, ctx.scripts_dir / \"mount.py\")\n    \n    def test_subproces"
+        },
+        {
+          "file": "tests\\unit\\test_scripts_syntax.py",
+          "line": 143,
+          "context": "expected_scripts = {\n        \"mount.py\",\n        \"unmount.py\","
+        },
+        {
+          "file": ".smartdrive\\core\\context.py",
+          "line": 25,
+          "context": "process.run([sys.executable, \"mount.py\", \"--config\", str(ctx.config_"
+        },
+        {
+          "file": ".smartdrive\\core\\context.py",
+          "line": 281,
+          "context": "process.run([sys.executable, \"mount.py\"] + ctx.get_subprocess_args()"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 265,
+          "context": "REQUIRED_SCRIPTS = [\n        \"mount.py\",\n        \"unmount.py\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 161,
+          "context": "e),  # Optional\n            (\"mount.py\", \"Volume mounting\", True),"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 507,
+          "context": "mount_script = script_dir / \"mount.py\"\n\n            if not mount_sc"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 45,
+          "context": "on drive: .smartdrive/scripts/mount.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 52,
+          "context": "e:\n    # Development: scripts/mount.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 1253,
+          "context": "Deployed: .smartdrive/scripts/mount.py -> .smartdrive -> ROOT"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 283,
+          "context": "pt from the same directory as mount.py\"\n        )\n    \n    try:"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 1015,
+          "context": "# Use the same logic as mount.py for password derivation"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 1195,
+          "context": "}\")\n        print(\"\\n  \ud83d\udca1 Test mount.py before deleting the .old back"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 1203,
+          "context": "}\")\n        print(\"\\n  \ud83d\udca1 Test mount.py before deleting the .old back"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "_to_copy = [\"smartdrive.py\", \"mount.py\", \"unmount.py\", \"rekey.py\", \""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3163,
+          "context": "lity\n    REQUIRED_SCRIPTS = [\"mount.py\", \"unmount.py\", \"recovery.py\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3381,
+          "context": "d([\n        \"smartdrive.py\", \"mount.py\", \"unmount.py\",\n        \"reke"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 4393,
+          "context": "ount_script = scripts_path / \"mount.py\"\n        \n        if not moun"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 4399,
+          "context": "print(\"    python mount.py\")\n        else:\n            t"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1097,
+          "context": "a new external drive\n  2. Use mount.py to mount the encrypted volume"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1131,
+          "context": "d([\n        \"smartdrive.py\", \"mount.py\", \"unmount.py\", \n        \"rek"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1696,
+          "context": "\"mount\": (lambda: run_script(\"mount.py\"), \"mount.py\"),\n        \"unmo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1696,
+          "context": "bda: run_script(\"mount.py\"), \"mount.py\"),\n        \"unmount\": (lambda"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 5,
+          "context": "olume previously mounted with mount.py.\n\nUsage:\n    python unmount.p"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\recovery.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 470,
+          "context": "# Unmount volume\n\u2502       \u251c\u2500\u2500 recovery.py             # Recovery kit ge"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 490,
+          "context": "ve/scripts/unmount.py\n\u2502   \u251c\u2500\u2500 recovery.py                 # -> .smartdr"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 490,
+          "context": "# -> .smartdrive/scripts/recovery.py\n\u2502   \u251c\u2500\u2500 smartdrive.py"
+        },
+        {
+          "file": "README.md",
+          "line": 747,
+          "context": "|\n| \u00a75 Recovery Guarantees | `recovery.py`, `setup.py` | Unit tests |\n|"
+        },
+        {
+          "file": "README.md",
+          "line": 787,
+          "context": "ion:**\n```powershell\n# Verify recovery.py works from deployed path (Win"
+        },
+        {
+          "file": "README.md",
+          "line": 788,
+          "context": "python H:\\.smartdrive\\scripts\\recovery.py status\n# Expected: exit 0, \"r"
+        },
+        {
+          "file": "README.md",
+          "line": 789,
+          "context": "y status\n# Expected: exit 0, \"recovery.py import verification: OK\"\n```"
+        },
+        {
+          "file": "README.md",
+          "line": 804,
+          "context": "/\n\u2502   \u251c\u2500\u2500 config.json\n\u2502   \u251c\u2500\u2500 recovery.py\n\u2502   \u251c\u2500\u2500 recovery_container.py"
+        },
+        {
+          "file": "README.md",
+          "line": 850,
+          "context": "t_from_setup()` directly |\n| `recovery.py` | Recovery kit generation/us"
+        },
+        {
+          "file": "README.md",
+          "line": 858,
+          "context": "o subprocess invocation** of `recovery.py`\n- **No `--skip-auth` flag**"
+        },
+        {
+          "file": "README.md",
+          "line": 1394,
+          "context": "and:**\n```bash\npython scripts/recovery.py generate\n\n# For offline-compl"
+        },
+        {
+          "file": "README.md",
+          "line": 1397,
+          "context": "dable chunks):\npython scripts/recovery.py generate --offline\n```\n\n**The"
+        },
+        {
+          "file": "README.md",
+          "line": 1450,
+          "context": "and:**\n```bash\npython scripts/recovery.py recover\n```\n\n**The recovery p"
+        },
+        {
+          "file": "README.md",
+          "line": 1469,
+          "context": "recovery kit: `python scripts/recovery.py generate`\n3. **Destroy** your"
+        },
+        {
+          "file": "README.md",
+          "line": 1478,
+          "context": "to a text file\npython scripts/recovery.py reconstruct chunks.txt\n```\n\nT"
+        },
+        {
+          "file": "README.md",
+          "line": 1481,
+          "context": "u to then run `python scripts/recovery.py recover`.\n\n### Security Consi"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 45,
+          "context": "(VeraCrypt limitation)\n\n3. **`recovery.py`** (main orchestration, ~900"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 96,
+          "context": "le\n\n---\n\n## Generation Flow (`recovery.py generate`)\n\n### Step 1: Authe"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 191,
+          "context": "ting\n\n---\n\n## Recovery Flow (`recovery.py recover`)\n\n### Step 1: Get Re"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 308,
+          "context": "## Offline Reconstruction (`recovery.py reconstruct`)\n\n### Chunk Form"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 330,
+          "context": "one per line)\n2. Run: `python recovery.py reconstruct chunks.txt`\n3. Pa"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 435,
+          "context": "cd .smartdrive/scripts\npython recovery.py generate\n```\n\n**Prompts:**\n-"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 452,
+          "context": "ine-Complete)\n\n```bash\npython recovery.py generate --offline\n```\n\n**War"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 466,
+          "context": "ecover Access\n\n```bash\npython recovery.py recover\n```\n\n**Flow:**\n1. Ent"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 482,
+          "context": "chunks into chunks.txt\npython recovery.py reconstruct chunks.txt\n```\n\n*"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 487,
+          "context": "```\n\n**Then:**\n```bash\npython recovery.py recover\n```\n\n### Check Status"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 493,
+          "context": "Check Status\n\n```bash\npython recovery.py status\n```\n\n**Output:**\n```"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 559,
+          "context": "key_2FA/\n\u251c\u2500\u2500 scripts/\n\u2502   \u251c\u2500\u2500 recovery.py              # Main orchestra"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 636,
+          "context": "```\n\n2. **Restore the new recovery.py:**\n   The complete implementa"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 642,
+          "context": "`bash\n   cd scripts\n   python recovery.py generate\n   ```\n\n4. **Test re"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 647,
+          "context": "onment):\n   ```bash\n   python recovery.py recover\n   ```\n\n5. **Test off"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 653,
+          "context": "with --offline flag\n   python recovery.py generate --offline\n   # Extra"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 656,
+          "context": "Save to chunks.txt\n   python recovery.py reconstruct chunks.txt\n   ```"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 76,
+          "context": "t.py\",\n    \"unmount.py\",\n    \"recovery.py\",\n    \"smartdrive.py\",\n    \"g"
+        },
+        {
+          "file": "scripts\\recovery.py",
+          "line": 3,
+          "context": "rwards to .smartdrive/scripts/recovery.py\n\nThis wrapper allows running"
+        },
+        {
+          "file": "scripts\\recovery.py",
+          "line": 5,
+          "context": "llows running `python scripts/recovery.py` from the repo root during de"
+        },
+        {
+          "file": "scripts\\test_recovery.ps1",
+          "line": 167,
+          "context": "$result = python \"$ScriptDir\\recovery.py\" --help 2>&1"
+        },
+        {
+          "file": "tests\\unit\\test_atomic_config.py",
+          "line": 178,
+          "context": "ic writer itself\n            'recovery.py',  # Has its own atomic write"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 30,
+          "context": "o_skip_auth(self):\n        \"\"\"recovery.py argparse must not have --skip"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 39,
+          "context": "source, \"Found --skip-auth in recovery.py main()\"\n        assert \"'--sk"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 40,
+          "context": "source, \"Found --skip-auth in recovery.py main()\"\n    \n    def test_set"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 43,
+          "context": "must not pass --skip-auth to recovery.py.\"\"\"\n        from pathlib impo"
+        },
+        {
+          "file": "tests\\unit\\test_scripts_syntax.py",
+          "line": 146,
+          "context": "\"setup.py\",\n        \"recovery.py\",\n        \"smartdrive.py\","
+        },
+        {
+          "file": ".smartdrive\\core\\constants.py",
+          "line": 534,
+          "context": "ery CLI Flags - Arguments for recovery.py\n# ==========================="
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 267,
+          "context": "\"unmount.py\",\n        \"recovery.py\",\n        \"recovery_container"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 164,
+          "context": "gement\", True),\n            (\"recovery.py\", \"Recovery kit generation\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 2824,
+          "context": "# Also check if recovery.py can detect recovery kits"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 2825,
+          "context": "ck - in production you'd call recovery.py status\n            return Fal"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 20,
+          "context": "to PBKDF2)\n\nUsage:\n    python recovery.py generate [--offline]\n    pyth"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 21,
+          "context": "nerate [--offline]\n    python recovery.py recover\n    python recovery.p"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 22,
+          "context": "ecovery.py recover\n    python recovery.py reconstruct <chunks.txt>\n\"\"\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 1252,
+          "context": "<li>Run: <code>python recovery.py reconstruct chunks.txt</code>"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 1403,
+          "context": "<li>Run: <code>python recovery.py recover</code></li>"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 1713,
+          "context": "print(\"  1. Use 'python recovery.py recover' to use the existing"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2031,
+          "context": "a recovery kit first: python recovery.py generate\")\n        audit_log("
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2145,
+          "context": "un:\")\n        error(\"  python recovery.py reconstruct <chunks.txt>\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2438,
+          "context": "print(\"  python recovery.py generate\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2545,
+          "context": "nt(\"\\nYou can now run: python recovery.py recover\")\n\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2564,
+          "context": "up chunks\n\nExamples:\n  python recovery.py generate           # Create r"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2565,
+          "context": "Create recovery kit\n  python recovery.py generate --offline # Include"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2566,
+          "context": "per-encodable chunks\n  python recovery.py recover            # Use reco"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2567,
+          "context": "se to restore access\n  python recovery.py reconstruct chunks.txt  # Reb"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2634,
+          "context": "imports worked\n        print(\"recovery.py import verification: OK\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 232,
+          "context": "):\")\n    print(f\"      python recovery.py\")\n    print(f\"      (from {la"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3163,
+          "context": "= [\"mount.py\", \"unmount.py\", \"recovery.py\", \"recovery_container.py\", \"v"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 4453,
+          "context": "very_script = scripts_path / \"recovery.py\"\n            \n            # A"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 4462,
+          "context": "print(\"    python recovery.py\")\n            else:"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1638,
+          "context": "\"1\":\n            run_script(\"recovery.py\", [\"generate\"])\n        elif"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1640,
+          "context": "\"2\":\n            run_script(\"recovery.py\", [\"status\"])\n        elif ch"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1646,
+          "context": ":\n                run_script(\"recovery.py\", [\"recover\"])\n        else:"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\rekey.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 474,
+          "context": "graphic utilities\n\u2502       \u251c\u2500\u2500 rekey.py                # Password/key"
+        },
+        {
+          "file": "README.md",
+          "line": 88,
+          "context": "ual process, error-prone | \ud83d\udfe2 `rekey.py` automates safely | Verified"
+        },
+        {
+          "file": "README.md",
+          "line": 121,
+          "context": "ified credential changes** | `rekey.py` test-mounts before committin"
+        },
+        {
+          "file": "README.md",
+          "line": 396,
+          "context": "ting the volume header (what `rekey.py` does).\n\n#### When Plaintext"
+        },
+        {
+          "file": "README.md",
+          "line": 403,
+          "context": "r `/dev/shm` on Linux) |\n| **`rekey.py`** | ~30-120 seconds (GUI) |"
+        },
+        {
+          "file": "README.md",
+          "line": 550,
+          "context": "s any captured keyfile | Run `rekey.py` on trusted system after |\n|"
+        },
+        {
+          "file": "README.md",
+          "line": 568,
+          "context": "\u2502\n\u2502    1. Run: python rekey.py"
+        },
+        {
+          "file": "README.md",
+          "line": 655,
+          "context": "n trusted system, run: python rekey.py\n\u25a1 Change BOTH password and ke"
+        },
+        {
+          "file": "README.md",
+          "line": 684,
+          "context": "encrypted volume\n\u2502       \u251c\u2500\u2500 rekey.py             # Change password"
+        },
+        {
+          "file": "README.md",
+          "line": 713,
+          "context": "\u251c\u2500\u2500 unmount.py\n    \u2502   \u251c\u2500\u2500 rekey.py\n    \u2502   \u251c\u2500\u2500 keyfile.py\n    \u2502"
+        },
+        {
+          "file": "README.md",
+          "line": 1698,
+          "context": "- it's already done!**\n\nUse `rekey.py` to add YubiKey-encrypted key"
+        },
+        {
+          "file": "README.md",
+          "line": 1703,
+          "context": "k!\n\n```bash\ncd scripts\npython rekey.py\n```\n\n**You will be prompted f"
+        },
+        {
+          "file": "README.md",
+          "line": 1793,
+          "context": "ord Change)\n\n### When to Use `rekey.py`\n\nUse this script when you ne"
+        },
+        {
+          "file": "README.md",
+          "line": 1802,
+          "context": "witch to password-only)\n\n### `rekey.py` Features\n\n- \ud83c\udfa8 **Polished 4-p"
+        },
+        {
+          "file": "README.md",
+          "line": 1821,
+          "context": "py` to auto-deploy)\n\n3. **Run rekey.py to add YubiKey protection:**"
+        },
+        {
+          "file": "README.md",
+          "line": 1824,
+          "context": "LAUNCHER partition\n   python rekey.py\n   ```\n   \n   **You'll be pro"
+        },
+        {
+          "file": "README.md",
+          "line": 1843,
+          "context": "our LAUNCHER partition\npython rekey.py\n```\n\n**Example session (conde"
+        },
+        {
+          "file": "README.md",
+          "line": 2025,
+          "context": "pts/unmount.py`\n   - `scripts/rekey.py`\n   - `scripts/config.json`"
+        },
+        {
+          "file": "docs\\RECOVERY_TECHNICAL.md",
+          "line": 301,
+          "context": "cannot skip this:**\n- Launch `rekey.py` subprocess\n- User changes pa"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 82,
+          "context": "oy.py\",\n    \"update.py\",\n    \"rekey.py\",\n    \"keyfile.py\",\n}\n\n# Scri"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 276,
+          "context": "OPTIONAL_SCRIPTS = [\n        \"rekey.py\",\n        \"keyfile.py\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 166,
+          "context": "tainer\", True),\n            (\"rekey.py\", \"Password/keyfile rotation\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\keyfile.py",
+          "line": 13,
+          "context": "rom YubiKey)\n- Debugging when rekey.py fails\n- Encrypt other sensiti"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 472,
+          "context": "\"   - Use the rekey.py script to create a new encryp"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 487,
+          "context": "\"   - Use the rekey.py script to create a new encryp"
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 507,
+          "context": "\"   python rekey.py\\n\\n\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 525,
+          "context": "\"   python rekey.py\\n\\n\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 545,
+          "context": "\"4. If issues persist, run rekey.py to re-encrypt\\n\\n\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\mount.py",
+          "line": 564,
+          "context": "\"4. If issues persist, run rekey.py to re-encrypt\\n\\n\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 597,
+          "context": "rekey_path = SCRIPT_DIR / \"rekey.py\"\n            result = subproc"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 612,
+          "context": "did not complete. Run 'python rekey.py' manually.\")\n        else:"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 1406,
+          "context": "ELY</strong> run <code>python rekey.py</code> to change credentials<"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2418,
+          "context": "rekey_path = SCRIPT_DIR / \"rekey.py\"\n            result = subproc"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2426,
+          "context": "warn(\"Run 'python rekey.py' manually as soon as possible"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2442,
+          "context": "warn(\"Run 'python rekey.py' manually as soon as possible"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 2446,
+          "context": "!\")\n        warn(\"Run 'python rekey.py' as soon as possible!\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 55,
+          "context": "on drive: .smartdrive/scripts/rekey.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\rekey.py",
+          "line": 62,
+          "context": "e:\n    # Development: scripts/rekey.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 228,
+          "context": "):\")\n    print(f\"      python rekey.py\")\n    print(f\"      (from {la"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "\", \"mount.py\", \"unmount.py\", \"rekey.py\", \"keyfile.py\", \"gui_launcher"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3164,
+          "context": "py\"]\n    OPTIONAL_SCRIPTS = [\"rekey.py\", \"keyfile.py\", \"gui_launcher"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3382,
+          "context": "t.py\", \"unmount.py\",\n        \"rekey.py\", \"keyfile.py\"\n    ])"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1099,
+          "context": "unmount.py when done\n  4. Use rekey.py to change password or rotate"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1132,
+          "context": ".py\", \"unmount.py\", \n        \"rekey.py\", \"keyfile.py\"\n    ])"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1699,
+          "context": "\"rekey\": (lambda: run_script(\"rekey.py\"), \"rekey.py\"),\n        \"keyf"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1699,
+          "context": "bda: run_script(\"rekey.py\"), \"rekey.py\"),\n        \"keyfile_utils\": ("
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\setup.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 467,
+          "context": "mentation scripts\n\u2502       \u251c\u2500\u2500 setup.py                # Setup wizard"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 486,
+          "context": "appers (NOT deployed)\n\u2502   \u251c\u2500\u2500 setup.py                    # -> .smar"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 486,
+          "context": "# -> .smartdrive/scripts/setup.py\n\u2502   \u251c\u2500\u2500 gui.py"
+        },
+        {
+          "file": "README.md",
+          "line": 359,
+          "context": "ting up {PRODUCT_NAME}\npython setup.py  # Select your key during Pha"
+        },
+        {
+          "file": "README.md",
+          "line": 404,
+          "context": "(GUI) | Temp directory |\n| **`setup.py`** | ~30-120 seconds (GUI) |"
+        },
+        {
+          "file": "README.md",
+          "line": 681,
+          "context": "Unified CLI menu\n\u2502       \u251c\u2500\u2500 setup.py             # Drive setup wiz"
+        },
+        {
+          "file": "README.md",
+          "line": 689,
+          "context": "appers (NOT deployed)\n\u2502   \u251c\u2500\u2500 setup.py                 # -> .smartdr"
+        },
+        {
+          "file": "README.md",
+          "line": 689,
+          "context": "# -> .smartdrive/scripts/setup.py\n\u2502   \u2514\u2500\u2500 ..."
+        },
+        {
+          "file": "README.md",
+          "line": 747,
+          "context": "Guarantees | `recovery.py`, `setup.py` | Unit tests |\n| \u00a77 Security"
+        },
+        {
+          "file": "README.md",
+          "line": 849,
+          "context": "--------|----------------|\n| `setup.py` | Drive setup wizard; calls"
+        },
+        {
+          "file": "README.md",
+          "line": 889,
+          "context": "der:**\n```python\n# In scripts/setup.py\ndef build_veracrypt_mount_cmd"
+        },
+        {
+          "file": "README.md",
+          "line": 1661,
+          "context": "e:\n\n```bash\ncd scripts\npython setup.py\n```\n\n**The wizard will:**\n1."
+        },
+        {
+          "file": "README.md",
+          "line": 1804,
+          "context": "lished 4-phase UI** matching `setup.py` style\n- \ud83d\udccb **Step-by-step GUI"
+        },
+        {
+          "file": "README.md",
+          "line": 1815,
+          "context": "):\n   - Use VeraCrypt GUI or `setup.py` wizard\n   - Set a temporary"
+        },
+        {
+          "file": "README.md",
+          "line": 1819,
+          "context": "LAUNCHER partition** (or use `setup.py` to auto-deploy)\n\n3. **Run re"
+        },
+        {
+          "file": "README.md",
+          "line": 2020,
+          "context": "## Recommended Disk Layout\n\n**setup.py creates this automatically us"
+        },
+        {
+          "file": "README.md",
+          "line": 2040,
+          "context": "up Instructions (if not using setup.py)\n\n1. **Partition your externa"
+        },
+        {
+          "file": "README.md",
+          "line": 2165,
+          "context": "nless absolutely certain\n\n### setup.py \"Convert GPT failed\"\n- This h"
+        },
+        {
+          "file": "README.md",
+          "line": 2167,
+          "context": "ks already formatted as MBR\n- setup.py now uses MBR by default (bett"
+        },
+        {
+          "file": "README.md",
+          "line": 2168,
+          "context": "r on an older version, update setup.py\n\n### Volume mounts but shows"
+        },
+        {
+          "file": "README.md",
+          "line": 2172,
+          "context": "s with partition encryption\n- setup.py now uses VeraCrypt GUI for vo"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 73,
+          "context": "e used)\nENTRY_POINTS = {\n    \"setup.py\",\n    \"mount.py\",\n    \"unmoun"
+        },
+        {
+          "file": "scripts\\setup.py",
+          "line": 3,
+          "context": "rwards to .smartdrive/scripts/setup.py\n\nThis wrapper allows running"
+        },
+        {
+          "file": "scripts\\setup.py",
+          "line": 5,
+          "context": "llows running `python scripts/setup.py` from the repo root during de"
+        },
+        {
+          "file": "scripts\\setup.py",
+          "line": 8,
+          "context": "ion is in .smartdrive/scripts/setup.py\n\"\"\"\n\nimport sys\nfrom pathlib"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 314,
+          "context": "script:SmartDriveDir \"scripts\\setup.py\"),\n        (Join-Path $script"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 489,
+          "context": "script:SmartDriveDir \"scripts\\setup.py\"\n    $pythonCode = @\"\nfrom co"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 43,
+          "context": "_subprocess(self):\n        \"\"\"setup.py must not pass --skip-auth to"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 46,
+          "context": "mport Path\n        \n        # setup.py is now in .smartdrive/scripts"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 47,
+          "context": "martdrive_root / \"scripts\" / \"setup.py\"\n        content = setup_path"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 99,
+          "context": "mport Path\n        \n        # setup.py is now in .smartdrive/scripts"
+        },
+        {
+          "file": "tests\\unit\\test_recovery_setup.py",
+          "line": 100,
+          "context": "martdrive_root / \"scripts\" / \"setup.py\"\n        content = setup_path"
+        },
+        {
+          "file": "tests\\unit\\test_scripts_syntax.py",
+          "line": 145,
+          "context": "\"unmount.py\",\n        \"setup.py\",\n        \"recovery.py\","
+        },
+        {
+          "file": "tests\\unit\\test_unified_menu.py",
+          "line": 223,
+          "context": "_properties(self):\n        \"\"\"setup.py select_drive must check is_sy"
+        },
+        {
+          "file": "tests\\unit\\test_unified_menu.py",
+          "line": 226,
+          "context": "t sys\n        \n        # Read setup.py source\n        setup_path = _"
+        },
+        {
+          "file": "tests\\unit\\test_unified_menu.py",
+          "line": 227,
+          "context": "martdrive_root / \"scripts\" / \"setup.py\"\n        with open(setup_path"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 281,
+          "context": "\"version.py\",\n        \"setup.py\",\n        \"update.py\",\n    ]"
+        },
+        {
+          "file": ".smartdrive\\core\\safety.py",
+          "line": 514,
+          "context": "gger.info(\"SOURCE DISK (where setup.py is running from):\")\n        i"
+        },
+        {
+          "file": ".smartdrive\\core\\safety.py",
+          "line": 568,
+          "context": "f\"is the same disk that setup.py is running from. \""
+        },
+        {
+          "file": ".smartdrive\\core\\safety.py",
+          "line": 592,
+          "context": "Call this from setup.py before partition_drive_*() fu"
+        },
+        {
+          "file": ".smartdrive\\core\\safety.py",
+          "line": 595,
+          "context": "ipt_path: Path(__file__) from setup.py\n            target_disk_numbe"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 167,
+          "context": "tation\", True),\n            (\"setup.py\", \"Setup wizard\", True),"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 88,
+          "context": "tderr)\n    print(\"  2. Re-run setup.py to redeploy\", file=sys.stderr"
+        },
+        {
+          "file": ".smartdrive\\scripts\\recovery.py",
+          "line": 1448,
+          "context": "re-auth).\n    \n    Called by setup.py when user opts into recovery"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 22,
+          "context": "privileges\n\nUsage:\n    python setup.py              # Interactive wi"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 23,
+          "context": "Interactive wizard\n    python setup.py --help       # Show options\n\""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 49,
+          "context": "on drive: .smartdrive/scripts/setup.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 56,
+          "context": "e:\n    # Development: scripts/setup.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3164,
+          "context": "\"gui_i18n.py\", \"version.py\", \"setup.py\", \"update.py\", \"deploy.py\"]"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3463,
+          "context": "rint(\"\\nRun with: sudo python setup.py\")\n        return 1\n    log(\"\u2713"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1096,
+          "context": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  1. Run setup.py to prepare a new external dri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1129,
+          "context": "o SMARTDRIVE partition\n    # (setup.py is NOT deployed, so it's excl"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1698,
+          "context": "\"setup\": (lambda: run_script(\"setup.py\"), \"setup.py\"),\n        \"reke"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1698,
+          "context": "bda: run_script(\"setup.py\"), \"setup.py\"),\n        \"rekey\": (lambda:"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\smartdrive.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 476,
+          "context": "eyfile management\n\u2502       \u251c\u2500\u2500 smartdrive.py           # CLI launcher (uni"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 491,
+          "context": "e/scripts/recovery.py\n\u2502   \u251c\u2500\u2500 smartdrive.py               # -> .smartdriv"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 491,
+          "context": "# -> .smartdrive/scripts/smartdrive.py\n\u2502   \u251c\u2500\u2500 deploy.py"
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 56,
+          "context": "nd\n)\n\nREM Fallback: Check for smartdrive.py\nif exist \".smartdrive\\scripts"
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 57,
+          "context": "if exist \".smartdrive\\scripts\\smartdrive.py\" (\n    echo Launching KeyDriv"
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 58,
+          "context": "menu from .smartdrive\\scripts\\smartdrive.py\n    where pythonw >nul 2>&1"
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 61,
+          "context": "thonw -B \".smartdrive\\scripts\\smartdrive.py\"\n    ) else (\n        start \""
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 63,
+          "context": "ython -B \".smartdrive\\scripts\\smartdrive.py\"\n    )\n    goto :end\n)\n\nREM N"
+        },
+        {
+          "file": "KeyDrive.bat",
+          "line": 75,
+          "context": "echo   - .smartdrive\\scripts\\smartdrive.py\necho.\necho Current directory:"
+        },
+        {
+          "file": "README.md",
+          "line": 680,
+          "context": "# Runtime scripts\n\u2502       \u251c\u2500\u2500 smartdrive.py        # Unified CLI menu\n\u2502"
+        },
+        {
+          "file": "README.md",
+          "line": 710,
+          "context": "\u251c\u2500\u2500 scripts/\n    \u2502   \u251c\u2500\u2500 smartdrive.py\n    \u2502   \u251c\u2500\u2500 mount.py\n    \u2502"
+        },
+        {
+          "file": "README.md",
+          "line": 1184,
+          "context": "tly:**\n```bash\npython scripts/smartdrive.py\n```\n\n### Unified Menu with Ad"
+        },
+        {
+          "file": "README.md",
+          "line": 1237,
+          "context": "do python .smartdrive/scripts/smartdrive.py`\n\n### System Drive Protection"
+        },
+        {
+          "file": "README.md",
+          "line": 1261,
+          "context": "g)\npython .smartdrive/scripts/smartdrive.py\n\n# Explicit config path (reco"
+        },
+        {
+          "file": "README.md",
+          "line": 1264,
+          "context": "n)\npython .smartdrive/scripts/smartdrive.py --config /path/to/config.json"
+        },
+        {
+          "file": "README.md",
+          "line": 1267,
+          "context": "rm\npython .smartdrive/scripts/smartdrive.py -c /path/to/config.json\n```"
+        },
+        {
+          "file": "README.md",
+          "line": 2231,
+          "context": "UI implementation\n\u2502   \u2502   \u251c\u2500\u2500 smartdrive.py           # CLI menu launcher"
+        },
+        {
+          "file": "README.md",
+          "line": 2321,
+          "context": "Scripts work from any CWD | `smartdrive.py --help` succeeds from Home, T"
+        },
+        {
+          "file": "README.md",
+          "line": 2349,
+          "context": "lidated\n[14:32:01.789] [PASS] smartdrive.py --help works from Home Direct"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 77,
+          "context": ".py\",\n    \"recovery.py\",\n    \"smartdrive.py\",\n    \"gui.py\",\n    \"gui_laun"
+        },
+        {
+          "file": "scripts\\smartdrive.py",
+          "line": 3,
+          "context": "rwards to .smartdrive/scripts/smartdrive.py\n\nThis wrapper allows running"
+        },
+        {
+          "file": "scripts\\smartdrive.py",
+          "line": 5,
+          "context": "llows running `python scripts/smartdrive.py` from the repo root during de"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 615,
+          "context": "script:SmartDriveDir \"scripts\\smartdrive.py\"\n    \n    foreach ($testDir i"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 624,
+          "context": "# Run smartdrive.py --help\n            $result ="
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 629,
+          "context": "{\n                Write-Pass \"smartdrive.py --help works from $($testDir."
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 631,
+          "context": "{\n                Write-Fail \"smartdrive.py failed from $($testDir.Name):"
+        },
+        {
+          "file": "tests\\unit\\test_scripts_syntax.py",
+          "line": 147,
+          "context": "\"recovery.py\",\n        \"smartdrive.py\",\n        \"gui.py\",\n    }"
+        },
+        {
+          "file": ".smartdrive\\core\\constants.py",
+          "line": 694,
+          "context": "g name of handler function in smartdrive.py\n    \"\"\"\n    \n    # Operation"
+        },
+        {
+          "file": ".smartdrive\\core\\context.py",
+          "line": 154,
+          "context": "TIAL ENTRY POINTS ONLY (e.g., smartdrive.py launched directly).\n        S"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 271,
+          "context": "\"crypto_utils.py\",\n        \"smartdrive.py\",\n    ]\n    \n    # Optional s"
+        },
+        {
+          "file": ".smartdrive\\scripts\\cli_i18n.py",
+          "line": 8,
+          "context": "provides i18n support for the smartdrive.py CLI tool,\nloading the languag"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 159,
+          "context": "zation\", True),\n            (\"smartdrive.py\", \"Unified CLI interface\", Tr"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 3172,
+          "context": "tdrive_script = script_dir / \"smartdrive.py\"\n            # Config is at ."
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 146,
+          "context": "se the SmartDrive CLI: python smartdrive.py\\n2. Select option 6: Recovery"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 147,
+          "context": "se the SmartDrive CLI: python smartdrive.py\\n2. Select option 6: Recovery"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 301,
+          "context": "ie die SmartDrive CLI: python smartdrive.py\\n2. W\u00e4hlen Sie Option 6: Reco"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 302,
+          "context": "ie die SmartDrive CLI: python smartdrive.py\\n2. W\u00e4hlen Sie Option 6: Reco"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 456,
+          "context": "istite SmartDrive CLI: python smartdrive.py\\n2. Odaberite opciju 6: Paket"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 457,
+          "context": "istite SmartDrive CLI: python smartdrive.py\\n2. Odaberite opciju 6: Paket"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 611,
+          "context": "la CLI de SmartDrive: python smartdrive.py\\n2. Selecciona la opci\u00f3n 6: K"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 612,
+          "context": "la CLI de SmartDrive: python smartdrive.py\\n2. Selecciona la opci\u00f3n 6: K"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 766,
+          "context": "ez la CLI SmartDrive : python smartdrive.py\\n2. S\u00e9lectionnez l'option 6 :"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 767,
+          "context": "ez la CLI SmartDrive : python smartdrive.py\\n2. S\u00e9lectionnez l'option 6 :"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 921,
+          "context": "\u043a\u0440\u043e\u0439\u0442\u0435 SmartDrive CLI: python smartdrive.py\\n2. \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u0443\u043d\u043a\u0442 6: Recover"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 922,
+          "context": "\u043a\u0440\u043e\u0439\u0442\u0435 SmartDrive CLI: python smartdrive.py\\n2. \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u0443\u043d\u043a\u0442 6: Recover"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 1076,
+          "context": "\\n1. \u4f7f\u7528 SmartDrive CLI\uff1apython smartdrive.py\\n2. \u9009\u62e9\u9009\u9879 6\uff1a\u6062\u590d\u5de5\u5177\u5305\\n3. \u6309\u7167\u6062\u590d\u8bf4\u660e\u64cd\u4f5c"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui_i18n.py",
+          "line": 1077,
+          "context": "\\n1. \u4f7f\u7528 SmartDrive CLI\uff1apython smartdrive.py\\n2. \u9009\u62e9\u9009\u9879 6\uff1a\u6062\u590d\u5de5\u5177\u5305\\n3. \u9009\u62e9 'Gene"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "ipts/\n    scripts_to_copy = [\"smartdrive.py\", \"mount.py\", \"unmount.py\", \""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3064,
+          "context": "martdrive_py = scripts_dir / \"smartdrive.py\"\n    if smartdrive_py.exists("
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3066,
+          "context": "artdrive_py, launcher_path / \"smartdrive.py\")\n        log(\"  Copied smart"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3067,
+          "context": "ve.py\")\n        log(\"  Copied smartdrive.py (OS-independent launcher)\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3163,
+          "context": "_cli.py\", \"crypto_utils.py\", \"smartdrive.py\"]\n    OPTIONAL_SCRIPTS = [\"re"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3257,
+          "context": "martdrive_root / \"scripts\" / \"smartdrive.py\"\n    if smartdrive_py.exists("
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3259,
+          "context": "artdrive_py, launcher_path / \"smartdrive.py\")\n        log(\"  Copied smart"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3260,
+          "context": "ve.py\")\n        log(\"  Copied smartdrive.py (OS-independent launcher)\")"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3381,
+          "context": "scripts = sorted([\n        \"smartdrive.py\", \"mount.py\", \"unmount.py\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 32,
+          "context": "on drive: .smartdrive/scripts/smartdrive.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 39,
+          "context": "e:\n    # Development: scripts/smartdrive.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1131,
+          "context": "scripts = sorted([\n        \"smartdrive.py\", \"mount.py\", \"unmount.py\","
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\unmount.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 469,
+          "context": "# Mount volume\n\u2502       \u251c\u2500\u2500 unmount.py              # Unmount volume"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 489,
+          "context": "rive/scripts/mount.py\n\u2502   \u251c\u2500\u2500 unmount.py                  # -> .smartd"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 489,
+          "context": "# -> .smartdrive/scripts/unmount.py\n\u2502   \u251c\u2500\u2500 recovery.py"
+        },
+        {
+          "file": "README.md",
+          "line": 606,
+          "context": "n drive** | Only `mount.py`, `unmount.py`, `config.json` | Reduce atta"
+        },
+        {
+          "file": "README.md",
+          "line": 683,
+          "context": "encrypted volume\n\u2502       \u251c\u2500\u2500 unmount.py           # Unmount encrypted"
+        },
+        {
+          "file": "README.md",
+          "line": 712,
+          "context": "\u2502   \u251c\u2500\u2500 mount.py\n    \u2502   \u251c\u2500\u2500 unmount.py\n    \u2502   \u251c\u2500\u2500 rekey.py\n    \u2502"
+        },
+        {
+          "file": "README.md",
+          "line": 807,
+          "context": "r.py\n\u2502   \u251c\u2500\u2500 mount.py\n\u2502   \u251c\u2500\u2500 unmount.py\n\u2502   \u2514\u2500\u2500 ...\n\u2514\u2500\u2500 keys/\n    \u2514\u2500\u2500"
+        },
+        {
+          "file": "README.md",
+          "line": 1758,
+          "context": "**Unmount:**\n```bash\npython unmount.py\n```\n\n**What happens depends o"
+        },
+        {
+          "file": "README.md",
+          "line": 1777,
+          "context": "g config.json settings\npython unmount.py\n\n# Unmount specific drive (Wi"
+        },
+        {
+          "file": "README.md",
+          "line": 1780,
+          "context": "ecific drive (Windows)\npython unmount.py V\n\n# Unmount specific mount p"
+        },
+        {
+          "file": "README.md",
+          "line": 1783,
+          "context": "nt point (Linux/macOS)\npython unmount.py ~/veradrive\n\n# Unmount all Ve"
+        },
+        {
+          "file": "README.md",
+          "line": 1786,
+          "context": "all VeraCrypt volumes\npython unmount.py --all\n```\n\n---\n\n## \ud83d\udd04 Rotating"
+        },
+        {
+          "file": "README.md",
+          "line": 2024,
+          "context": "ripts/mount.py`\n   - `scripts/unmount.py`\n   - `scripts/rekey.py`\n   -"
+        },
+        {
+          "file": "README.md",
+          "line": 2052,
+          "context": "cripts/mount.py\n   cp scripts/unmount.py <LAUNCHER>/scripts/unmount.py"
+        },
+        {
+          "file": "README.md",
+          "line": 2052,
+          "context": "unmount.py <LAUNCHER>/scripts/unmount.py\n   cp scripts/config.json <LA"
+        },
+        {
+          "file": "README.md",
+          "line": 2229,
+          "context": "scripts\n\u2502   \u2502   \u251c\u2500\u2500 mount.py, unmount.py    # Volume operations\n\u2502   \u2502"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 75,
+          "context": "tup.py\",\n    \"mount.py\",\n    \"unmount.py\",\n    \"recovery.py\",\n    \"sma"
+        },
+        {
+          "file": "scripts\\unmount.py",
+          "line": 3,
+          "context": "rwards to .smartdrive/scripts/unmount.py\n\nThis wrapper allows running"
+        },
+        {
+          "file": "scripts\\unmount.py",
+          "line": 5,
+          "context": "llows running `python scripts/unmount.py` from the repo root during de"
+        },
+        {
+          "file": "tools\\verify_e2e_windows.ps1",
+          "line": 316,
+          "context": "script:SmartDriveDir \"scripts\\unmount.py\"),\n        (Join-Path $script"
+        },
+        {
+          "file": "tests\\unit\\test_scripts_syntax.py",
+          "line": 144,
+          "context": "\"mount.py\",\n        \"unmount.py\",\n        \"setup.py\","
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 266,
+          "context": "\"mount.py\",\n        \"unmount.py\",\n        \"recovery.py\","
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 162,
+          "context": "unting\", True),\n            (\"unmount.py\", \"Volume unmounting\", True),"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 564,
+          "context": "nmount_script = script_dir / \"unmount.py\"\n\n            if not unmount_"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "\"smartdrive.py\", \"mount.py\", \"unmount.py\", \"rekey.py\", \"keyfile.py\", \""
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3163,
+          "context": "UIRED_SCRIPTS = [\"mount.py\", \"unmount.py\", \"recovery.py\", \"recovery_co"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3381,
+          "context": "\"smartdrive.py\", \"mount.py\", \"unmount.py\",\n        \"rekey.py\", \"keyfil"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1098,
+          "context": "the encrypted volume\n  3. Use unmount.py when done\n  4. Use rekey.py t"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1131,
+          "context": "\"smartdrive.py\", \"mount.py\", \"unmount.py\", \n        \"rekey.py\", \"keyfi"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1697,
+          "context": "nmount\": (lambda: run_script(\"unmount.py\"), \"unmount.py\"),\n        \"se"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 1697,
+          "context": "a: run_script(\"unmount.py\"), \"unmount.py\"),\n        \"setup\": (lambda:"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 8,
+          "context": "mount.py.\n\nUsage:\n    python unmount.py          # Unmount using conf"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 9,
+          "context": "nfig.json settings\n    python unmount.py V        # Unmount drive V: ("
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 10,
+          "context": "drive V: (Windows)\n    python unmount.py /mnt/vc  # Unmount mount poin"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 11,
+          "context": "oint (Linux/macOS)\n    python unmount.py --all    # Unmount all VeraCr"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 34,
+          "context": "on drive: .smartdrive/scripts/unmount.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 41,
+          "context": "e:\n    # Development: scripts/unmount.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 292,
+          "context": ")\n            print(\"  python unmount.py <drive_letter>  # Windows: un"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 293,
+          "context": ")\n            print(\"  python unmount.py <mount_point>   # Linux/macOS"
+        },
+        {
+          "file": ".smartdrive\\scripts\\unmount.py",
+          "line": 294,
+          "context": ")\n            print(\"  python unmount.py --all           # Unmount all"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\update.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 482,
+          "context": "# Deployment tool\n\u2502       \u251c\u2500\u2500 update.py               # Update mechan"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 635,
+          "context": "ouldn't be deployed\n4. Verify update.py and deploy.py file lists are"
+        },
+        {
+          "file": "README.md",
+          "line": 2191,
+          "context": "h `python .smartdrive/scripts/update.py --drive <LETTER> --yes`\n- **W"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 81,
+          "context": "er.py\",\n    \"deploy.py\",\n    \"update.py\",\n    \"rekey.py\",\n    \"keyfil"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 282,
+          "context": "\"setup.py\",\n        \"update.py\",\n    ]\n    \n    @classmethod"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 136,
+          "context": "for what deploy.py copies and update.py validates.\n\nPAYLOAD_MANIFEST"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 168,
+          "context": "wizard\", True),\n            (\"update.py\", \"Update functionality\", Tru"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 3052,
+          "context": "update_script = script_dir / \"update.py\"\n            python_exe = get"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3164,
+          "context": "\", \"version.py\", \"setup.py\", \"update.py\", \"deploy.py\"]\n    scripts_to"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 96,
+          "context": "mportError:\n    # Fallback if update.py not available\n    def update_"
+        },
+        {
+          "file": ".smartdrive\\scripts\\smartdrive.py",
+          "line": 98,
+          "context": "functionality not available (update.py missing)\")\n        return Fal"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 9,
+          "context": "user data.\n\nUsage:\n    python update.py"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 10,
+          "context": "# Interactive mode\n    python update.py --drive G"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 11,
+          "context": "ate specific drive\n    python update.py --dry-run"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 14,
+          "context": "nal drive GUI mode\n    python update.py --mode external_drive --sourc"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 15,
+          "context": "server --url <URL>\n    python update.py --mode external_drive --sourc"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 41,
+          "context": "on drive: .smartdrive/scripts/update.py\n    # DEPLOY_ROOT = .smartdri"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 48,
+          "context": "e:\n    # Development: scripts/update.py at repo root\n    _project_roo"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 595,
+          "context": "t: DRIVE:\\.smartdrive\\scripts\\update.py\n            #   .parent = DRI"
+        }
+      ]
+    },
+    {
+      "obsolete_file": "obsolete\\reference_scripts\\version.py",
+      "active_references": [
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 19,
+          "context": "SSOT modules involved (`core/version.py`, `core/constants.py`, etc.)"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 116,
+          "context": "----------|\n| Version | `core/version.py` | `VERSION`, build identifie"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 457,
+          "context": "\u251c\u2500\u2500 __init__.py\n\u2502   \u2502   \u251c\u2500\u2500 version.py              # VERSION consta"
+        },
+        {
+          "file": "AGENT_ARCHITECTURE.md",
+          "line": 483,
+          "context": "Update mechanism\n\u2502       \u2514\u2500\u2500 version.py              # Version re-exp"
+        },
+        {
+          "file": "README.md",
+          "line": 674,
+          "context": "s (authoritative)\n\u2502   \u2502   \u251c\u2500\u2500 version.py           # VERSION constant"
+        },
+        {
+          "file": "README.md",
+          "line": 704,
+          "context": "ed 1:1 from repo)\n    \u2502   \u251c\u2500\u2500 version.py\n    \u2502   \u251c\u2500\u2500 constants.py"
+        },
+        {
+          "file": "README.md",
+          "line": 757,
+          "context": "-|------|\n| `.smartdrive/core/version.py` | `VERSION` constant |\n| `.s"
+        },
+        {
+          "file": "README.md",
+          "line": 797,
+          "context": "/\n\u2502   \u251c\u2500\u2500 __init__.py\n\u2502   \u251c\u2500\u2500 version.py\n\u2502   \u251c\u2500\u2500 constants.py\n\u2502   \u251c\u2500\u2500"
+        },
+        {
+          "file": "scripts\\audit_repo_health.py",
+          "line": 61,
+          "context": "\"core/__init__.py\",\n    \"core/version.py\",\n    \"core/constants.py\","
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 6,
+          "context": "RSION is only defined in core/version.py\n2. Constants are not duplicat"
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 31,
+          "context": "\"version\": \".smartdrive/core/version.py\",\n    \"constants\": \".smartdri"
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 40,
+          "context": "ATHS = {\n    \"version\": \"core/version.py\",\n    \"constants\": \"core/cons"
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 57,
+          "context": "SION definitions outside core/version.py\nVERSION_PATTERNS = [\n    (r'^"
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 144,
+          "context": "SION definitions outside core/version.py.\"\"\"\n    violations = []\n    l"
+        },
+        {
+          "file": "scripts\\check_single_source_of_truth.py",
+          "line": 386,
+          "context": "n-core files, and not in core/version.py)\n        if rel_str != CORE_M"
+        },
+        {
+          "file": "tools\\verify_runtime.ps1",
+          "line": 106,
+          "context": "/constants.py\",\n        \"core/version.py\"\n    )\n    \n    foreach ($mod"
+        },
+        {
+          "file": ".smartdrive\\core\\paths.py",
+          "line": 280,
+          "context": "\",\n        \"gui.py\",\n        \"version.py\",\n        \"setup.py\","
+        },
+        {
+          "file": ".smartdrive\\core\\version.py",
+          "line": 1,
+          "context": "# core/version.py - SINGLE SOURCE OF TRUTH for"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 143,
+          "context": "e init\", True),\n            (\"version.py\", \"VERSION constant\", True),"
+        },
+        {
+          "file": ".smartdrive\\scripts\\deploy.py",
+          "line": 169,
+          "context": "nality\", True),\n            (\"version.py\", \"Version display\", False),"
+        },
+        {
+          "file": ".smartdrive\\scripts\\gui.py",
+          "line": 2101,
+          "context": "# Version label (always from version.py)\n        self.version_label.s"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3017,
+          "context": "i18n.py\", \"crypto_utils.py\", \"version.py\"]\n    for script in scripts_t"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3164,
+          "context": "y\", \"gui.py\", \"gui_i18n.py\", \"version.py\", \"setup.py\", \"update.py\", \"d"
+        },
+        {
+          "file": ".smartdrive\\scripts\\setup.py",
+          "line": 3207,
+          "context": "y\", \"paths.py\", \"limits.py\", \"version.py\"]\n        for core_file in co"
+        },
+        {
+          "file": ".smartdrive\\scripts\\update.py",
+          "line": 422,
+          "context": "Only update if the version in version.py is different\n            if c"
+        },
+        {
+          "file": ".smartdrive\\scripts\\version.py",
+          "line": 2,
+          "context": "single source of truth: core/version.py\n# DO NOT define VERSION here"
+        },
+        {
+          "file": ".smartdrive\\scripts\\version.py",
+          "line": 13,
+          "context": "on drive: .smartdrive/scripts/version.py\n    _deploy_root = _script_di"
+        },
+        {
+          "file": ".smartdrive\\scripts\\version.py",
+          "line": 18,
+          "context": "e:\n    # Development: scripts/version.py at repo root\n    _project_roo"
+        }
+      ]
+    }
+  ],
+  "deployment_drift": {
+    "deployed_file_count": 53,
+    "smartdrive_files": [
+      "config.json",
+      "core\\__init__.py",
+      "core\\config.py",
+      "core\\constants.py",
+      "core\\context.py",
+      "core\\limits.py",
+      "core\\modes.py",
+      "core\\paths.py",
+      "core\\platform.py",
+      "core\\resources.py",
+      "core\\safety.py",
+      "core\\single_instance.py",
+      "core\\tray.py",
+      "core\\version.py",
+      "logs\\e2e-2025-12-16_23-00-08.log",
+      "logs\\e2e-2025-12-16_23-01-08.log",
+      "logs\\e2e-2025-12-16_23-02-04.log",
+      "logs\\e2e-2025-12-16_23-02-21.log",
+      "scripts\\cli_i18n.py",
+      "scripts\\config.json",
+      "scripts\\crypto_utils.py",
+      "scripts\\deploy.py",
+      "scripts\\gui.py",
+      "scripts\\gui_i18n.py",
+      "scripts\\gui_launcher.py",
+      "scripts\\keyfile.py",
+      "scripts\\mount.py",
+      "scripts\\recovery.py",
+      "scripts\\recovery_container.py",
+      "scripts\\rekey.py",
+      "scripts\\setup.py",
+      "scripts\\smartdrive.py",
+      "scripts\\unmount.py",
+      "scripts\\update.py",
+      "scripts\\veracrypt_cli.py",
+      "scripts\\version.py",
+      "static\\LOGO_drive.png",
+      "static\\LOGO_drive_full.png",
+      "static\\LOGO_key.png",
+      "static\\LOGO_key_full.png",
+      "static\\LOGO_key_small_black.png",
+      "static\\LOGO_key_small_white.png",
+      "static\\LOGO_main.ico",
+      "static\\LOGO_main.png",
+      "static\\LOGO_main__.ico",
+      "static\\LOGO_main__.png",
+      "static\\LOGO_mounted.ico",
+      "static\\LOGO_mounted.png",
+      "static\\LOGO_mounted__.ico",
+      "static\\LOGO_mounted__.png",
+      "static\\LOGO_raw_black.png",
+      "static\\LOGO_raw_white.png",
+      "static\\LOGO_raw_white_circled.png"
+    ]
+  },
+  "orphaned_tests": [
+    {
+      "test_file": "tests\\unit\\test_recovery_setup.py",
+      "missing_import": "inspect"
+    },
+    {
+      "test_file": "tests\\unit\\test_scripts_syntax.py",
+      "missing_import": "importlib"
+    },
+    {
+      "test_file": "tests\\unit\\test_scripts_syntax.py",
+      "missing_import": "ast"
+    },
+    {
+      "test_file": "tests\\unit\\test_unified_menu.py",
+      "missing_import": "inspect"
+    }
+  ]
+}
