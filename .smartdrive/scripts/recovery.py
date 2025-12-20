@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SmartDrive Recovery System
+KeyDrive Recovery System
 
 INVARIANT: Recovery NEVER mounts with a recovery password.
            Recovery ALWAYS reconstructs original credentials via encrypted container.
@@ -124,22 +124,37 @@ def check_dependencies():
         missing.append("argon2-cffi")
 
     if missing:
-        print("\n" + "=" * 70)
-        print("MISSING REQUIRED DEPENDENCIES")
-        print("=" * 70 + "\n")
-        print(f"The following packages are required but not installed:\n")
+        error_msg = (
+            "\n" + "=" * 70 + "\n"
+            "MISSING REQUIRED DEPENDENCIES\n"
+            + "=" * 70 + "\n\n"
+            f"The following packages are required but not installed:\n\n"
+        )
         for pkg in missing:
-            print(f"  - {pkg}")
-        print(f"\nInstall with:\n")
-        print(f"  pip install -r requirements.txt")
-        print(f"\nOr directly:\n")
-        print(f"  pip install {' '.join(missing)}")
-        print("\n" + "=" * 70)
+            error_msg += f"  - {pkg}\n"
+        error_msg += (
+            f"\nInstall with:\n\n"
+            f"  pip install -r requirements.txt\n\n"
+            f"Or directly:\n\n"
+            f"  pip install {' '.join(missing)}\n\n"
+            + "=" * 70
+        )
+        
+        # In test environments, raise ImportError instead of sys.exit
+        # This allows pytest to skip/handle the import gracefully
+        if "pytest" in sys.modules or "unittest" in sys.modules:
+            raise ImportError(error_msg)
+        
+        print(error_msg)
         sys.exit(1)
 
 
 # Check dependencies at import time
-check_dependencies()
+try:
+    check_dependencies()
+except ImportError:
+    # Re-raise ImportError for test environments
+    raise
 
 
 def _verify_config_keys():
@@ -1039,7 +1054,7 @@ def generate_offline_instructions_qr() -> Optional[str]:
         "3. Run: python recovery.py recover\n"
         "4. Enter 24-word phrase\n"
         "5. After success: python rekey.py\n"
-        "GITHUB: github.com/smartdrive/recovery"
+        f"GITHUB: {Paths.REPO_URL}"
     )
 
     return generate_qr_data_url(instructions, box_size=2)
@@ -1184,7 +1199,7 @@ def collect_mode_artifacts(
     qr_chains = {}
 
     security_mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)  # TODO 6: Use SSOT key
-    keys_dir = smartdrive_dir / "keys"
+    keys_dir = smartdrive_dir / Paths.KEYS_SUBDIR
 
     # Config snapshot - all modes
     try:
@@ -1221,17 +1236,17 @@ def collect_mode_artifacts(
             if full_seed_path.exists():
                 try:
                     seed_bytes = full_seed_path.read_bytes()
-                    artifacts["seed.gpg"] = seed_bytes
+                    artifacts[FileNames.SEED_GPG] = seed_bytes
 
                     # Generate QR chunks for seed.gpg
                     seed_chunks = encode_chunks(seed_bytes, DataType.SEED_GPG)
                     if seed_chunks:
-                        qr_chains["seed_gpg"] = seed_chunks
-                        log(f"  seed.gpg: {len(seed_bytes)} bytes, {len(seed_chunks)} QR chunks")
+                        qr_chains[FileNames.SEED_GPG] = seed_chunks
+                        log(f"  {FileNames.SEED_GPG}: {len(seed_bytes)} bytes, {len(seed_chunks)} QR chunks")
                 except Exception as e:
-                    warn(f"Failed to read seed.gpg: {e}")
+                    warn(f"Failed to read {FileNames.SEED_GPG}: {e}")
             else:
-                warn(f"seed.gpg not found at {full_seed_path}")
+                warn(f"{FileNames.SEED_GPG} not found at {full_seed_path}")
 
     elif security_mode == SecurityMode.PW_GPG_KEYFILE.value:
         # PW_GPG_KEYFILE: keyfile.vc.gpg needed for YubiKey decryption
@@ -1241,18 +1256,17 @@ def collect_mode_artifacts(
             if full_keyfile_path.exists():
                 try:
                     keyfile_bytes = full_keyfile_path.read_bytes()
-                    artifacts["keyfile.vc.gpg"] = keyfile_bytes
+                    artifacts[FileNames.KEYFILE_GPG] = keyfile_bytes
 
                     # Generate QR chunks for keyfile.vc.gpg
                     keyfile_chunks = encode_chunks(keyfile_bytes, DataType.KEYFILE_GPG)
                     if keyfile_chunks:
                         qr_chains["keyfile_gpg"] = keyfile_chunks
-                        log(f"  keyfile.vc.gpg: {len(keyfile_bytes)} bytes, {len(keyfile_chunks)} QR chunks")
+                        log(f"  {FileNames.KEYFILE_GPG}: {len(keyfile_bytes)} bytes, {len(keyfile_chunks)} QR chunks")
                 except Exception as e:
-                    warn(f"Failed to read keyfile.vc.gpg: {e}")
+                    warn(f"Failed to read {FileNames.KEYFILE_GPG}: {e}")
             else:
-                warn(f"keyfile.vc.gpg not found at {full_keyfile_path}")
-
+                warn(f"{FileNames.KEYFILE_GPG} not found at {full_keyfile_path}")
     # PW_ONLY and PW_KEYFILE don't need additional artifacts
     # (password is derived from phrase, plain keyfile is in recovery container)
 
@@ -1753,7 +1767,7 @@ To recover, you need:
 
 KDF (Key Derivation Function): {gpg_pw_only_info.get('kdf', 'hkdf-sha256')}
 SALT (base64): {gpg_pw_only_info.get('salt_b64', '(missing)')}
-HKDF INFO: {gpg_pw_only_info.get('hkdf_info', 'smartdrive-vc-pw-v1')}
+HKDF INFO: {gpg_pw_only_info.get('hkdf_info', CryptoParams.HKDF_INFO_DEFAULT)}
 
 The recovery process will:
 1. Decrypt your seed using GPG (YubiKey required)
@@ -2098,9 +2112,9 @@ def authenticate_for_generate(config: dict) -> dict:
             "mount_target": mount_target,
             "created_at": utc_timestamp_iso(),
             # KDF params needed to re-derive password from seed
-            "kdf": config.get("kdf", "hkdf-sha256"),
+            "kdf": config.get("kdf", CryptoParams.KDF_HKDF_SHA256),
             "salt_b64": salt_b64,
-            "hkdf_info": config.get("hkdf_info", "smartdrive-vc-pw-v1"),
+            "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
             "gpg_pw_only_note": "Password is derived from seed. Recovery requires the seed and these KDF params.",
         }
         return credentials
@@ -2207,7 +2221,7 @@ def generate_recovery_html(
     phrase: str,
     chunks: Optional[list] = None,
     header_chunks: Optional[list] = None,
-    volume_name: str = "SmartDrive Volume",
+    volume_name: str = f"{Branding.PRODUCT_NAME} Volume",
     volume_identity: str = "",
     environment: Optional[dict] = None,
     security_mode: str = None,
@@ -2341,7 +2355,7 @@ def generate_recovery_html(
                 artifact_sections.append(
                     f"""
         <div class="artifact-qr-group">
-            <h3>🔐 seed.gpg - GPG Encrypted Seed (ESSENTIAL)</h3>
+            <h3>🔐 {FileNames.SEED_GPG} - GPG Encrypted Seed (ESSENTIAL)</h3>
             <p><strong>This file is CRITICAL for GPG_PW_ONLY recovery.</strong></p>
             <p>Your VeraCrypt password is derived from this seed using HKDF.</p>
             <div class="qr-container">{seed_qr_images}</div>
@@ -2367,7 +2381,7 @@ def generate_recovery_html(
                 artifact_sections.append(
                     f"""
         <div class="artifact-qr-group">
-            <h3>🔑 keyfile.vc.gpg - GPG Encrypted Keyfile</h3>
+            <h3>🔑 {FileNames.KEYFILE_GPG} - GPG Encrypted Keyfile</h3>
             <p><strong>Required for PW_GPG_KEYFILE mode recovery.</strong></p>
             <p>This keyfile must be decrypted with your YubiKey before mounting.</p>
             <div class="qr-container">{keyfile_qr_images}</div>
@@ -2446,7 +2460,7 @@ def generate_recovery_html(
         <table style="font-size: 12px; background: #f8f9fa;">
             <tr><td><strong>KDF Function</strong></td><td><code>{gpg_pw_only_info.get('kdf', 'hkdf-sha256')}</code></td></tr>
             <tr><td><strong>Salt (base64)</strong></td><td><code style="word-break: break-all;">{gpg_pw_only_info.get('salt_b64', '(missing)')}</code></td></tr>
-            <tr><td><strong>HKDF Info</strong></td><td><code>{gpg_pw_only_info.get('hkdf_info', 'smartdrive-vc-pw-v1')}</code></td></tr>
+            <tr><td><strong>HKDF Info</strong></td><td><code>{gpg_pw_only_info.get('hkdf_info', CryptoParams.HKDF_INFO_DEFAULT)}</code></td></tr>
         </table>
         
         <p><strong>Recovery process:</strong></p>
@@ -2540,7 +2554,7 @@ def generate_recovery_html(
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>SmartDrive Recovery Kit</title>
+    <title>{Branding.PRODUCT_NAME} Recovery Kit</title>
     <style>
         @media print {{
             body {{ margin: 0.5in; }}
@@ -2804,13 +2818,13 @@ def generate_recovery_html(
                     <td style="color: green;">✓ Yes - encrypted container</td>
                 </tr>
                 <tr style="background: #f5f5f5;">
-                    <td><code>seed.gpg</code> (if GPG_PW_ONLY mode)</td>
+                    <td><code>{FileNames.SEED_GPG}</code> (if GPG_PW_ONLY mode)</td>
                     <td>GPG-encrypted key derivation seed</td>
                     <td style="color: green;">✓ Yes - always encrypted</td>
                 </tr>
                 <tr>
                     <td><code>scripts/</code></td>
-                    <td>SmartDrive scripts (can be restored from source)</td>
+                    <td>{Branding.PRODUCT_NAME} scripts (can be restored from source)</td>
                     <td style="color: blue;">◐ Optional - publicly available</td>
                 </tr>
             </tbody>
@@ -2819,7 +2833,7 @@ def generate_recovery_html(
         <div style="background: #fff3e0; padding: 10px; margin-top: 10px; border-radius: 3px;">
             <strong>⚠️ What NOT to modify:</strong>
             <ul style="margin: 5px 0;">
-                <li>Do NOT edit <code>config.json</code> manually - use SmartDrive tools</li>
+                <li>Do NOT edit <code>config.json</code> manually - use {Branding.PRODUCT_NAME} tools</li>
                 <li>Do NOT rename or move the <code>.smartdrive</code> folder</li>
                 <li>Do NOT delete <code>keys/</code> or <code>recovery/</code> until you've verified backups</li>
             </ul>
@@ -2846,7 +2860,7 @@ def generate_recovery_html(
     </div>
     
     <div class="footer">
-        <p>SmartDrive Recovery System • This document is CONFIDENTIAL</p>
+        <p>{Branding.PRODUCT_NAME} Recovery System • This document is CONFIDENTIAL</p>
         <p>Keep in a secure location separate from your encrypted drive</p>
         <p style="font-size: 10px; color: #999;">Generated: {timestamp} | Volume ID: {volume_identity[:16] if volume_identity else 'N/A'}...</p>
     </div>
@@ -2985,16 +2999,16 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
         if is_printable_mode:
             # Generate HTML immediately (before verification)
             log("Generating HTML recovery kit...")
-            drive_name = config.get(ConfigKeys.DRIVE_NAME, "SmartDrive")
+            drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
             volume_identity = compute_volume_identity(volume_path)
 
             # Build GPG_PW_ONLY info if applicable
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
                 gpg_pw_only_info = {
-                    "kdf": config.get("kdf", "hkdf-sha256"),
+                    "kdf": config.get("kdf", CryptoParams.KDF_HKDF_SHA256),
                     "salt_b64": config.get("salt_b64", ""),
-                    "hkdf_info": config.get("hkdf_info", "smartdrive-vc-pw-v1"),
+                    "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
                 }
 
             html = generate_recovery_html(
@@ -3008,10 +3022,12 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             )
 
             # SSOT: Save HTML to recovery directory with standard filename
-            launcher_mount = config_path.parent  # Launcher root (.smartdrive/..)
+            # BUG-20251219-010 FIX: config_path is .smartdrive/config.json
+            # parent is .smartdrive/, parent.parent is launcher root
+            launcher_mount = config_path.parent.parent  # Launcher root (H:\)
             recovery_dir = Paths.recovery_dir(launcher_mount)
             recovery_dir.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
-            html_path = recovery_dir / "SmartDrive_Recovery_Kit.html"
+            html_path = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html)
             log(f"HTML kit saved: {html_path} ✓")
@@ -3055,11 +3071,11 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                 # Explicit confirmation step
                 print("  Have you written down ALL 24 words?")
                 while True:
-                    confirm = input("  Type YES to continue: ").strip().upper()
+                    confirm = input(f"  Type {UserInputs.YES} to continue: ").strip().upper()
                     if confirm == UserInputs.YES:
                         break
                     else:
-                        print("  You must confirm by typing YES exactly.")
+                        print(f"  You must confirm by typing {UserInputs.YES} exactly.")
                         redo = input("  Press ENTER to see phrases again, or type 'abort' to cancel: ").strip().lower()
                         if redo == "abort":
                             error("Verification aborted by user")
@@ -3086,7 +3102,7 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                     row = "  "
                     for j in range(6):
                         idx = i + j
-                        row += f"{idx+1:2}. {'********':12}"
+                        row += f"{idx+1:2}. {'*****':12}"
                     print(row)
 
                 print("\n" + "-" * 70)
@@ -3129,7 +3145,9 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
 
         # STEP 5: Create container (SSOT: use Paths.recovery_dir)
         log("Creating encrypted recovery container...")
-        launcher_mount = config_path.parent  # Launcher root (.smartdrive/..)
+        # BUG-20251219-010 FIX: config_path is .smartdrive/config.json
+        # parent is .smartdrive/, parent.parent is launcher root
+        launcher_mount = config_path.parent.parent  # Launcher root (H:\)
         recovery_dir = Paths.recovery_dir(launcher_mount)
         recovery_dir.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
 
@@ -3193,15 +3211,15 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
         # For terminal mode, HTML was not generated yet - generate it now for record
         if not is_printable_mode and not html_path:
             log("Generating HTML recovery kit for archival...")
-            drive_name = config.get(ConfigKeys.DRIVE_NAME, "SmartDrive")
+            drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
             volume_identity = compute_volume_identity(volume_path)
 
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
                 gpg_pw_only_info = {
-                    "kdf": config.get("kdf", "hkdf-sha256"),
+                    "kdf": config.get("kdf", CryptoParams.KDF_HKDF_SHA256),
                     "salt_b64": config.get("salt_b64", ""),
-                    "hkdf_info": config.get("hkdf_info", "smartdrive-vc-pw-v1"),
+                    "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
                 }
 
             html = generate_recovery_html(
@@ -3215,7 +3233,7 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             )
 
             # SSOT: Use same recovery_dir path (already created earlier)
-            html_path = recovery_dir / "SmartDrive_Recovery_Kit.html"
+            html_path = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html)
             log(f"HTML kit saved: {html_path} ✓")
@@ -3358,16 +3376,16 @@ def cmd_generate(args):
         # Generate a preliminary HTML kit with phrase only (no container/header yet)
         # Full kit with all artifacts will be regenerated at step 7
         config = load_config()
-        drive_name = config.get(ConfigKeys.DRIVE_NAME, "SmartDrive")
+        drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
         mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
 
         # Build GPG_PW_ONLY info if applicable
         preliminary_gpg_info = None
         if mode == SecurityMode.GPG_PW_ONLY.value:
             preliminary_gpg_info = {
-                "kdf": config.get("kdf", "hkdf-sha256"),
+                "kdf": config.get("kdf", CryptoParams.KDF_HKDF_SHA256),
                 "salt_b64": config.get("salt_b64", ""),
-                "hkdf_info": config.get("hkdf_info", "smartdrive-vc-pw-v1"),
+                "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
             }
 
         preliminary_html = generate_recovery_html(
@@ -3387,7 +3405,7 @@ def cmd_generate(args):
         else:
             import tempfile
 
-            preliminary_kit_path = Path(tempfile.gettempdir()) / "smartdrive_recovery_PRELIMINARY.html"
+            preliminary_kit_path = Path(tempfile.gettempdir()) / "keydrive_recovery_PRELIMINARY.html"
 
         with open(preliminary_kit_path, "w", encoding="utf-8") as f:
             f.write(preliminary_html)
@@ -3506,7 +3524,7 @@ def cmd_generate(args):
                     preliminary_kit_path = (
                         CONFIG_FILE.parent / "recovery_kit_PRELIMINARY.html"
                         if CONFIG_FILE
-                        else Path(tempfile.gettempdir()) / "smartdrive_recovery_PRELIMINARY.html"
+                        else Path(tempfile.gettempdir()) / "keydrive_recovery_PRELIMINARY.html"
                     )
                     with open(preliminary_kit_path, "w", encoding="utf-8") as f:
                         f.write(preliminary_html)
@@ -3549,7 +3567,7 @@ def cmd_generate(args):
                         phrase=phrase,
                         chunks=None,
                         header_chunks=None,
-                        volume_name=drive_name if "drive_name" in dir() else "SmartDrive",
+                        volume_name=drive_name if "drive_name" in dir() else Branding.PRODUCT_NAME,
                         volume_identity="(will be computed after verification)",
                         security_mode=mode if "mode" in dir() else None,
                         gpg_pw_only_info=preliminary_gpg_info if "preliminary_gpg_info" in dir() else None,
@@ -3558,7 +3576,7 @@ def cmd_generate(args):
                     preliminary_kit_path = (
                         CONFIG_FILE.parent / "recovery_kit_PRELIMINARY.html"
                         if CONFIG_FILE
-                        else Path(tempfile.gettempdir()) / "smartdrive_recovery_PRELIMINARY.html"
+                        else Path(tempfile.gettempdir()) / "keydrive_recovery_PRELIMINARY.html"
                     )
                     with open(preliminary_kit_path, "w", encoding="utf-8") as f:
                         f.write(preliminary_html)
@@ -3604,7 +3622,7 @@ def cmd_generate(args):
         preliminary_kit_path = (
             CONFIG_FILE.parent / "recovery_kit_PRELIMINARY.html"
             if CONFIG_FILE
-            else Path(tempfile.gettempdir()) / "smartdrive_recovery_PRELIMINARY.html"
+            else Path(tempfile.gettempdir()) / "keydrive_recovery_PRELIMINARY.html"
         )
         if preliminary_kit_path.exists():
             preliminary_kit_path.unlink()
@@ -3770,9 +3788,9 @@ def cmd_generate(args):
         security_mode=credentials.get("security_mode"),
         gpg_pw_only_info=(
             {
-                "kdf": credentials.get("kdf", "hkdf-sha256"),
+                "kdf": credentials.get("kdf", CryptoParams.KDF_HKDF_SHA256),
                 "salt_b64": credentials.get("salt_b64", ""),
-                "hkdf_info": credentials.get("hkdf_info", "smartdrive-vc-pw-v1"),
+                "hkdf_info": credentials.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
             }
             if credentials.get("security_mode") == SecurityMode.GPG_PW_ONLY.value
             else None
@@ -3781,13 +3799,15 @@ def cmd_generate(args):
     )
 
     # Save HTML
-    kit_path = recovery_dir / "SmartDrive_Recovery_Kit.html"
+    kit_path = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
     kit_path.write_text(html, encoding="utf-8")
     log(f"Recovery kit saved: {kit_path}")
 
     # Open in browser
+    # BUG-20251219-011 FIX: Use .as_uri() for proper Windows path escaping
+    # f"file://{kit_path}" breaks on Windows due to backslashes
     log("Opening recovery kit in browser...")
-    webbrowser.open(f"file://{kit_path}")
+    webbrowser.open(kit_path.as_uri())
 
     # Final instructions
     print("\n" + "=" * 70)
@@ -4950,7 +4970,7 @@ def cmd_reconstruct(args):
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="SmartDrive Recovery System",
+        description=f"{Branding.PRODUCT_NAME} Recovery System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Commands:

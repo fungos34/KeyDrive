@@ -36,7 +36,7 @@ except ImportError:
     # Fallback for standalone operation
     SEED_SIZE = 32
     SALT_SIZE = 16
-    HKDF_INFO = b"smartdrive-vc-pw-v1"
+    HKDF_INFO = bytes(CryptoParams.HKDF_INFO_DEFAULT, "utf-8")
     DERIVED_PW_LENGTH = 32
 
 
@@ -75,7 +75,7 @@ def derive_veracrypt_password(seed: bytes, salt: bytes) -> str:
     """
     # HKDF implementation for deterministic derivation
     prk = hmac.new(salt, seed, hashlib.sha256).digest()
-    info = b"smartdrive-vc-pw-v1"
+    info = bytes(CryptoParams.HKDF_INFO_DEFAULT, "utf-8")
     length = 32
     t = b""
     okm = b""

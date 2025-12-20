@@ -123,7 +123,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_unix": "Unix",
         "settings_updates": "Updates",
         "settings_recovery": "Recovery",
-        "settings_lost_and_found": "Lost & Found",
+        "settings_lost_and_found": "Lost+Found",
         "settings_advanced": "Advanced",
         
         # Settings dialog - Tab descriptions
@@ -270,7 +270,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "Hardware key (YubiKey/GPG card) not detected. Please insert your hardware key and try again.",
         
         # Theme names (for theme dropdown)
-        "theme_green": "Green (Default)",
+        "theme_brand": "Brand",
+        "theme_green": "Green",
         "theme_blue": "Blue",
         "theme_rose": "Rose",
         "theme_slate": "Slate",
@@ -467,7 +468,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "Hardware-Schlüssel (YubiKey/GPG-Karte) nicht erkannt. Bitte stecken Sie Ihren Hardware-Schlüssel ein und versuchen Sie es erneut.",
         
         # Theme names (for theme dropdown)
-        "theme_green": "Grün (Standard)",
+        "theme_brand": "Marke",
+        "theme_green": "Grün",
         "theme_blue": "Blau",
         "theme_rose": "Rosa",
         "theme_slate": "Schiefer",
@@ -717,7 +719,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "Hardverski ključ (YubiKey/GPG kartica) nije detektovan. Molimo ubacite hardverski ključ i pokušajte ponovo.",
         
         # Theme names (for theme dropdown)
-        "theme_green": "Zelena (zadano)",
+        "theme_brand": "Brend",
+        "theme_green": "Zelena",
         "theme_blue": "Plava",
         "theme_rose": "Ružičasta",
         "theme_slate": "Škriljac",
@@ -967,7 +970,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "No se detectó la llave de hardware (YubiKey/tarjeta GPG). Inserta tu llave de hardware e inténtalo de nuevo.",
         
         # Theme names (for theme dropdown)
-        "theme_green": "Verde (predeterminado)",
+        "theme_brand": "Marca",
+        "theme_green": "Verde",
         "theme_blue": "Azul",
         "theme_rose": "Rosa",
         "theme_slate": "Pizarra",
@@ -1216,8 +1220,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_title": "Clé matérielle requise",
         "error_hardware_key_missing_body": "Clé matérielle (YubiKey/carte GPG) non détectée. Veuillez insérer votre clé matérielle et réessayer.",
         
-        # Theme names (for theme dropdown)
-        "theme_green": "Vert (par défaut)",
+        # Theme names (for theme dropdown
+        "theme_brand": "Marque",
+        "theme_green": "Vert",
         "theme_blue": "Bleu",
         "theme_rose": "Rose",
         "theme_slate": "Ardoise",
@@ -1467,7 +1472,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "Аппаратный ключ (YubiKey/GPG-карта) не обнаружен. Подключите аппаратный ключ и повторите попытку.",
 
         # Theme names (for theme dropdown)
-        "theme_green": "Зелёная (по умолчанию)",
+        "theme_brand": "Фирменная",
+        "theme_green": "Зелёная",
         "theme_blue": "Синяя",
         "theme_rose": "Роза",
         "theme_slate": "Сланец",
@@ -1717,7 +1723,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_hardware_key_missing_body": "未检测到硬件密钥（YubiKey/GPG 卡）。请插入硬件密钥后重试。",
         
         # Theme names (for theme dropdown)
-        "theme_green": "绿色（默认）",
+        "theme_brand": "品牌",
+        "theme_green": "绿色",
         "theme_blue": "蓝色",
         "theme_rose": "玫瑰",
         "theme_slate": "石板",

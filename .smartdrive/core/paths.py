@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 import platform
 import os
+from core.constants import FileNames
 
 
 class Paths:
@@ -24,6 +25,9 @@ class Paths:
         config_path = Paths.config_file(launcher_root)
     """
     
+    # Github repository URL
+    REPO_URL = "https://github.com/fungos34/KeyDrive"
+
     # ==========================================================================
     # Directory structure constants (relative)
     # ==========================================================================
@@ -37,31 +41,25 @@ class Paths:
     INTEGRITY_SUBDIR = "integrity"
     RECOVERY_SUBDIR = "recovery"
     STATIC_SUBDIR = "static"  # Static assets under .smartdrive/
+    DOCUMENTATION_SUBDIR = "docs"  # Documentation directory under .smartdrive/
     
     # Legacy static assets directory name (at launcher root)
     STATIC_DIR_NAME = "static"
     
-    # ==========================================================================
-    # File names
-    # ==========================================================================
+    # File names are now defined in FileNames class (constants.py)
+    # Use FileNames.* for all individual file names
+
+    # RAM-backed temporary directories (platform-specific)
+    # Used for secure temp file creation during setup
+    LINUX_RAM_TEMP = "/dev/shm"
+    MACOS_RAM_TEMP = "/tmp"
+    # Windows/fallback: uses tempfile.gettempdir()
     
-    CONFIG_FILENAME = "config.json"
+    # Linux device prefix
+    LINUX_DEV_PREFIX = "/dev/"
     
-    # Keyfile names
-    KEYFILE_PLAIN = "keyfile.vc"
-    KEYFILE_GPG = "keyfile.vc.gpg"
-    SEED_GPG = "seed.gpg"
-    
-    # Integrity files
-    INTEGRITY_HASH = "scripts.sha256"
-    INTEGRITY_SIG = "scripts.sha256.sig"
-    
-    # Recovery files
-    RECOVERY_SHARES_FILE = "shares.json"
-    RECOVERY_METADATA_FILE = "recovery_metadata.json"
-    
-    # Audit log
-    AUDIT_LOG_FILE = "audit.log"
+    # Linux mount point prefix
+    LINUX_MNT_PREFIX = "/mnt/"
 
     # Executable names (platform-specific)
     # Use these with shutil.which(...) when checking PATH
@@ -231,47 +229,47 @@ class Paths:
         NOTE: Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json.
         This is intentional - config is a runtime artifact that persists independent of scripts.
         """
-        return cls.smartdrive_dir(launcher_root) / cls.CONFIG_FILENAME
+        return cls.smartdrive_dir(launcher_root) / FileNames.CONFIG_JSON
     
     @classmethod
     def keyfile_gpg(cls, launcher_root: Path) -> Path:
         """Return the encrypted keyfile path."""
-        return cls.keys_dir(launcher_root) / cls.KEYFILE_GPG
+        return cls.keys_dir(launcher_root) / FileNames.KEYFILE_GPG
     
     @classmethod
     def keyfile_plain(cls, launcher_root: Path) -> Path:
         """Return the plain keyfile path."""
-        return cls.keys_dir(launcher_root) / cls.KEYFILE_PLAIN
+        return cls.keys_dir(launcher_root) / FileNames.KEYFILE_PLAIN
     
     @classmethod
     def seed_gpg(cls, launcher_root: Path) -> Path:
         """Return the encrypted seed path."""
-        return cls.keys_dir(launcher_root) / cls.SEED_GPG
+        return cls.keys_dir(launcher_root) / FileNames.SEED_GPG
     
     @classmethod
     def integrity_hash_file(cls, launcher_root: Path) -> Path:
         """Return the integrity hash file path."""
-        return cls.integrity_dir(launcher_root) / cls.INTEGRITY_HASH
+        return cls.integrity_dir(launcher_root) / FileNames.HASH_FILE
     
     @classmethod
     def integrity_sig_file(cls, launcher_root: Path) -> Path:
         """Return the integrity signature file path."""
-        return cls.integrity_dir(launcher_root) / cls.INTEGRITY_SIG
+        return cls.integrity_dir(launcher_root) / FileNames.SIGNATURE_FILE
     
     @classmethod
     def audit_log(cls, launcher_root: Path) -> Path:
         """Return the audit log file path."""
-        return cls.smartdrive_dir(launcher_root) / cls.AUDIT_LOG_FILE
+        return cls.smartdrive_dir(launcher_root) / FileNames.AUDIT_LOG_FILE
     
     @classmethod
     def recovery_shares(cls, launcher_root: Path) -> Path:
         """Return the recovery shares file path."""
-        return cls.recovery_dir(launcher_root) / cls.RECOVERY_SHARES_FILE
+        return cls.recovery_dir(launcher_root) / FileNames.RECOVERY_SHARES_FILE
     
     @classmethod
     def recovery_metadata(cls, launcher_root: Path) -> Path:
         """Return the recovery metadata file path."""
-        return cls.recovery_dir(launcher_root) / cls.RECOVERY_METADATA_FILE
+        return cls.recovery_dir(launcher_root) / FileNames.RECOVERY_METADATA_FILE
     
     # ==========================================================================
     # Script file paths
@@ -284,24 +282,24 @@ class Paths:
     
     # Required scripts that must exist for core functionality
     REQUIRED_SCRIPTS = [
-        "mount.py",
-        "unmount.py",
-        "recovery.py",
-        "recovery_container.py",
-        "veracrypt_cli.py",
-        "crypto_utils.py",
-        "smartdrive.py",
+        FileNames.MOUNT_PY,
+        FileNames.UNMOUNT_PY,
+        FileNames.RECOVERY_PY,
+        FileNames.RECOVERY_CONTAINER_PY,
+        FileNames.VERACRYPT_CLI_PY,
+        FileNames.CRYPTO_UTILS_PY,
+        FileNames.KEYDRIVE_PY,
     ]
     
     # Optional scripts
     OPTIONAL_SCRIPTS = [
-        "rekey.py",
-        "keyfile.py",
-        "gui_launcher.py",
-        "gui.py",
-        "version.py",
-        "setup.py",
-        "update.py",
+        FileNames.REKEY_PY,
+        FileNames.KEYFILE_PY,
+        FileNames.GUI_LAUNCHER_PY,
+        FileNames.GUI_PY,
+        FileNames.VERSION_PY,
+        FileNames.SETUP_PY,
+        FileNames.UPDATE_PY,
     ]
     
     @classmethod

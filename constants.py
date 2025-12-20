@@ -34,7 +34,7 @@ INTEGRITY_DIR_NAME = Paths.INTEGRITY_SUBDIR
 # File extensions and prefixes
 KEYFILE_PREFIX = "keyfile"
 SEED_PREFIX = "seed"
-CONFIG_FILE_NAME = Paths.CONFIG_FILENAME
+CONFIG_FILE_NAME = FileNames.CONFIG_JSON
 
 # File names (from FileNames)
 BAT_LAUNCHER_NAME = FileNames.BAT_LAUNCHER

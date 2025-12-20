@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from core.limits import Limits
+from core.constants import FileNames
 
 
 @dataclass
@@ -54,15 +55,15 @@ class Integrity:
     # Scripts included in integrity hash (deterministic order)
     # Must match Paths.REQUIRED_SCRIPTS + security-relevant optional scripts
     HASHED_SCRIPTS = [
-        "crypto_utils.py",
-        "keyfile.py",
-        "mount.py",
-        "recovery.py",
-        "recovery_container.py",
-        "rekey.py",
-        "smartdrive.py",
-        "unmount.py",
-        "veracrypt_cli.py",
+        FileNames.CRYPTO_UTILS_PY,
+        FileNames.KEYFILE_PY,
+        FileNames.MOUNT_PY,
+        FileNames.RECOVERY_PY,
+        FileNames.RECOVERY_CONTAINER_PY,
+        FileNames.REKEY_PY,
+        FileNames.KEYDRIVE_PY,
+        FileNames.UNMOUNT_PY,
+        FileNames.VERACRYPT_CLI_PY,
     ]
     
     @classmethod

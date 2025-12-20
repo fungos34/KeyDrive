@@ -45,7 +45,7 @@ if str(_project_root) not in sys.path:
 try:
     from core.version import VERSION
     from core.paths import Paths
-    from core.constants import ConfigKeys, Defaults, CLIOperations, ConsoleStyle
+    from core.constants import ConfigKeys, Defaults, CLIOperations, ConsoleStyle, FileNames
     from core.modes import SecurityMode, SECURITY_MODE_DISPLAY
     from core.limits import Limits
     from core.platform import is_admin, _set_admin_override
@@ -127,22 +127,22 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 if SCRIPT_DIR.parent.name == ".smartdrive":
     # Deployed on external drive
     SMARTDRIVE_DIR = SCRIPT_DIR.parent
-    KEYS_DIR = SMARTDRIVE_DIR / "keys"
+    KEYS_DIR = SMARTDRIVE_DIR / Paths.KEYS_SUBDIR
     INTEGRITY_DIR = SMARTDRIVE_DIR / "integrity"
 else:
     # Development environment - check for .smartdrive or fall back to old structure
     if (SCRIPT_DIR.parent / ".smartdrive").exists():
         SMARTDRIVE_DIR = SCRIPT_DIR.parent / ".smartdrive"
-        KEYS_DIR = SMARTDRIVE_DIR / "keys"
+        KEYS_DIR = SMARTDRIVE_DIR / Paths.KEYS_SUBDIR
         INTEGRITY_DIR = SMARTDRIVE_DIR / "integrity"
     else:
         # Legacy structure (scripts/ and keys/ at root)
         SMARTDRIVE_DIR = SCRIPT_DIR.parent
-        KEYS_DIR = SMARTDRIVE_DIR / "keys"
+        KEYS_DIR = SMARTDRIVE_DIR / Paths.KEYS_SUBDIR
         INTEGRITY_DIR = SMARTDRIVE_DIR  # integrity files at root in legacy mode
 
 # CONFIG is at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
-CONFIG_FILE = SMARTDRIVE_DIR / "config.json"
+CONFIG_FILE = SMARTDRIVE_DIR / FileNames.CONFIG_JSON
 
 # ============================================================
 # INVARIANT CHECK: SINGLE ENTRYPOINT
@@ -1197,7 +1197,7 @@ def show_help():
         print("  HELP & DOCUMENTATION")
         print("─" * 70 + "\n")
         
-        print("""
+        print(f"""
   SmartDrive creates encrypted external drives with optional YubiKey 2FA.
 
   SECURITY MODES:
@@ -1215,8 +1215,8 @@ def show_help():
 
   FILES:
   ──────
-  • config.json        Volume path and mount settings
-  • keyfile.vc.gpg     GPG-encrypted keyfile (if using YubiKey mode)
+  • {FileNames.CONFIG_JSON}        Volume path and mount settings
+  • {FileNames.KEYFILE_GPG}     GPG-encrypted keyfile (if using YubiKey mode)
   
   For full documentation, see README.md in the project root.
 """)
@@ -1243,8 +1243,8 @@ def calculate_scripts_hash() -> str:
     # Only include scripts that are deployed to SMARTDRIVE partition
     # (setup.py is NOT deployed, so it's excluded)
     scripts = sorted([
-        "smartdrive.py", "mount.py", "unmount.py", 
-        "rekey.py", "keyfile.py"
+        FileNames.KEYDRIVE_PY, FileNames.MOUNT_PY, FileNames.UNMOUNT_PY, 
+        FileNames.REKEY_PY, FileNames.KEYFILE_PY
     ])
     
     for script_name in scripts:
@@ -1711,10 +1711,10 @@ def keyfile_utilities_menu():
         elif choice == "2":
             # Ask for file to decrypt
             print("\n  Enter path to encrypted keyfile")
-            print("  (or press Enter for default: ../keys/keyfile.vc.gpg)")
+            print(f"  (or press Enter for default: ../keys/{FileNames.KEYFILE_GPG})")
             filepath = input("  Path: ").strip()
             if not filepath:
-                filepath = str(KEYS_DIR / "keyfile.vc.gpg")
+                filepath = str(KEYS_DIR / FileNames.KEYFILE_GPG)
             run_script("keyfile.py", ["decrypt", filepath])
         elif choice == "3":
             print("\n  Enter path to file to encrypt:")
@@ -1850,10 +1850,10 @@ def get_operation_handler(op_id: str):
     """
     # Map operation IDs to handlers
     handlers = {
-        "mount": (lambda: run_script("mount.py"), "mount.py"),
-        "unmount": (lambda: run_script("unmount.py"), "unmount.py"),
-        "setup": (lambda: run_script("setup.py"), "setup.py"),
-        "rekey": (lambda: run_script("rekey.py"), "rekey.py"),
+        "mount": (lambda: run_script(FileNames.MOUNT_PY), FileNames.MOUNT_PY),
+        "unmount": (lambda: run_script(FileNames.UNMOUNT_PY), FileNames.UNMOUNT_PY),
+        "setup": (lambda: run_script(FileNames.SETUP_PY), FileNames.SETUP_PY),
+        "rekey": (lambda: run_script(FileNames.REKEY_PY), FileNames.REKEY_PY),
         "keyfile_utils": (keyfile_utilities_menu, None),
         "config_status": (show_config_status, None),
         "recovery": (recovery_menu, None),

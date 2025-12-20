@@ -43,8 +43,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
-from core.constants import CryptoParams
+from core.constants import CryptoParams, UserInputs
 from core.limits import Limits
+from core.paths import Paths
 
 # Core SSOT imports
 from core.modes import SecurityMode
@@ -71,7 +72,7 @@ CLIPBOARD_TIMEOUT = getattr(Limits, "CLIPBOARD_TIMEOUT", 120)
 GPG_DECRYPT_TIMEOUT = getattr(Limits, "GPG_DECRYPT_TIMEOUT", 30)
 
 # HKDF parameters for password derivation
-HKDF_INFO = getattr(CryptoParams, "HKDF_INFO_DEFAULT", "smartdrive-vc-pw-v1").encode("utf-8")
+HKDF_INFO = getattr(CryptoParams, "HKDF_INFO_DEFAULT", CryptoParams.HKDF_INFO_DEFAULT).encode("utf-8")
 DERIVED_PW_LENGTH = getattr(CryptoParams, "DERIVED_PASSWORD_LENGTH", 32)
 
 
@@ -131,11 +132,15 @@ def _check_yubikey_presence() -> Tuple[bool, str]:
     """
     Check if a YubiKey with GPG capability is present.
 
+    BUG-20251218-007 FIX: Add --no-tty to prevent terminal hang on repeated calls.
+    Without --no-tty, gpg may wait for TTY input when called multiple times,
+    causing the terminal to hang/become unresponsive.
+
     Returns:
         Tuple of (is_present: bool, error_message: str)
     """
     try:
-        result = subprocess.run(["gpg", "--card-status"], capture_output=True, timeout=GPG_DECRYPT_TIMEOUT)
+        result = subprocess.run(["gpg", "--no-tty", "--card-status"], capture_output=True, timeout=GPG_DECRYPT_TIMEOUT)
         if result.returncode == 0:
             return True, ""
         else:
@@ -339,15 +344,15 @@ class SecretProvider:
     def from_config(
         cls, config: Dict, smartdrive_dir: Optional[Path] = None, session_overrides: Optional[Dict[str, any]] = None
     ) -> "SecretProvider":
-        """
+        f"""
         Create SecretProvider from config dict.
 
         Args:
             config: Config dict with keys from ConfigKeys
             smartdrive_dir: Path to .smartdrive directory (for resolving relative paths)
             session_overrides: Optional dict with session-specific overrides:
-                - 'seed_gpg_path': Absolute path to temp seed.gpg (setup workflow)
-                - 'keyfile_gpg_path': Absolute path to temp keyfile.vc.gpg
+                - 'seed_gpg_path': Absolute path to temp {FileNames.SEED_GPG} (setup workflow)
+                - 'keyfile_gpg_path': Absolute path to temp {FileNames.KEYFILE_GPG} (setup workflow)
                 - 'salt_b64': Salt for HKDF (setup workflow)
                 - 'hkdf_info': HKDF info string (setup workflow)
 
@@ -386,7 +391,7 @@ class SecretProvider:
 
             # Salt and HKDF info
             provider.salt_b64 = overrides.get("salt_b64", config.get(ConfigKeys.SALT_B64, ""))
-            provider.hkdf_info = overrides.get("hkdf_info", config.get(ConfigKeys.HKDF_INFO, "smartdrive-vc-pw-v1"))
+            provider.hkdf_info = overrides.get("hkdf_info", config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT))
 
         elif security_mode == SecurityMode.PW_GPG_KEYFILE:
             # GPG-encrypted keyfile
@@ -423,11 +428,11 @@ class SecretProvider:
         """
         cmd = cmd.strip().upper()
 
-        if cmd == "CPW":
+        if cmd == UserInputs.COPY_PASSWORD:
             return self._handle_cpw()
-        elif cmd == "CKF":
+        elif cmd == UserInputs.COPY_KEYFILE:
             return self._handle_ckf()
-        elif cmd == "CDP":
+        elif cmd == UserInputs.COPY_DEVICE_PATH:
             return self._handle_cdp()
 
         return False
@@ -496,7 +501,7 @@ class SecretProvider:
         try:
             if self.security_mode == SecurityMode.GPG_PW_ONLY:
                 # HARD GATE: Require YubiKey
-                require_yubikey_or_fail("CPW (Copy Password)")
+                require_yubikey_or_fail(f"{UserInputs.COPY_PASSWORD} (Copy Password)")
 
                 # Decrypt-on-demand
                 password = self._derive_password_gpg_pw_only()
@@ -511,7 +516,7 @@ class SecretProvider:
                         "during volume creation. Re-enter it when prompted by VeraCrypt."
                     )
             else:
-                raise ModeNotApplicableError("CPW", self.security_mode)
+                raise ModeNotApplicableError(UserInputs.COPY_PASSWORD, self.security_mode)
 
             # Copy to clipboard with TTL
             self._copy_to_clipboard(password, timeout, "password")
@@ -630,7 +635,7 @@ class SecretProvider:
         if not self.seed_gpg_path:
             raise SecretAccessError(
                 "Seed GPG path not configured. This is required for GPG_PW_ONLY mode.\n"
-                "  Expected: .smartdrive/keys/seed.gpg\n"
+                f"  Expected: .smartdrive/keys/{FileNames.SEED_GPG}\n"
                 "  If running during setup, ensure session overrides are passed."
             )
 
@@ -650,7 +655,7 @@ class SecretProvider:
         salt = base64.b64decode(self.salt_b64)
 
         # Get HKDF info (use configured value or default)
-        info_str = self.hkdf_info or "smartdrive-vc-pw-v1"
+        info_str = self.hkdf_info or CryptoParams.HKDF_INFO_DEFAULT
         info = info_str.encode("utf-8")
 
         # Derive password

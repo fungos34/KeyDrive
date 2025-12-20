@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "mode": "pw_gpg_keyfile",
+  "mode": "pw_only",
   "encrypted_keyfile": "../keys/keyfile.vc.gpg",
   "seed_gpg_path": "../keys/seed.gpg",
   "kdf": "scrypt",
@@ -19,11 +19,11 @@
   "drive_id": "aea880fe-346e-4c6b-8fc8-108e51dd8404",
   "lost_and_found": {
     "enabled": false,
-    "message": ""
+    "message": "If found, please return to police.\nprovide a plain explanation why you couldn't do so within 24 hours!\npassword: 1234"
   },
   "gui_lang": "en",
   "drive_name": "KeyFileSafer",
-  "gui_theme": "rose",
+  "gui_theme": "brand",
   "keyfile": "",
   "recovery": {
     "enabled": false
@@ -32,5 +32,5 @@
   "update_url": "",
   "update_local_root": "",
   "verification_overridden": false,
-  "last_updated": "2025-12-17 17:13:45"
+  "last_updated": "2025-12-20 13:16:06"
 }

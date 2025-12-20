@@ -230,6 +230,7 @@ class TestRecoveryDetection:
 
     def test_detect_recovery_with_html(self):
         """Detect recovery when HTML kit exists."""
+        from core.constants import Branding
         from core.paths import Paths
         from setup import detect_recovery_generated
 
@@ -238,8 +239,8 @@ class TestRecoveryDetection:
             recovery_dir = Paths.recovery_dir(launcher_root)
             recovery_dir.mkdir(parents=True)
 
-            # Create HTML kit
-            html = recovery_dir / "SmartDrive_Recovery_Kit.html"
+            # Create HTML kit using SSOT Branding.PRODUCT_NAME
+            html = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
             html.write_text("<html></html>")
 
             assert detect_recovery_generated(launcher_root), "Should detect HTML kit"

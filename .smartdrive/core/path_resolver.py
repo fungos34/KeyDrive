@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+from core.paths import Paths
+from core.constants import FileNames
 
 
 @dataclass
@@ -94,7 +96,7 @@ class RuntimePaths:
         # NOTE: Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
         config_file = smartdrive_root / "config.json"
         static_dir = smartdrive_root / "static"
-        keys_dir = smartdrive_root / "keys"
+        keys_dir = smartdrive_root / Paths.KEYS_SUBDIR
         logs_dir = smartdrive_root / "logs"
         
         # Create directories if they don't exist (except config file)
@@ -146,7 +148,7 @@ class RuntimePaths:
             )
         
         # Use from_script with a path in the drive's .smartdrive
-        return cls.from_script(smartdrive_root / "scripts" / "mount.py")
+        return cls.from_script(smartdrive_root / Paths.SCRIPTS_SUBDIR / FileNames.MOUNT_PY)
     
     @classmethod
     def for_target(cls, target_root: Path, create_dirs: bool = False) -> 'RuntimePaths':
@@ -179,7 +181,7 @@ class RuntimePaths:
         # NOTE: Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
         config_file = smartdrive_root / "config.json"
         static_dir = smartdrive_root / "static"
-        keys_dir = smartdrive_root / "keys"
+        keys_dir = smartdrive_root / Paths.KEYS_SUBDIR
         logs_dir = smartdrive_root / "logs"
         
         # Create directories if requested

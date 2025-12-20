@@ -170,6 +170,9 @@ class VolumeIdentifier:
 # Security Modes
 # =============================================================================
 
+# Module-level flag for secrets availability (cannot be Enum attribute due to immutability)
+_SECRETS_AVAILABLE = False
+
 class SecurityMode(str, Enum):
     """
     Security mode for SmartDrive setup.

@@ -49,7 +49,7 @@ try:
     from core.constants import ConfigKeys, Defaults, FileNames
     from core.platform import is_windows as _is_windows
     from core.platform import windows_refresh_explorer, windows_set_attributes
-    CONFIG_FILENAME = Paths.CONFIG_FILENAME
+    CONFIG_FILENAME = FileNames.CONFIG_JSON
 except ImportError:
     CONFIG_FILENAME = "config.json"
     class Defaults:

@@ -45,13 +45,16 @@ import tempfile
 from getpass import getpass
 from pathlib import Path
 
+from core.constants import Branding, FileNames
+from core.paths import Paths
+
 # ===========================================================================
 # Core module imports (single source of truth)
 # ===========================================================================
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/rekey.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -72,6 +75,21 @@ from core.modes import SECURITY_MODE_DISPLAY, SecurityMode
 from core.paths import Paths
 from core.version import VERSION
 
+# SecretProvider for mode-aware credential access
+try:
+    from core.secrets import (
+        SecretAccessError,
+        SecretProvider,
+        YubiKeyRequiredError,
+        create_command_loop_prompt,
+        run_command_loop,
+    )
+
+    _SECRET_PROVIDER_AVAILABLE = True
+except ImportError:
+    _SECRET_PROVIDER_AVAILABLE = False
+    SecretProvider = None  # type: ignore
+
 
 def get_ram_temp_dir():
     """Get a RAM-backed temp directory if available, else system temp."""
@@ -88,7 +106,7 @@ def get_ram_temp_dir():
 
 
 def log(msg: str) -> None:
-    print(f"[SmartDrive] {msg}")
+    print(f"[INFO] {msg}")
 
 
 def error(msg: str) -> None:
@@ -103,7 +121,7 @@ def print_banner():
     """Print welcome banner."""
     print("\n" + "=" * 70)
     print("  +=============================================================+")
-    print("  |           KeyDrive Credential Rotation v2.0                 |")
+    print(f"  |           {Branding.PRODUCT_NAME} Credential Rotation v2.0                 |")
     print("  |   Change Password / Rotate YubiKey / Change Security Mode   |")
     print("  +=============================================================+")
     print("=" * 70)
@@ -272,13 +290,13 @@ def get_config_path() -> Path:
     script_dir = Path(__file__).resolve().parent
 
     # Try deployed location first: .smartdrive/config.json
-    if script_dir.parent.name == ".smartdrive":
-        return script_dir.parent / "config.json"
-    elif (script_dir.parent / ".smartdrive" / "config.json").exists():
-        return script_dir.parent / ".smartdrive" / "config.json"
+    if script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+        return script_dir.parent / FileNames.CONFIG_JSON
+    elif (script_dir.parent / Paths.SMARTDRIVE_DIR_NAME / FileNames.CONFIG_JSON).exists():
+        return script_dir.parent / Paths.SMARTDRIVE_DIR_NAME / FileNames.CONFIG_JSON
     else:
         # Legacy fallback
-        return Path("config.json")
+        return Path(FileNames.CONFIG_JSON)
 
 
 def load_config() -> dict:
@@ -301,17 +319,17 @@ def load_config() -> dict:
         # Build helpful error message
         script_dir = Path(__file__).resolve().parent
         searched_paths = []
-        if script_dir.parent.name == ".smartdrive":
-            searched_paths.append(str(script_dir.parent / "config.json"))
+        if script_dir.parent.name == FileNames.MAIN_DIR:
+            searched_paths.append(str(script_dir.parent / FileNames.CONFIG_JSON))
         else:
-            searched_paths.append(str(script_dir.parent / ".smartdrive" / "config.json"))
-            searched_paths.append(str(Path.cwd() / "config.json"))
+            searched_paths.append(str(script_dir.parent / FileNames.MAIN_DIR / FileNames.CONFIG_JSON))
+            searched_paths.append(str(Path.cwd() / FileNames.CONFIG_JSON))
 
         raise RuntimeError(
-            f"config.json not found.\n"
+            f"{FileNames.CONFIG_JSON} not found.\n"
             f"  Searched locations:\n" + "\n".join(f"    - {p}" for p in searched_paths) + "\n"
             f"  Solution: Run this script from the drive root, or place it under\n"
-            f"           .smartdrive/scripts/ on the drive."
+            f"           {FileNames.MAIN_DIR}/{FileNames.SCRIPTS_DIR}/ on the drive."
         )
 
     try:
@@ -429,7 +447,7 @@ def prompt_for_security_mode(current_mode: str) -> str:
     print("=" * 60)
     print(f"\n  Current mode: {current_mode}")
     print(
-        """
+        f"""
 Choose your NEW security level:
 
   [1] Password Only
@@ -438,7 +456,7 @@ Choose your NEW security level:
       
   [2] Password + Plain Keyfile
       Password + unencrypted keyfile
-      Keyfile stored on SmartDrive
+      Keyfile stored on {Branding.PRODUCT_NAME}
       
   [3] Password + Encrypted Keyfile (Recommended)
       Password + keyfile encrypted to YubiKey(s)
@@ -450,7 +468,12 @@ Choose your NEW security level:
 """
     )
 
-    mode_map = {"1": "pw_only", "2": "pw_keyfile", "3": "pw_gpg_keyfile", "4": "gpg_pw_only"}
+    mode_map = {
+        "1": SecurityMode.PW_ONLY.value,
+        "2": SecurityMode.PW_KEYFILE.value,
+        "3": SecurityMode.PW_GPG_KEYFILE.value,
+        "4": SecurityMode.GPG_PW_ONLY.value,
+    }
 
     while True:
         choice = input("Select new security mode [1-4]: ").strip()
@@ -492,6 +515,107 @@ def encrypt_keyfile_to_yubikeys(keyfile_data: bytes, fingerprints: list[str], ou
         log(f"✓ New encrypted keyfile created: {output_path}")
     except Exception as e:
         raise RuntimeError(f"Failed to encrypt keyfile: {e}")
+
+
+# =============================================================================
+# SecretProvider Integration
+# =============================================================================
+
+
+def create_secret_provider(config: dict, smartdrive_dir: Path = None) -> "SecretProvider | None":
+    """
+    Create a SecretProvider instance from config for mode-aware credential access.
+
+    This ensures credentials are decrypted consistently with the security mode,
+    enforcing YubiKey requirements for GPG modes.
+
+    Args:
+        config: Loaded config.json dict
+        smartdrive_dir: Path to .smartdrive directory (for relative path resolution)
+
+    Returns:
+        SecretProvider instance, or None if not available
+    """
+    if not _SECRET_PROVIDER_AVAILABLE or SecretProvider is None:
+        return None
+
+    try:
+        return SecretProvider.from_config(config, smartdrive_dir=smartdrive_dir)
+    except Exception as e:
+        warn(f"Could not create SecretProvider: {e}")
+        return None
+
+
+def decrypt_keyfile_via_provider(provider: "SecretProvider") -> tuple[bytes, Path]:
+    """
+    Decrypt keyfile using SecretProvider (enforces YubiKey requirements).
+
+    This integrates with SecretProvider to ensure mode-aware decryption:
+    - PW_GPG_KEYFILE: Requires YubiKey, decrypts to RAM temp
+    - Provides consistent error handling and security guarantees
+
+    Args:
+        provider: Configured SecretProvider instance
+
+    Returns:
+        Tuple of (keyfile_bytes, temp_keyfile_path)
+
+    Raises:
+        RuntimeError: If decryption fails or mode not supported
+    """
+    if provider.security_mode not in (SecurityMode.PW_GPG_KEYFILE, SecurityMode.PW_KEYFILE):
+        raise RuntimeError(f"Current mode ({provider.security_mode.value}) does not use keyfile")
+
+    if provider.security_mode == SecurityMode.PW_GPG_KEYFILE:
+        # Use SecretProvider's built-in GPG decryption (enforces YubiKey)
+        try:
+            temp_keyfile_path = provider._decrypt_keyfile_to_temp()
+            keyfile_bytes = temp_keyfile_path.read_bytes()
+            return keyfile_bytes, temp_keyfile_path
+        except YubiKeyRequiredError as e:
+            raise RuntimeError(f"YubiKey required: {e}")
+        except SecretAccessError as e:
+            raise RuntimeError(f"Keyfile decryption failed: {e}")
+
+    elif provider.security_mode == SecurityMode.PW_KEYFILE:
+        # Plain keyfile - just read it
+        if provider.keyfile_plain_path and provider.keyfile_plain_path.exists():
+            keyfile_bytes = provider.keyfile_plain_path.read_bytes()
+            # Write to temp for consistency
+            temp_path = write_temp_keyfile(keyfile_bytes)
+            return keyfile_bytes, temp_path
+        else:
+            raise RuntimeError(f"Keyfile not found: {provider.keyfile_plain_path}")
+
+    raise RuntimeError(f"Unsupported mode for keyfile decryption: {provider.security_mode}")
+
+
+def derive_password_via_provider(provider: "SecretProvider") -> str:
+    """
+    Derive password using SecretProvider for GPG_PW_ONLY mode.
+
+    This ensures the password is derived using the correct KDF parameters
+    from config, with YubiKey enforcement.
+
+    Args:
+        provider: Configured SecretProvider instance (must be GPG_PW_ONLY mode)
+
+    Returns:
+        Derived password string
+
+    Raises:
+        RuntimeError: If derivation fails or mode not GPG_PW_ONLY
+    """
+    if provider.security_mode != SecurityMode.GPG_PW_ONLY:
+        raise RuntimeError(f"Password derivation requires GPG_PW_ONLY mode, got: {provider.security_mode.value}")
+
+    try:
+        # Use SecretProvider's internal derivation (enforces YubiKey)
+        return provider._derive_password_gpg_pw_only()
+    except YubiKeyRequiredError as e:
+        raise RuntimeError(f"YubiKey required for password derivation: {e}")
+    except SecretAccessError as e:
+        raise RuntimeError(f"Password derivation failed: {e}")
 
 
 def decrypt_old_keyfile(enc_keyfile_path: Path) -> bytes:
@@ -623,17 +747,17 @@ def change_veracrypt_credentials_windows(
         # Ask if credential change was successful
         while True:
             print("\n  Did the credential change succeed?")
-            print("  Type 'YES' if you saw 'Password changed successfully'")
-            print("  Type 'NO' if there was an error or you cancelled")
+            print(f"  Type '{UserInputs.YES}' if you saw 'Password changed successfully'")
+            print(f"  Type '{UserInputs.NO}' if there was an error or you cancelled")
             response = input("\n> ").strip().upper()
             if response == UserInputs.YES:
                 log("✓ Credential change confirmed successful")
                 return True
-            elif response == "NO":
+            elif response == UserInputs.NO:
                 warn("Credential change reported as failed - will rollback")
                 return False
             else:
-                print("  Please type exactly 'YES' or 'NO'")
+                print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
     except Exception as e:
         raise RuntimeError(f"Failed to open VeraCrypt: {e}")
 
@@ -684,17 +808,17 @@ def change_veracrypt_credentials_unix(volume_path: str, old_keyfile: Path | None
     # Ask if credential change was successful
     while True:
         print("\n  Did the credential change succeed?")
-        print("  Type 'YES' if you saw 'Password changed successfully'")
-        print("  Type 'NO' if there was an error or you cancelled")
+        print(f"  Type '{UserInputs.YES}' if you saw 'Password changed successfully'")
+        print(f"  Type '{UserInputs.NO}' if there was an error or you cancelled")
         response = input("\n> ").strip().upper()
         if response == UserInputs.YES:
             log("✓ Credential change confirmed successful")
             return True
-        elif response == "NO":
+        elif response == UserInputs.NO:
             warn("Credential change reported as failed - will rollback")
             return False
         else:
-            print("  Please type exactly 'YES' or 'NO'")
+            print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
 
 
 def main() -> None:
@@ -745,6 +869,19 @@ def main() -> None:
     print(f"\n  Target Volume: {volume_path}")
 
     # ==========================================================================
+    # Create SecretProvider for mode-aware credential access
+    # ==========================================================================
+    config_path = get_config_path()
+    smartdrive_dir = config_path.parent if config_path.exists() else None
+    secret_provider = create_secret_provider(cfg, smartdrive_dir)
+    current_mode = cfg.get("mode", SecurityMode.PW_ONLY.value)
+
+    if secret_provider:
+        log(f"SecretProvider initialized for mode: {current_mode}")
+    else:
+        warn("SecretProvider not available - using legacy credential handling")
+
+    # ==========================================================================
     # PHASE 1: Current Credentials
     # ==========================================================================
 
@@ -752,12 +889,21 @@ def main() -> None:
 
     print("First, let's identify your current volume credentials.\n")
 
-    use_old_keyfile = input("Does this volume currently use a keyfile? (y/n): ").strip().lower() == "y"
+    # Determine keyfile usage from mode rather than asking
+    mode_uses_keyfile = current_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value)
+
+    if mode_uses_keyfile:
+        print(f"  Current mode ({current_mode}) uses a keyfile.")
+        use_old_keyfile = True
+    else:
+        print(f"  Current mode ({current_mode}) does not use a keyfile.")
+        use_old_keyfile = input("  Override: Does this volume currently use a keyfile? (y/n): ").strip().lower() == "y"
+
     old_keyfile_data = None
     old_keyfile_temp = None
 
     if use_old_keyfile:
-        old_encrypted = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, "../keys/keyfile.vc.gpg"))
+        old_encrypted = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")) 
         if not old_encrypted.is_absolute():
             old_encrypted = (Path.cwd() / old_encrypted).resolve()
 
@@ -766,11 +912,20 @@ def main() -> None:
         input("  Press Enter when ready...")
 
         try:
-            old_keyfile_data = decrypt_old_keyfile(old_encrypted)
-            old_keyfile_temp = write_temp_keyfile(old_keyfile_data)
-            log(f"✓ Old keyfile decrypted to: {old_keyfile_temp}")
+            # Use SecretProvider if available (enforces YubiKey requirements)
+            if secret_provider and current_mode == SecurityMode.PW_GPG_KEYFILE.value:
+                log("Decrypting keyfile via SecretProvider (YubiKey enforced)...")
+                old_keyfile_data, old_keyfile_temp = decrypt_keyfile_via_provider(secret_provider)
+                log(f"✓ Old keyfile decrypted to: {old_keyfile_temp}")
+            else:
+                # Fallback to direct GPG decryption
+                old_keyfile_data = decrypt_old_keyfile(old_encrypted)
+                old_keyfile_temp = write_temp_keyfile(old_keyfile_data)
+                log(f"✓ Old keyfile decrypted to: {old_keyfile_temp}")
         except RuntimeError as e:
             error(str(e))
+            if secret_provider:
+                secret_provider.cleanup()
             sys.exit(1)
     else:
         log("Volume uses password-only authentication")
@@ -779,7 +934,6 @@ def main() -> None:
     # PHASE 1.5: Security Mode Selection
     # ==========================================================================
 
-    current_mode = cfg.get("mode", SecurityMode.PW_ONLY.value)
     print_phase(1, 5, "MODE SELECTION")
 
     print(f"Current security mode: {current_mode}")
@@ -794,6 +948,8 @@ def main() -> None:
             new_mode = prompt_for_security_mode(current_mode)
         except KeyboardInterrupt:
             print("\nOperation cancelled.")
+            if secret_provider:
+                secret_provider.cleanup()
             sys.exit(0)
     else:
         print(f"  ✓ Keeping current mode: {current_mode}")
@@ -855,7 +1011,7 @@ def main() -> None:
         new_keyfile_temp = write_temp_keyfile(new_keyfile_data)
 
         # Encrypt to YubiKeys - use same location as configured encrypted_keyfile
-        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, "../keys/keyfile.vc.gpg"))
+        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
         if not configured_keyfile.is_absolute():
             configured_keyfile = (Path.cwd() / configured_keyfile).resolve()
 
@@ -890,8 +1046,8 @@ def main() -> None:
         # Generate random seed for password derivation
         gpg_seed_data = secrets.token_bytes(32)  # 256-bit seed
 
-        # Encrypt seed to YubiKeys
-        seed_path = Path("../keys/seed.gpg")
+        # Encrypt seed to YubiKeys - use configured seed GPG path if available
+        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
 
@@ -961,13 +1117,13 @@ def main() -> None:
 
     # Confirmation loop
     while True:
-        print("\n  Type 'YES' to proceed with credential change")
-        print("  Type 'CANCEL' to abort (no changes will be made)")
+        print(f"\n  Type '{UserInputs.YES}' to proceed with credential change")
+        print(f"  Type '{UserInputs.CANCEL}' to abort (no changes will be made)")
         confirm = input("\n> ").strip().upper()
 
         if confirm == UserInputs.YES:
             break
-        elif confirm == "CANCEL":
+        elif confirm == UserInputs.CANCEL:
             log("Operation cancelled by user.")
             if old_keyfile_temp:
                 secure_delete_file(old_keyfile_temp)
@@ -980,7 +1136,7 @@ def main() -> None:
             print("\n✓ Cancelled. No changes were made.")
             sys.exit(0)
         else:
-            print(f"  Invalid input. Please type exactly 'YES' or 'CANCEL'.")
+            print(f"  Invalid input. Please type exactly '{UserInputs.YES}' or '{UserInputs.CANCEL}'.")
 
     # ==========================================================================
     # PHASE 4: Execute & Verify
@@ -1028,23 +1184,82 @@ def main() -> None:
 
     if new_mode == SecurityMode.GPG_PW_ONLY.value:
         print("Generating password from GPG seed for verification...\n")
-        # For gpg_pw_only, we need to generate the password from the seed
-        # Use the same logic as mount.py for password derivation
-        import hashlib
-        import hmac
-        from datetime import datetime
+        print("  ⚠️  Insert the YubiKey that can decrypt the new seed.")
+        input("  Press Enter when ready...")
 
-        # Generate password using the same parameters as will be in config
-        salt = secrets.token_bytes(16)  # Generate new salt for verification
-        kdf = "hkdf-sha256"
-        info = "smartdrive-vc-pw-v1"
+        # For GPG_PW_ONLY, derive password using SecretProvider-compatible logic
+        # Create a temporary SecretProvider with the new seed path and parameters
+        try:
+            # Generate new salt for this session
+            salt = secrets.token_bytes(16)
+            salt_b64 = base64.b64encode(salt).decode("ascii")
 
-        # Derive password from seed using HKDF
-        hkdf = hmac.new(gpg_seed_data, salt, hashlib.sha256)
-        password_bytes = hkdf.digest()[:32]  # Use first 32 bytes
-        new_password = base64.b64encode(password_bytes).decode("utf-8").rstrip("=")
+            if _SECRET_PROVIDER_AVAILABLE and SecretProvider is not None:
+                # Create temporary provider with new seed
+                temp_provider = SecretProvider(
+                    security_mode=SecurityMode.GPG_PW_ONLY,
+                    volume_path=volume_path,
+                    seed_gpg_path=seed_new_path,
+                    salt_b64=salt_b64,
+                    hkdf_info=CryptoParams.HKDF_INFO_DEFAULT,
+                )
+                try:
+                    new_password = derive_password_via_provider(temp_provider)
+                    log("✓ Password derived via SecretProvider (YubiKey enforced)")
+                except RuntimeError as e:
+                    error(str(e))
+                    raise
+                finally:
+                    temp_provider.cleanup()
+            else:
+                # Fallback: Manual HKDF derivation (legacy)
+                import hashlib
+                import hmac
 
-        log("✓ Password generated from GPG seed")
+                log("Using legacy password derivation (SecretProvider not available)")
+
+                # Decrypt seed from new encrypted file
+                gpg_timeout = getattr(Limits, "GPG_DECRYPT_TIMEOUT", 30)
+                result = subprocess.run(
+                    ["gpg", "--no-tty", "--yes", "--decrypt", str(seed_new_path)],
+                    check=True,
+                    capture_output=True,
+                    timeout=gpg_timeout,
+                )
+                seed_bytes = result.stdout
+
+                # Derive password using HKDF-SHA256
+                hkdf = hmac.new(seed_bytes, salt, hashlib.sha256)
+                password_bytes = hkdf.digest()[:32]
+                new_password = base64.b64encode(password_bytes).decode("utf-8").rstrip("=")
+
+                # Wipe seed from memory
+                seed_bytes = None
+
+                log("✓ Password generated from GPG seed")
+
+        except subprocess.TimeoutExpired:
+            error("GPG decryption timed out - check YubiKey")
+            if old_keyfile_temp:
+                secure_delete_file(old_keyfile_temp)
+            if new_keyfile_temp:
+                secure_delete_file(new_keyfile_temp)
+            if new_encrypted_path and new_encrypted_path.exists():
+                new_encrypted_path.unlink()
+            if seed_new_path.exists():
+                seed_new_path.unlink()
+            sys.exit(1)
+        except Exception as e:
+            error(f"Password derivation failed: {e}")
+            if old_keyfile_temp:
+                secure_delete_file(old_keyfile_temp)
+            if new_keyfile_temp:
+                secure_delete_file(new_keyfile_temp)
+            if new_encrypted_path and new_encrypted_path.exists():
+                new_encrypted_path.unlink()
+            if seed_new_path.exists():
+                seed_new_path.unlink()
+            sys.exit(1)
     else:
         print("Enter the NEW password you just set in VeraCrypt.\n")
         new_password = getpass("Enter NEW password: ")
@@ -1105,7 +1320,7 @@ def main() -> None:
 
     if new_encrypted_path:
         # Move new encrypted keyfile to final location (same as config)
-        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, "../keys/keyfile.vc.gpg"))
+        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
         if not configured_keyfile.is_absolute():
             configured_keyfile = (Path.cwd() / configured_keyfile).resolve()
 
@@ -1123,7 +1338,7 @@ def main() -> None:
 
     if "seed_new_path" in locals() and seed_new_path.exists():
         # Move new encrypted seed to final location
-        seed_path = Path("../keys/seed.gpg")
+        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
 
@@ -1152,15 +1367,16 @@ def main() -> None:
 
             # Update mode-specific settings
             if new_mode == SecurityMode.GPG_PW_ONLY.value:
-                cfg_update[ConfigKeys.SEED_GPG_PATH] = "../keys/seed.gpg"
-                cfg_update[ConfigKeys.KDF] = "hkdf-sha256"
-                cfg_update[ConfigKeys.SALT_B64] = base64.b64encode(salt).decode("ascii")
-                cfg_update[ConfigKeys.HKDF_INFO] = "smartdrive-vc-pw-v1"
-                cfg_update[ConfigKeys.PW_ENCODING] = "base64url_nopad"
+                cfg_update[ConfigKeys.SEED_GPG_PATH] = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
+                cfg_update[ConfigKeys.KDF] = CryptoParams.KDF_HKDF_SHA256
+                # salt_b64 is set during GPG_PW_ONLY verification phase
+                cfg_update[ConfigKeys.SALT_B64] = salt_b64
+                cfg_update[ConfigKeys.HKDF_INFO] = CryptoParams.HKDF_INFO_DEFAULT
+                cfg_update[ConfigKeys.PW_ENCODING] = CryptoParams.PW_ENCODING_DEFAULT
                 # Remove keyfile settings if they exist
                 cfg_update.pop(ConfigKeys.ENCRYPTED_KEYFILE, None)
             elif new_mode in [SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value]:
-                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = "../keys/keyfile.vc.gpg"
+                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
                 # Remove GPG password-only settings
                 cfg_update.pop(ConfigKeys.SEED_GPG_PATH, None)
                 cfg_update.pop(ConfigKeys.KDF, None)
@@ -1183,6 +1399,11 @@ def main() -> None:
     except Exception as e:
         warn(f"Could not update config.json: {e}")
 
+    # Clean up SecretProvider
+    if secret_provider:
+        secret_provider.cleanup()
+        log("✓ SecretProvider cleanup complete")
+
     # Success message
     print("\n" + "=" * 70)
     print("  ╔═══════════════════════════════════════════════════════════════╗")
@@ -1196,7 +1417,7 @@ def main() -> None:
     print("\nCredentials have been changed and verified successfully!\n")
 
     if use_new_keyfile:
-        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, "../keys/keyfile.vc.gpg"))
+        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
         if not configured_keyfile.is_absolute():
             configured_keyfile = (Path.cwd() / configured_keyfile).resolve()
         print(f"  New encrypted keyfile: {configured_keyfile}")
@@ -1204,7 +1425,7 @@ def main() -> None:
         print("\n  💡 Test mount.py before deleting the .old backup!")
 
     if needs_gpg_setup:
-        seed_path = Path("../keys/seed.gpg")
+        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
         print(f"  New encrypted seed: {seed_path}")

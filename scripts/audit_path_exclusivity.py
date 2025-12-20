@@ -31,14 +31,10 @@ import re
 import sys
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Set
+from core.constants import FileNames
 
 # Import SSOT Paths for canonical runtime directory name
-try:
-    from core.paths import Paths
-except ImportError:
-
-    class Paths:  # Fallback for standalone operation
-        SMARTDRIVE_DIR_NAME = ".smartdrive"
+from core.paths import Paths
 
 
 # Project root
@@ -63,14 +59,14 @@ class Violation(NamedTuple):
 
 # Files that ARE the path authorities (whitelisted completely)
 PATH_AUTHORITY_FILES = {
-    _rel("core", "paths.py"),
-    _rel("core", "path_resolver.py"),
-    _rel("core", "constants.py"),  # Defines CONFIG_JSON constant
-    _rel("core", "context.py"),  # Uses config.json via constant
-    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", "paths.py"),
-    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", "path_resolver.py"),
-    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", "constants.py"),
-    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", "context.py"),
+    _rel("core", FileNames.PATHS_PY),
+    _rel("core", FileNames.PATH_RESOLVER_PY),
+    _rel("core", FileNames.CONSTANTS_PY),  # Defines CONFIG_JSON constant
+    _rel("core", FileNames.CONTEXT_PY),  # Uses config.json via constant
+    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", FileNames.PATHS_PY),
+    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", FileNames.PATH_RESOLVER_PY),
+    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", FileNames.CONSTANTS_PY),
+    _rel(Paths.SMARTDRIVE_DIR_NAME, "core", FileNames.CONTEXT_PY),
 }
 
 # Directories where path construction is allowed (tests, helpers)
@@ -95,7 +91,7 @@ WHITELISTED_FILES = {
         '"config.json"',
     ],
     _rel(Paths.SMARTDRIVE_DIR_NAME, "scripts", "update.py"): ["_script_dir = Path(__file__)", '"config.json"'],
-    _rel(Paths.SMARTDRIVE_DIR_NAME, "scripts", "mount.py"): [
+    _rel(Paths.SMARTDRIVE_DIR_NAME, "scripts", FileNames.MOUNT_PY): [
         "_script_dir = Path(__file__)",
         '"config.json"',
         'CONFIG_FILENAME = "config.json"',

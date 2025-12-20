@@ -13,6 +13,7 @@ import pytest
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".smartdrive"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".smartdrive" / "scripts"))
 
 from core.config import write_config_atomic
 from core.constants import ConfigKeys
@@ -202,9 +203,9 @@ class TestSettingsDialogInstantiation:
             # Use the mock_config fixture (temp file)
             config_path = mock_config
 
-            with patch("scripts.gui.get_script_dir", return_value=config_path.parent):
-                with patch("scripts.gui.resolve_config_path", return_value=config_path):
-                    from scripts.gui import SettingsDialog
+            with patch("gui.get_script_dir", return_value=config_path.parent):
+                with patch("gui.resolve_config_path", return_value=config_path):
+                    from gui import SettingsDialog
 
                     # Instantiate with mock QSettings
                     dialog = SettingsDialog(mock_qsettings, parent=None)

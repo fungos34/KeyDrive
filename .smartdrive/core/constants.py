@@ -360,9 +360,12 @@ class UserInputs:
     
     # Confirmation words
     YES = "YES"
+    NO = "NO"
+    CANCEL = "CANCEL"
     ERASE = "ERASE"
     RECOVER = "RECOVER"
     REKEY = "REKEY"
+    CONFIRM = "IUNDERSTAND"
     
     # Extended confirmations
     ACCEPT_UNVERIFIED = "I ACCEPT UNVERIFIED PASSWORD"
@@ -375,6 +378,12 @@ class UserInputs:
     MANUAL = "M"
     YES_UPPER = "Y"
     NO_UPPER = "N"
+
+    # clipboard operations
+    COPY_PASSWORD = "CPW"
+    COPY_DEVICE_PATH = "CDP"
+    COPY_KEY_FILE = "CKF"
+    PRINT_PASSWORD = "PRINTPW"
 
 
 # =============================================================================
@@ -406,10 +415,17 @@ class CryptoParams:
     ARGON2_MEMORY_COST = 65536  # 64 MiB
     ARGON2_PARALLELISM = 4
     
+    # Launcher partition encryption settings
+    LAUNCHER_PARTITION_SIZE_MB = 200
+    LAUNCHER_FILESYSTEM = "exFAT"  # fat32, exfat, ntfs, ext4
+    LAUNCHER_FILESYSTEM_CAPABILITIES = "cross-platform"
+    LAUNCHER_FILESYSTEM_ID = "exfat"  # fat32, exfat, ntfs, ext4
+
     # VeraCrypt encryption settings
-    VERACRYPT_ENCRYPTION = "AES"
+    VERACRYPT_ENCRYPTION = "AES-256"
     VERACRYPT_HASH = "SHA-512"
     VERACRYPT_FILESYSTEM = "exFAT"
+    VERACRYPT_FILESYSTEM_CAPABILITIES = "works on Windows, macOS, and Linux"
     
     # Shamir's Secret Sharing defaults
     SHAMIR_DEFAULT_SHARES = 5
@@ -426,6 +442,27 @@ class FileNames:
     # Configuration file (SSOT - used by all scripts)
     CONFIG_JSON = "config.json"
     
+    # Build output directory (not a deployed path)
+    DISTRIBUTION_DIR = "dist"  # Distribution build output directory
+    
+    # Integrity/hash files
+    HASH_FILE = "scripts.sha256"
+    SIGNATURE_FILE = "scripts.sha256.sig"
+    
+    # Keyfile names
+    KEYFILE_BIN = "keyfile.bin"
+    KEYFILE_PLAIN = "keyfile.vc"
+    KEYFILE_GPG = "keyfile.vc.gpg"
+    SEED_GPG = "seed.gpg"
+    
+    # Recovery files
+    RECOVERY_SHARES_FILE = "shares.json"
+    RECOVERY_METADATA_FILE = "recovery_metadata.json"
+    
+    # Audit log
+    AUDIT_LOG_FILE = "audit.log"
+
+
     # Windows launchers
     BAT_LAUNCHER = "KeyDrive.bat"
     VBS_LAUNCHER = "KeyDrive.vbs"
@@ -449,14 +486,108 @@ class FileNames:
     ICON_UNMOUNTED = "LOGO_main.ico"  # Unmounted = default/main icon
     ICON_MOUNTED = "LOGO_mounted.ico"
     ICON_FOLDER = "folder_icon.ico"
-    
+
+    # python file names
+    MOUNT_PY = "mount.py"
+    UNMOUNT_PY = "unmount.py"
+    REKEY_PY = "rekey.py"
+    KEYFILE_PY = "keyfile.py"
+    GUI_LAUNCHER_PY = "gui_launcher.py"
+    GUI_PY = "gui.py"
+    GUI_I18N_PY = "gui_i18n.py"
+    CLI_I18N_PY = "cli_i18n.py"
+    RECOVERY_PY = "recovery.py"
+    RECOVERY_CONTAINER_PY = "recovery_container.py"
+    VERACRYPT_CLI_PY = "veracrypt_cli.py"
+    CRYPTO_UTILS_PY = "crypto_utils.py"
+    SETUP_PY = "setup.py"
+    UPDATE_PY = "update.py"
+    DEPLOY_PY = "deploy.py"
+    VERSION_PY = "version.py"
+    VARIABLES_PY = "variables.py"
+    CONSTANTS_PY = "constants.py"
+    MODES_PY = "modes.py"
+    PATHS_PY = "paths.py"
+    LIMITS_PY = "limits.py"
+    KEYDRIVE_PY = "smartdrive.py"
+    PLATFORM_PY = "platform.py"
+    SAFETY_PY = "safety.py"
+    REQUIREMENTS_TXT = "requirements.txt"
+
     # Distinct drive icons for Windows Explorer
     # LOGO_key.ico - KeyDrive launcher partition (USB unencrypted partition)
     # LOGO_drive.ico - VeraCrypt encrypted volume
     # If these don't exist, fall back to LOGO_main.ico / LOGO_mounted.ico
     ICON_LAUNCHER_DRIVE = "LOGO_key.ico"       # For launcher partition in Explorer
     ICON_VERACRYPT_VOLUME = "LOGO_drive.ico"   # For VeraCrypt volume in Explorer
+    DRIVE_ICON = "desktop.ini"  # Windows drive icon config file
 
+    # Recovery kit files (SSOT - used by setup.py, recovery.py)
+    RECOVERY_CONTAINER_BIN = "recovery_container.bin"
+    RECOVERY_HEADER_HDR = "header_backup.hdr"
+    RECOVERY_KIT_HTML_SUFFIX = "_Recovery_Kit.html"  # Prefixed with Branding.PRODUCT_NAME
+    
+    # Temporary file prefix (SSOT - used during setup)
+    TMP_FILE_PREFIX = "smartdrive_"  # Prefix for temp files in RAM-backed dirs
+    
+    # File name groups for different operations
+    SIGNATURE_HASH_FILES = [
+        KEYDRIVE_PY, 
+        MOUNT_PY, 
+        UNMOUNT_PY, 
+        REKEY_PY, 
+        KEYFILE_PY
+    ]  # Files which get fed to a hash function during signing.
+    REQUIRED_CORE_FILES = [
+        "__init__.py", 
+        CONSTANTS_PY, 
+        MODES_PY, 
+        PATHS_PY, 
+        LIMITS_PY, 
+        VERSION_PY
+    ]
+    REQUIRED_SCRIPTS_FOR_DEPLOYMENT = [
+        MOUNT_PY,
+        UNMOUNT_PY,
+        RECOVERY_PY,
+        RECOVERY_CONTAINER_PY,
+        VERACRYPT_CLI_PY,
+        CRYPTO_UTILS_PY,
+        KEYDRIVE_PY,
+    ]
+    OPTIONAL_SCRIPTS_FOR_DEPLOYMENT = [
+        REKEY_PY,
+        KEYFILE_PY,
+        GUI_LAUNCHER_PY,
+        GUI_PY,
+        GUI_I18N_PY,
+        VERSION_PY,
+        SETUP_PY,
+        UPDATE_PY,
+        DEPLOY_PY,
+    ]
+    COPIED_SCRIPTS_FOR_DEPLOYMENT = [
+        KEYDRIVE_PY,
+        MOUNT_PY,
+        UNMOUNT_PY,
+        REKEY_PY,
+        KEYFILE_PY,
+        GUI_LAUNCHER_PY,
+        GUI_PY,
+        GUI_I18N_PY,
+        CRYPTO_UTILS_PY,
+        VERSION_PY,
+    ]
+    FILES_TO_UPDATE = [
+        "*.py",
+        REQUIREMENTS_TXT,
+    ]
+    FILES_PROTECTED_FROM_UPDATE = {
+        "keys",           # Keyfiles directory
+        "integrity",      # Signatures directory
+        "recovery_kits",  # Recovery documents
+        CONFIG_JSON     # User configuration (version field updated separately)
+    }
 
 # =============================================================================
 # Prompts and Messages
@@ -575,7 +706,7 @@ class GUIConfig:
     DEFAULT_LANG = "en"
     
     # Theme default
-    DEFAULT_THEME = "green"
+    DEFAULT_THEME = "brand"
 
 
 # =============================================================================
@@ -585,6 +716,38 @@ class GUIConfig:
 THEME_PALETTES: Dict[str, Dict[str, str]] = {
     # IMPORTANT: Do not change the green theme values.
     # The GUI default look depends on these exact colors.
+    "brand": {
+        "primary": "#2F7AE5",
+        "primary_hover": "#2564C0",
+        "secondary": "#8AB8FF",
+
+        "success": "#2FA36B",
+        "error": "#C93A3A",
+        "warning": "#C89B2C",
+
+        "background": "#F7F9FC",
+        "surface": "#FFFFFF",
+
+        "border": "#D6DCE6",
+        "separator": "#E3E7EE",
+
+        "text": "#1F2933",
+        "text_secondary": "#4B5563",
+        "text_disabled": "#9AA4B2",
+
+        "smartdrive_used": "#2F7AE5",
+        "smartdrive_free": "#BFD6FF",
+
+        "vc_used": "#0E8FAE",
+        "vc_free": "#CFEFF6",
+
+        "launch_used": "#2F7AE5",
+        "launch_free": "#BFD6FF",
+
+        "close_fg": "#1F2933",
+        "close_hover": "#F2DCDC",
+        "close_pressed": "#E9B5B5"
+    },
     "green": {
         "primary": "#2FA36B",
         "primary_hover": "#3FBF87",
@@ -869,15 +1032,4 @@ class Branding:
     COMPANY_NAME = "KeyDrive"
     
     # GUI theme colors
-    THEME = {
-        "bg": "#1a1a2e",
-        "fg": "#ffffff",
-        "accent": "#4a90d9",
-        "success": "#4caf50",
-        "warning": "#ff9800",
-        "error": "#f44336",
-        "button_bg": "#4a90d9",
-        "button_fg": "#ffffff",
-        "entry_bg": "#16213e",
-        "entry_fg": "#ffffff",
-    }
+    THEME = THEME_PALETTES["brand"]

@@ -27,7 +27,7 @@ from core.constants import ConfigKeys, Defaults
 from core.limits import Limits
 
 # Logger for config operations
-_config_logger = logging.getLogger('SmartDrive.config')
+_config_logger = logging.getLogger('KeyDrive.config')
 
 
 # =============================================================================

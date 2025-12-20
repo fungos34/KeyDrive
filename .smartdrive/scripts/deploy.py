@@ -16,6 +16,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from core.paths import Paths
 
 # =============================================================================
 # Core module imports - SINGLE SOURCE OF TRUTH
@@ -144,44 +145,44 @@ PAYLOAD_MANIFEST = {
     "core": {
         "files": [
             ("__init__.py", "SSOT module init", True),
-            ("version.py", "VERSION constant", True),
-            ("constants.py", "ConfigKeys, UserInputs, SecurityMode", True),
-            ("paths.py", "Paths class for path resolution", True),
-            ("limits.py", "Limits class for validation bounds", True),
-            ("modes.py", "SecurityMode enum definitions", True),
-            ("platform.py", "Platform detection utilities", True),
-            ("safety.py", "DiskIdentity, PartitionRef guardrails", True),
+            (FileNames.VERSION_PY, "VERSION constant", True),
+            (FileNames.CONSTANTS_PY, "ConfigKeys, UserInputs, SecurityMode", True),
+            (FileNames.PATHS_PY, "Paths class for path resolution", True),
+            (FileNames.LIMITS_PY, "Limits class for validation bounds", True),
+            (FileNames.MODES_PY, "SecurityMode enum definitions", True),
+            (FileNames.PLATFORM_PY, "Platform detection utilities", True),
+            (FileNames.SAFETY_PY, "DiskIdentity, PartitionRef guardrails", True),
         ],
         "critical": True,  # Abort deployment if any missing
     },
     # Runtime scripts (functional modules)
     "scripts": {
         "files": [
-            ("gui.py", "Main GUI application", True),
-            ("gui_launcher.py", "GUI launcher script", True),
-            ("gui_i18n.py", "GUI internationalization", True),
-            ("smartdrive.py", "Unified CLI interface", True),
-            ("cli_i18n.py", "CLI internationalization", False),  # Optional
-            ("mount.py", "Volume mounting", True),
-            ("unmount.py", "Volume unmounting", True),
-            ("keyfile.py", "Keyfile management", True),
-            ("recovery.py", "Recovery kit generation", True),
-            ("recovery_container.py", "Recovery crypto container", True),
-            ("rekey.py", "Password/keyfile rotation", True),
-            ("setup.py", "Setup wizard", True),
-            ("update.py", "Update functionality", True),
-            ("version.py", "Version display", False),  # Legacy, optional
-            ("crypto_utils.py", "Cryptographic utilities", True),
-            ("veracrypt_cli.py", "VeraCrypt CLI wrapper", True),
-            ("deploy.py", "Deployment tool (for re-deploy)", False),
+            (FileNames.GUI_PY, "Main GUI application", True),
+            (FileNames.GUI_LAUNCHER_PY, "GUI launcher script", True),
+            (FileNames.GUI_I18N_PY, "GUI internationalization", True),
+            (FileNames.KEYDRIVE_PY, "Unified CLI interface", True),
+            (FileNames.CLI_I18N_PY, "CLI internationalization", False),  # Optional
+            (FileNames.MOUNT_PY, "Volume mounting", True),
+            (FileNames.UNMOUNT_PY, "Volume unmounting", True),
+            (FileNames.KEYFILE_PY, "Keyfile management", True),
+            (FileNames.RECOVERY_PY, "Recovery kit generation", True),
+            (FileNames.RECOVERY_CONTAINER_PY, "Recovery crypto container", True),
+            (FileNames.REKEY_PY, "Password/keyfile rotation", True),
+            (FileNames.SETUP_PY, "Setup wizard", True),
+            (FileNames.UPDATE_PY, "Update functionality", True),
+            (FileNames.VERSION_PY, "Version display", False),  # Legacy, optional
+            (FileNames.CRYPTO_UTILS_PY, "Cryptographic utilities", True),
+            (FileNames.VERACRYPT_CLI_PY, "VeraCrypt CLI wrapper", True),
+            (FileNames.DEPLOY_PY, "Deployment tool (for re-deploy)", False),
         ],
         "critical": False,  # Warn but continue if non-required missing
     },
     # Static assets
     "static": {
         "files": [
-            ("LOGO_main.ico", "Application icon", True),
-            ("LOGO_main.png", "Application logo", True),
+            (FileNames.ICON_MAIN, "Application icon", True),
+            (FileNames.ICON_MAIN_PNG, "Application logo", True),
         ],
         "critical": False,  # Icons missing degrades UX but doesn't break functionality
     },
@@ -300,7 +301,7 @@ def deploy_to_drive(target_drive):
 
     # Copy keys (if they exist in repo)
     print("🔑 Copying keys...")
-    repo_keys = REPO_ROOT / "keys"
+    repo_keys = REPO_ROOT / Paths.KEYS_SUBDIR
     if repo_keys.exists():
         for key_file in repo_keys.glob("*"):
             if key_file.is_file():

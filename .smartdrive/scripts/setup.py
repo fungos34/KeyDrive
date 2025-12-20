@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-SmartDrive Setup Wizard
+KeyDrive Setup Wizard
 
 Automated setup for encrypted external drives with YubiKey + VeraCrypt:
 - Detect and select external drive
-- Partition drive (SmartDrive + PAYLOAD)
+- Partition drive (KeyDrive + PAYLOAD)
 - Create VeraCrypt encrypted volume
 - Add YubiKey protection
 - Copy scripts and generate config
@@ -45,6 +45,7 @@ from typing import Optional
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
+# Note: ".smartdrive" literal used here because FileNames not yet imported
 if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/setup.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
@@ -61,8 +62,10 @@ if str(_project_root) not in sys.path:
 
 from core.config import write_config_atomic
 from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, FileNames, Prompts, UserInputs
+from core.filesystems import FS, launcher_fs_spec
 from core.limits import Limits
 from core.modes import SECURITY_MODE_DISPLAY, SecurityMode, VolumeIdentifier, VolumeIdentifierKind
+from core.modes import _SECRETS_AVAILABLE  # Module-level flag (not Enum attribute)
 from core.paths import DEPLOYED_SCRIPTS_DIR, Paths, normalize_mount_letter
 from core.platform import get_platform
 from core.platform import is_windows as _is_windows
@@ -273,7 +276,7 @@ class PagedSetupState:
         self.launcher_label = None
 
         # Phase 2: Partition Size results
-        self.launcher_size = SMARTDRIVE_SIZE_MB
+        self.launcher_size = CryptoParams.LAUNCHER_PARTITION_SIZE_MB
 
         # Phase 3: Security Config results
         self.fingerprints = []
@@ -321,7 +324,7 @@ class PagedSetupState:
             self.disk_number = None
             self.launcher_label = None
         if phase <= SetupPhase.PARTITION_SIZE:
-            self.launcher_size = SMARTDRIVE_SIZE_MB
+            self.launcher_size = CryptoParams.LAUNCHER_PARTITION_SIZE_MB
         if phase <= SetupPhase.SECURITY_CONFIG:
             self.fingerprints = []
             self.security_mode = None
@@ -382,16 +385,17 @@ def detect_recovery_generated(launcher_root: Path) -> bool:
     """Detect whether a recovery kit exists on the deployed drive.
 
     SSOT: Uses core.paths.Paths.recovery_dir() for location.
+    File names from FileNames class (SSOT).
 
     Consider 'generated' if:
-    - SmartDrive_Recovery_Kit.html exists, OR
+    - {PRODUCT_NAME}_Recovery_Kit.html exists, OR
     - both recovery_container.bin and header_backup.hdr exist.
     """
     try:
         recovery_dir = Paths.recovery_dir(launcher_root)
-        html = recovery_dir / "SmartDrive_Recovery_Kit.html"
-        container = recovery_dir / "recovery_container.bin"
-        header = recovery_dir / "header_backup.hdr"
+        html = recovery_dir / f"{Branding.PRODUCT_NAME}{FileNames.RECOVERY_KIT_HTML_SUFFIX}"
+        container = recovery_dir / FileNames.RECOVERY_CONTAINER_BIN
+        header = recovery_dir / FileNames.RECOVERY_HEADER_HDR
         return html.exists() or (container.exists() and header.exists())
     except Exception:
         return False
@@ -731,9 +735,9 @@ def show_setup_success_screen(
     print("    [Q] QUIT")
     print("        Exit setup. You can mount later using:")
     if platform.system() == "Windows":
-        print(f"        Double-click KeyDrive.bat (from {launcher_mount})")
+        print(f"        Double-click {FileNames.BAT_LAUNCHER} (from {launcher_mount})")
     else:
-        print(f"        Run ./keydrive.sh (from {launcher_mount})")
+        print(f"        Run ./{FileNames.SH_LAUNCHER} (from {launcher_mount})")
     print()
 
     print("  " + "-" * 66)
@@ -911,13 +915,16 @@ def generate_pdf_from_markdown(markdown_path: Path, output_path: Path) -> bool:
 
 
 def get_ram_temp_dir():
-    """Get a RAM-backed temp directory if available, else system temp."""
+    """Get a RAM-backed temp directory if available, else system temp.
+    
+    SSOT: Uses Paths class constants for platform-specific paths.
+    """
     if platform.system() == "Linux":
-        ram_dir = Path("/dev/shm")
+        ram_dir = Path(Paths.LINUX_RAM_TEMP)
         if ram_dir.exists() and os.access(ram_dir, os.W_OK):
             return ram_dir
     elif platform.system() == "Darwin":  # macOS
-        ram_dir = Path("/tmp")
+        ram_dir = Path(Paths.MACOS_RAM_TEMP)
         if ram_dir.exists() and os.access(ram_dir, os.W_OK):
             return ram_dir
     # Windows or fallback
@@ -1056,10 +1063,12 @@ def get_inserted_card_identity() -> CardIdentity | None:
     - auth_fpr: Authentication subkey fingerprint (40 hex)
 
     Returns None if no card is inserted or parsing fails.
+
+    BUG-20251218-007 FIX: Add --no-tty to prevent terminal hang on repeated calls.
     """
     try:
         result = subprocess.run(
-            ["gpg", "--with-colons", "--card-status"],
+            ["gpg", "--no-tty", "--with-colons", "--card-status"],
             capture_output=True,
             text=True,
             timeout=Limits.GPG_CARD_STATUS_TIMEOUT,
@@ -1125,11 +1134,14 @@ def detect_yubikey() -> bool:
     """
     Detect if a YubiKey is present and accessible for GPG operations.
     Returns True if YubiKey is detected, False otherwise.
+
+    BUG-20251218-007 FIX: Add --no-tty to prevent terminal hang on repeated calls.
     """
     try:
         # Try gpg --card-status which requires YubiKey presence
+        # BUG-20251218-007: --no-tty prevents gpg from waiting on TTY input
         result = subprocess.run(
-            ["gpg", "--card-status"], capture_output=True, text=True, timeout=Limits.GPG_CARD_STATUS_TIMEOUT
+            ["gpg", "--no-tty", "--card-status"], capture_output=True, text=True, timeout=Limits.GPG_CARD_STATUS_TIMEOUT
         )
         return result.returncode == 0 and "serial number" in result.stdout.lower()
     except Exception:
@@ -1645,9 +1657,7 @@ def generate_seed() -> bytes:
 # Constants
 # =============================================================================
 
-SMARTDRIVE_SIZE_MB = 200  # Default SmartDrive partition size
-PAYLOAD_LABEL = "PAYLOAD"
-KEYFILE_SIZE = 64  # bytes
+  # Default KeyDrive partition size
 
 # VERSION is imported from core.version above
 
@@ -1950,7 +1960,7 @@ def get_drives_unix() -> list[dict]:
 
             for device in data.get("blockdevices", []):
                 if device.get("type") == "disk":
-                    name = f"/dev/{device['name']}"
+                    name = f"{Paths.LINUX_DEV_PREFIX}{device['name']}"
                     is_system = device["name"] in ["sda", "nvme0n1", "vda"]
                     drives.append(
                         {
@@ -2091,7 +2101,7 @@ def prompt_for_fingerprints(available: list[tuple[str, str]]) -> tuple[list[str]
     print("  SECURITY MODE SELECTION")
     print("=" * 60)
     print(
-        """
+        f"""
 Choose your security level:
 
   [1] Password + YubiKey (Recommended)
@@ -2103,7 +2113,7 @@ Choose your security level:
       Requires: YubiKey + PIN only (no manual password)
       
   [3] Password + Plain Keyfile
-      Unencrypted keyfile stored on SmartDrive
+      Unencrypted keyfile stored on {Branding.PRODUCT_NAME}
       Requires: Password + keyfile present
       
   [4] Password Only
@@ -2279,7 +2289,7 @@ SECURITY_MODE_MATRIX = {
         requires_yubikey=True,
         requires_gpg_decrypt=True,
         description="Password + GPG-encrypted keyfile (YubiKey decryption)",
-        verification_command_hint="1. gpg --decrypt keyfile.vc.gpg > keyfile.vc\n"
+        verification_command_hint=f"1. gpg --decrypt {FileNames.KEYFILE_GPG} > keyfile.vc\n"
         "2. veracrypt /volume <device> /letter Z /password <pw> /keyfiles keyfile.vc /silent /quit",
     ),
     SecurityMode.GPG_PW_ONLY.value: SecurityModePrerequisites(
@@ -2289,7 +2299,7 @@ SECURITY_MODE_MATRIX = {
         requires_yubikey=True,
         requires_gpg_decrypt=True,
         description="GPG-derived password (YubiKey + PIN only)",
-        verification_command_hint="1. gpg --decrypt seed.gpg | derive password\n"
+        verification_command_hint=f"1. gpg --decrypt {FileNames.SEED_GPG} | derive password\n"
         "2. veracrypt /volume <device> /letter Z /password <derived> /silent /quit",
     ),
 }
@@ -2358,22 +2368,23 @@ def verify_mode_prerequisites_or_prompt_manual(
 # =============================================================================
 
 
-def partition_drive_windows(disk_number: int, SMARTDRIVE_SIZE_MB: int, launcher_label: str) -> tuple[str, str]:
+def partition_drive_windows(disk_number: int, launcher_size_mb: int, launcher_label: str) -> tuple[str, str]:
     """
     Partition a drive on Windows using diskpart.
-    Creates: SmartDrive (exFAT) + PAYLOAD (for VeraCrypt)
-    Returns: (smartdrive_letter, payload_device_path)
+    Creates: LAUNCHER (size launcher_size_mb) + PAYLOAD (rest of disk)
+    Formats LAUNCHER using CryptoParams.LAUNCHER_FILESYSTEM_ID (SSOT via core/filesystems.py)
+    Returns: (launcher_drive_letter, payload_device_path)
     """
     log(f"Partitioning disk {disk_number}...")
 
-    # Create diskpart script
-    # Use 'clean all' or just stick with MBR if GPT conversion fails
-    # Some USB drives have issues with GPT, so we'll use MBR which is more compatible
+    spec = launcher_fs_spec(CryptoParams)
+    if not spec.windows_diskpart_fs:
+        raise RuntimeError(f"Launcher filesystem '{spec.id}' not supported on Windows (diskpart)")
+
     diskpart_script = f"""select disk {disk_number}
 clean
-rem Using MBR for better USB compatibility
-create partition primary size={SMARTDRIVE_SIZE_MB}
-format fs=exfat label="{launcher_label}" quick
+create partition primary size={launcher_size_mb}
+format fs={spec.windows_diskpart_fs} label="{launcher_label}" quick
 assign
 create partition primary
 """
@@ -2385,15 +2396,13 @@ create partition primary
 
     try:
         # Run diskpart
-        result = run_cmd(
-            ["diskpart", "/s", script_path], check=False, timeout=120  # We'll check manually for better error messages
-        )
+        result = run_cmd(["diskpart", "/s", script_path], check=False, timeout=120)
 
         # Check for errors in diskpart output
-        if result.returncode != 0 or "error" in result.stdout.lower():
-            error(f"Diskpart failed!")
+        if result.returncode != 0 or (result.stdout and "error" in result.stdout.lower()):
+            error("Diskpart failed!")
             print(f"\nDiskpart output:\n{result.stdout}")
-            if result.stderr:
+            if getattr(result, "stderr", None):
                 print(f"\nDiskpart errors:\n{result.stderr}")
             raise RuntimeError("Diskpart partitioning failed - see output above")
 
@@ -2402,14 +2411,11 @@ create partition primary
         # Wait for Windows to recognize new partitions
         time.sleep(3)
 
-        # Get the assigned drive letters and discover payload partition dynamically
-        # NO HARDCODED PartitionNumber 2 - find the non-launcher partition
+        # Discover launcher drive letter + payload partition number
         ps_script = f"""
-        $disk = Get-Disk -Number {disk_number}
         $partitions = Get-Partition -DiskNumber {disk_number} | Sort-Object PartitionNumber
-        # Launcher is partition 1, payload is the other (typically largest) partition
         $launcher = $partitions | Where-Object {{ $_.PartitionNumber -eq 1 }}
-        $payload = $partitions | Where-Object {{ $_.PartitionNumber -ne 1 -and -not $_.IsHidden }} | 
+        $payload = $partitions | Where-Object {{ $_.PartitionNumber -ne 1 -and -not $_.IsHidden }} |
                    Sort-Object Size -Descending | Select-Object -First 1
         @{{
             SmartDriveLetter = $launcher.DriveLetter
@@ -2420,33 +2426,38 @@ create partition primary
         result = run_cmd(["powershell", "-NoProfile", "-Command", ps_script])
         info = json.loads(result.stdout)
 
-        smartdrive_letter = info.get("SmartDriveLetter", "")
+        smartdrive_letter = info.get("SmartDriveLetter", "") or ""
         payload_partition = info.get("PayloadPartitionNumber", 2)
 
-        # Device path for VeraCrypt
+        # Device path for VeraCrypt (note: Harddisk numbering may differ on some systems)
         payload_device = f"\\Device\\Harddisk{disk_number}\\Partition{payload_partition}"
 
         return smartdrive_letter, payload_device
 
     finally:
-        os.unlink(script_path)
+        try:
+            os.unlink(script_path)
+        except Exception:
+            pass
 
 
-def partition_drive_unix(device: str, SMARTDRIVE_SIZE_MB: int, launcher_label: str) -> tuple[str, str]:
+def partition_drive_unix(device: str, launcher_size_mb: int, launcher_label: str) -> tuple[str, str]:
     """
-    Partition a drive on Linux using parted.
-    Returns: (smartdrive_mount, payload_device)
+    Partition a drive on Unix/Linux using parted.
+    Creates: LAUNCHER (size launcher_size_mb) + PAYLOAD (rest of disk)
+    Formats LAUNCHER using CryptoParams.LAUNCHER_FILESYSTEM_ID (SSOT via core/filesystems.py)
+    Returns: (launcher_mount_point, payload_device)
     """
     log(f"Partitioning {device}...")
 
     # Create GPT partition table
     run_cmd(["parted", "-s", device, "mklabel", "gpt"], check=True)
 
-    # Create SmartDrive partition
-    run_cmd(["parted", "-s", device, "mkpart", "primary", "fat32", "1MiB", f"{SMARTDRIVE_SIZE_MB + 1}MiB"], check=True)
+    # Create LAUNCHER partition (no FS hint; mkfs happens explicitly via SSOT)
+    run_cmd(["parted", "-s", device, "mkpart", "primary", "1MiB", f"{launcher_size_mb + 1}MiB"], check=True)
 
     # Create PAYLOAD partition (rest of disk)
-    run_cmd(["parted", "-s", device, "mkpart", "primary", f"{SMARTDRIVE_SIZE_MB + 1}MiB", "100%"], check=True)
+    run_cmd(["parted", "-s", device, "mkpart", "primary", f"{launcher_size_mb + 1}MiB", "100%"], check=True)
 
     # Determine partition names
     if "nvme" in device or "mmcblk" in device:
@@ -2456,19 +2467,24 @@ def partition_drive_unix(device: str, SMARTDRIVE_SIZE_MB: int, launcher_label: s
         launcher_dev = f"{device}1"
         payload_dev = f"{device}2"
 
-    # Format SmartDrive as exFAT
-    time.sleep(1)  # Wait for kernel to recognize partitions
-    run_cmd(["mkfs.exfat", "-n", launcher_label, launcher_dev], check=True)
+    # Wait for kernel to recognize partitions
+    time.sleep(1)
+
+    # Format LAUNCHER partition using SSOT FS spec
+    spec = launcher_fs_spec(CryptoParams)
+    if not spec.unix_mkfs_cmd:
+        raise RuntimeError(f"Launcher filesystem '{spec.id}' not supported on Unix")
+
+    run_cmd([*spec.unix_mkfs_cmd, launcher_label, launcher_dev], check=True)
 
     log("[OK] Partitioning complete")
 
-    # Mount SmartDrive temporarily
-    mount_point = f"/mnt/{launcher_label}"
+    # Mount LAUNCHER temporarily
+    mount_point = f"{Paths.LINUX_MNT_PREFIX}{launcher_label}"
     os.makedirs(mount_point, exist_ok=True)
     run_cmd(["mount", launcher_dev, mount_point], check=True)
 
     return mount_point, payload_dev
-
 
 # =============================================================================
 # VeraCrypt Functions
@@ -3393,7 +3409,7 @@ def create_veracrypt_volume_gui(
     session_salt_b64: str | None = None,
     session_hkdf_info: str | None = None,
 ) -> bool:
-    """
+    f"""
     Guide user through VeraCrypt GUI volume creation.
 
     Uses render_vc_guide() for a scannable, copy-friendly format.
@@ -3401,7 +3417,7 @@ def create_veracrypt_volume_gui(
 
     SECURITY (per AGENT_ARCHITECTURE.md Section 7 & 10.3):
     - Secrets are NOT printed to terminal
-    - Use CPW/CKF/CDP commands to copy on demand
+    - Use {UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH} commands to copy on demand
     - Clipboard-first with auto-clear timeout
 
     P0-1 FIX: Returns bool explicitly:
@@ -3414,7 +3430,7 @@ def create_veracrypt_volume_gui(
         password: Volume password (or pre-derived for GPG_PW_ONLY)
         keyfile_path: Optional keyfile path
         security_mode: Security mode (PW_ONLY, PW_KEYFILE, etc.)
-        session_seed_gpg_path: Optional temp seed.gpg path (setup workflow)
+        session_seed_gpg_path: Optional temp {FileNames.SEED_GPG} path (setup workflow)
         session_salt_b64: Optional salt for HKDF (setup workflow)
         session_hkdf_info: Optional HKDF info string (setup workflow)
 
@@ -3425,6 +3441,7 @@ def create_veracrypt_volume_gui(
     log("[DEBUG] create_veracrypt_volume_gui: ENTERED")
 
     # Import SecretProvider for on-demand secret access
+    global _SECRETS_AVAILABLE
     try:
         from core.secrets import ClipboardUnavailableError, SecretProvider
 
@@ -3436,7 +3453,7 @@ def create_veracrypt_volume_gui(
     # Device path is masked to prevent shoulder-surfing; use CDP to copy
     device_display = device_path[:20] + "..." if len(device_path) > 20 else device_path
     copy_values = {
-        "Device": f"{device_display} (use CDP to copy full path)",
+        "Device": f"{device_display} (use {UserInputs.COPY_DEVICE_PATH} to copy full path)",
     }
 
     # DO NOT add password to copy_values - use CPW command instead
@@ -3470,9 +3487,9 @@ def create_veracrypt_volume_gui(
     if security_mode == SecurityMode.GPG_PW_ONLY.value:
         steps.append(
             {
-                "text": "Enter the password (type CPW to copy to clipboard):",
+                "text": f"Enter the password (type {UserInputs.COPY_PASSWORD} to copy to clipboard):",
                 "substeps": [
-                    "Type CPW below to copy the derived password",
+                    f"Type {UserInputs.COPY_PASSWORD} below to copy the derived password",
                     "Paste it into VeraCrypt (Ctrl+V)",
                     "You'll need this password again during verification",
                 ],
@@ -3483,7 +3500,7 @@ def create_veracrypt_volume_gui(
         if keyfile_path:
             pw_step["substeps"] = [
                 "Click 'Use keyfiles', then 'Add File...'",
-                "Type CKF to copy keyfile path, then paste in VeraCrypt",
+                f"Type {UserInputs.COPY_KEY_FILE} to copy keyfile path, then paste in VeraCrypt",
             ]
         steps.append(pw_step)
 
@@ -3493,7 +3510,7 @@ def create_veracrypt_volume_gui(
             {
                 "text": "Choose filesystem and format options:",
                 "substeps": [
-                    "Filesystem: exFAT (cross-platform)",
+                    f"Filesystem: {CryptoParams.LAUNCHER_FILESYSTEM} ({CryptoParams.LAUNCHER_FILESYSTEM_CAPABILITIES})",
                     "Enable 'Quick Format' (faster, fine for new drives)",
                 ],
             },
@@ -3506,10 +3523,10 @@ def create_veracrypt_volume_gui(
 
     # Notes
     notes = [
-        "AES-256 with SHA-512 is recommended for security",
-        "exFAT works on Windows, macOS, and Linux",
+        f"{CryptoParams.VERACRYPT_ENCRYPTION} with {CryptoParams.VERACRYPT_HASH} is recommended for security",
+        f"{CryptoParams.VERACRYPT_FILESYSTEM} {CryptoParams.VERACRYPT_FILESYSTEM_CAPABILITIES}",
         "Setup will attempt automated mounting after creation",
-        "SECURITY: Secrets only copied on demand via CPW/CKF commands",
+        f"SECURITY: Secrets only copied on demand via {UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE} commands",
     ]
 
     # Render the guide
@@ -3524,10 +3541,10 @@ def create_veracrypt_volume_gui(
     # Print command reference
     print("\n  " + "=" * 60)
     print("  ON-DEMAND COPY COMMANDS (type anytime):")
-    print("    CPW  = Copy Password to clipboard")
+    print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard")
     if keyfile_path:
-        print("    CKF  = Copy Keyfile path to clipboard")
-    print("    CDP  = Copy Device path to clipboard")
+        print(f"    {UserInputs.COPY_KEY_FILE}  = Copy Keyfile path to clipboard")
+    print(f"    {UserInputs.COPY_DEVICE_PATH}  = Copy Device path to clipboard")
     print("")
     print("  SECURITY: Secrets are NOT printed. Use commands to copy.")
     print("  " + "=" * 60)
@@ -3541,11 +3558,11 @@ def create_veracrypt_volume_gui(
             # Build session overrides for setup workflow
             session_overrides = {}
             if security_mode == SecurityMode.GPG_PW_ONLY.value and session_seed_gpg_path:
-                session_overrides["seed_gpg_path"] = str(session_seed_gpg_path)
+                session_overrides[ConfigKeys.SEED_GPG_PATH] = str(session_seed_gpg_path)
                 if session_salt_b64:
-                    session_overrides["salt_b64"] = session_salt_b64
+                    session_overrides[ConfigKeys.SALT_B64] = session_salt_b64
                 if session_hkdf_info:
-                    session_overrides["hkdf_info"] = session_hkdf_info
+                    session_overrides[ConfigKeys.HKDF_INFO] = session_hkdf_info
 
             secrets_provider = SecretProvider(
                 security_mode=SecurityMode(security_mode),
@@ -3556,12 +3573,12 @@ def create_veracrypt_volume_gui(
 
             # Apply session overrides
             if session_overrides:
-                if "seed_gpg_path" in session_overrides:
-                    secrets_provider.seed_gpg_path = Path(session_overrides["seed_gpg_path"])
-                if "salt_b64" in session_overrides:
-                    secrets_provider.salt_b64 = session_overrides["salt_b64"]
-                if "hkdf_info" in session_overrides:
-                    secrets_provider.hkdf_info = session_overrides["hkdf_info"]
+                if ConfigKeys.SEED_GPG_PATH in session_overrides:
+                    secrets_provider.seed_gpg_path = Path(session_overrides[ConfigKeys.SEED_GPG_PATH])
+                if ConfigKeys.SALT_B64 in session_overrides:
+                    secrets_provider.salt_b64 = session_overrides[ConfigKeys.SALT_B64]
+                if ConfigKeys.HKDF_INFO in session_overrides:
+                    secrets_provider.hkdf_info = session_overrides[ConfigKeys.HKDF_INFO]
 
             # For GPG_PW_ONLY, DON'T store pre-derived password (violates decrypt-on-demand)
             # The SecretProvider will derive it when CPW is called
@@ -3584,31 +3601,31 @@ def create_veracrypt_volume_gui(
 
         # Command loop for on-demand secret access
         setup_flow_trace("MANUAL_LOOP_ENTER", {"has_secrets_provider": secrets_provider is not None})
-        log("[DEBUG] Entered command loop (CPW/CKF/CDP/YES/NO)")
-        print("\n  Commands: CPW (password), CKF (keyfile), CDP (device path), YES (done), NO (abort)")
+        log(f"[DEBUG] Entered command loop ({UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH}/{UserInputs.YES}/{UserInputs.NO})")
+        print(f"\n  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)")
         while True:
             response = input("  > ").strip().upper()
             setup_flow_trace("MANUAL_LOOP_CMD", {"cmd": response})
             log(f"[DEBUG] Command received: {response}")
 
             # Handle on-demand secret commands
-            if response in ("CPW", "CKF", "CDP"):
+            if response in ({UserInputs.COPY_PASSWORD}, {UserInputs.COPY_KEY_FILE}, {UserInputs.COPY_DEVICE_PATH}):
                 if secrets_provider:
                     secrets_provider.handle_command(response)
-                elif response == "CPW":
+                elif response == {UserInputs.COPY_PASSWORD}:
                     # Fallback: use clipboard directly (NON-BLOCKING in command loop)
                     if clipboard_available():
                         password_to_clipboard_with_timeout(password, timeout_seconds=120, wait_for_enter=False)
                     else:
                         print("  [!] Clipboard unavailable. Cannot copy password.")
                         print("      Type PRINTPW if you must see the password (not recommended).")
-                elif response == "CDP":
+                elif response == {UserInputs.COPY_DEVICE_PATH}:
                     if clipboard_available():
                         copy_to_clipboard(device_path)
                         print(f"  [OK] Device path copied: {device_path}")
                     else:
                         print(f"  Device path: {device_path}")
-                elif response == "CKF":
+                elif response == {UserInputs.COPY_KEY_FILE}:
                     if keyfile_path:
                         if clipboard_available():
                             copy_to_clipboard(str(keyfile_path))
@@ -3657,7 +3674,7 @@ def create_veracrypt_volume_gui(
                 log("[DEBUG] Returning MANUAL_ABORT (False)")
                 return False
 
-            print("  Commands: CPW (password), CKF (keyfile), CDP (device path), YES (done), NO (abort)")
+            print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)")
     except Exception as e:
         if secrets_provider:
             secrets_provider.cleanup()
@@ -3806,13 +3823,13 @@ def prompt_manual_gui_mount(
     print()
 
     while True:
-        choice = input("  Mount manually via GUI? [yes/no]: ").strip().lower()
-        if choice == "yes":
+        choice = input(f"  Mount manually via GUI? [{UserInputs.YES.lower()}/{UserInputs.NO.lower()}]: ").strip().lower()
+        if choice == UserInputs.YES.lower():
             break
-        elif choice == "no":
+        elif choice == UserInputs.NO.lower():
             warn("User declined manual mounting - setup may be incomplete")
             return None
-        print("  Please type 'yes' or 'no'")
+        print(f"  Please type '{UserInputs.YES.lower()}' or '{UserInputs.NO.lower()}'")
 
     # Auto-start VeraCrypt GUI if available
     system = get_platform()
@@ -3833,9 +3850,9 @@ def prompt_manual_gui_mount(
     print("\n  " + "=" * 60)
     print("  ON-DEMAND COPY COMMANDS:")
     if security_mode == SecurityMode.GPG_PW_ONLY.value:
-        print("    CPW  = Copy Password to clipboard (GPG-derived)")
+        print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard (GPG-derived)")
     else:
-        print("    CPW  = Copy Password to clipboard")
+        print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard")
     print("")
     print("  SECURITY: Secrets are NOT printed. Use commands to copy.")
     print("  " + "=" * 60)
@@ -3850,8 +3867,8 @@ def prompt_manual_gui_mount(
     print()
 
     # Command loop for on-demand secret access
-    log("[DEBUG] Entered manual mount command loop (CPW/YES/NO)")
-    print("  Commands: CPW (password), YES (mount succeeded), NO (failed/cancel)")
+    log(f"[DEBUG] Entered manual mount command loop ({UserInputs.COPY_PASSWORD}/{UserInputs.YES}/{UserInputs.NO})")
+    print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)")
 
     # Create SecretProvider for GPG_PW_ONLY mode (BUG-20251218-006 fix)
     # This enforces hardware key presence before decrypting secrets
@@ -3867,12 +3884,12 @@ def prompt_manual_gui_mount(
             )
             # Apply session overrides (seed_gpg_path, salt_b64, hkdf_info)
             if session_overrides:
-                if "seed_gpg_path" in session_overrides:
-                    secrets_provider.seed_gpg_path = Path(session_overrides["seed_gpg_path"])
-                if "salt_b64" in session_overrides:
-                    secrets_provider.salt_b64 = session_overrides["salt_b64"]
-                if "hkdf_info" in session_overrides:
-                    secrets_provider.hkdf_info = session_overrides["hkdf_info"]
+                if ConfigKeys.SEED_GPG_PATH in session_overrides:
+                    secrets_provider.seed_gpg_path = Path(session_overrides[ConfigKeys.SEED_GPG_PATH])
+                if ConfigKeys.SALT_B64 in session_overrides:
+                    secrets_provider.salt_b64 = session_overrides[ConfigKeys.SALT_B64]
+                if ConfigKeys.HKDF_INFO in session_overrides:
+                    secrets_provider.hkdf_info = session_overrides[ConfigKeys.HKDF_INFO]
             log("[DEBUG] SecretProvider created for GPG_PW_ONLY mode")
         except Exception as e:
             log(f"Warning: Could not create SecretProvider: {e}")
@@ -3884,7 +3901,7 @@ def prompt_manual_gui_mount(
 
         # Handle CPW command (NON-BLOCKING in command loop)
         # BUG-20251218-006: GPG_PW_ONLY mode MUST use SecretProvider for hardware key enforcement
-        if response == "CPW":
+        if response == UserInputs.COPY_PASSWORD:
             if secrets_provider:
                 # GPG_PW_ONLY: Use SecretProvider (enforces YubiKey presence)
                 secrets_provider.handle_command(response)
@@ -3894,23 +3911,23 @@ def prompt_manual_gui_mount(
                     password_to_clipboard_with_timeout(password, timeout_seconds=120, wait_for_enter=False)
                 else:
                     print("  [!] Clipboard unavailable.")
-                    print("      Type PRINTPW if you must see the password (not recommended).")
+                    print(f"      Type {UserInputs.PRINT_PASSWORD} if you must see the password (not recommended).")
             else:
                 print("  [!] No password available.")
             continue
 
         # Handle PRINTPW for clipboard-unavailable fallback (explicit opt-in)
         # NOT available for GPG_PW_ONLY mode (must use SecretProvider with hardware key)
-        if response == "PRINTPW":
+        if response == UserInputs.PRINT_PASSWORD:
             if secrets_provider:
-                print("  [!] PRINTPW not available in GPG_PW_ONLY mode.")
-                print("      Use CPW to copy password (requires hardware key).")
+                print(f"  [!] {UserInputs.PRINT_PASSWORD} not available in {SecurityMode(security_mode)} mode.")
+                print(f"      Use {UserInputs.COPY_PASSWORD} to copy password (might require hardware key for authentication).")
                 continue
             print("\n  " + "!" * 60)
             print("  WARNING: Printing password to terminal (shoulder-surfing risk)")
             print("  " + "!" * 60)
-            confirm = input("  Type 'IUNDERSTAND' to confirm: ").strip()
-            if confirm == "IUNDERSTAND" and password:
+            confirm = input(f"  Type '{UserInputs.CONFIRM}' to confirm: ").strip()
+            if confirm == UserInputs.CONFIRM and password:
                 print(f"\n  Password: {password}\n")
             else:
                 print("  Cancelled - password not shown.")
@@ -3918,7 +3935,7 @@ def prompt_manual_gui_mount(
 
         # Handle completion
         if response == UserInputs.YES:
-            log("[DEBUG] YES received in manual mount loop - prompting for drive letter")
+            log(f"[DEBUG] {UserInputs.YES} received in manual mount loop - prompting for drive letter")
             # Clean up SecretProvider
             if secrets_provider:
                 try:
@@ -3952,7 +3969,7 @@ def prompt_manual_gui_mount(
                     print("  Mount path does not exist. Try again.")
             continue
 
-        if response == "NO":
+        if response == UserInputs.NO:
             warn("User failed to mount volume manually")
             # Clean up SecretProvider
             if secrets_provider:
@@ -3963,7 +3980,7 @@ def prompt_manual_gui_mount(
             clear_clipboard()  # Clean up
             return None
 
-        print("  Commands: CPW (password), YES (mount succeeded), NO (failed/cancel)")
+        print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)")
 
 
 # =============================================================================
@@ -3973,7 +3990,7 @@ def prompt_manual_gui_mount(
 
 def generate_keyfile() -> bytes:
     """Generate random keyfile data."""
-    return secrets.token_bytes(KEYFILE_SIZE)
+    return secrets.token_bytes(CryptoParams.KEYFILE_SIZE)
 
 
 def encrypt_keyfile_to_yubikeys(keyfile_data: bytes, fingerprints: list[str], output_path: Path) -> bool:
@@ -4108,7 +4125,7 @@ def _ensure_clean_root_entrypoints(launcher_path: Path, *, repo_root: Path, targ
 
     Root files after this step:
     - Windows: <Product>.lnk
-    - Linux: keydrive.sh
+    - Linux: {FileNames.SH_LAUNCHER}
     - macOS: <Product>.command
     """
     # Ensure .smartdrive is hidden on Windows (dot-prefix is not hidden on Windows)
@@ -4116,15 +4133,16 @@ def _ensure_clean_root_entrypoints(launcher_path: Path, *, repo_root: Path, targ
     if _is_windows() and smartdrive_dir.exists():
         windows_set_attributes(smartdrive_dir, hidden=True)
 
-    # Linux/macOS entrypoint: prefer repo's canonical keydrive.sh
+    # Linux/macOS entrypoint: prefer repo's canonical shell launcher
     sh_src = repo_root / FileNames.SH_LAUNCHER
     sh_dst = launcher_path / FileNames.SH_LAUNCHER
     if sh_src.exists():
         shutil.copy2(sh_src, sh_dst)
     else:
-        # Minimal fallback
+        # Minimal fallback - construct path from SSOT constants
+        gui_path = f"{Paths.SMARTDRIVE_DIR_NAME}/{Paths.SCRIPTS_SUBDIR}/gui.py"
         sh_dst.write_text(
-            "#!/bin/bash\n" 'cd "$(dirname "$0")"\n' "python3 .smartdrive/scripts/gui.py\n",
+            f"#!/bin/bash\n" f'cd "$(dirname "$0")"\n' f"python3 {gui_path}\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -4199,36 +4217,25 @@ def _ensure_clean_root_entrypoints(launcher_path: Path, *, repo_root: Path, targ
 # FIRST DEPLOY FUNCTION (LEGACY - uses flat structure, being phased out)
 def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: Path, mount_letter: str = "V") -> bool:
     """
-    Copy scripts and create config on SmartDrive partition.
+    Copy scripts and create config on KeyDrive partition.
 
     LEGACY: This function uses the old flat structure. Use deploy_scripts_extended instead.
     """
-    log("Deploying scripts to SmartDrive partition...")
+    log(f"Deploying scripts to {Branding.PRODUCT_NAME} partition...")
 
     scripts_dir = Path(__file__).resolve().parent
     smartdrive_root = scripts_dir.parent  # .smartdrive/
     repo_root = smartdrive_root.parent  # repo root for assets
 
-    target_scripts = launcher_path / "scripts"
-    target_keys = launcher_path / "keys"
+    target_scripts = launcher_path / Paths.SMARTDRIVE_DIR_NAME / Paths.SCRIPTS_SUBDIR
+    target_keys = launcher_path / Paths.KEYS_SUBDIR
 
     # Create directories
     target_scripts.mkdir(parents=True, exist_ok=True)
     target_keys.mkdir(parents=True, exist_ok=True)
 
     # Copy scripts from .smartdrive/scripts/
-    scripts_to_copy = [
-        "smartdrive.py",
-        "mount.py",
-        "unmount.py",
-        "rekey.py",
-        "keyfile.py",
-        "gui_launcher.py",
-        "gui.py",
-        "gui_i18n.py",
-        "crypto_utils.py",
-        "version.py",
-    ]
+    scripts_to_copy = FileNames.COPIED_SCRIPTS_FOR_DEPLOYMENT
     for script in scripts_to_copy:
         src = scripts_dir / script
         if src.exists():
@@ -4242,14 +4249,14 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
         log("  Copied constants.py")
 
     # Copy variables.py from repo root to scripts directory
-    variables_src = repo_root / "variables.py"
+    variables_src = repo_root / FileNames.VARIABLES_PY
     if variables_src.exists():
-        shutil.copy2(variables_src, target_scripts / "variables.py")
+        shutil.copy2(variables_src, target_scripts / FileNames.VARIABLES_PY)
         log("  Copied variables.py")
 
     # Copy static assets to .smartdrive/static/ (deployed structure - same as update.py)
     static_dir = repo_root / "static"
-    target_static = launcher_path / ".smartdrive" / "static"
+    target_static = launcher_path / Paths.SMARTDRIVE_DIR_NAME / "static"
     if static_dir.exists():
         target_static.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(static_dir, target_static, dirs_exist_ok=True)
@@ -4267,20 +4274,20 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
             break
 
     # Copy docs into .smartdrive/docs/ (drive root must contain entrypoints only)
-    docs_dir = Paths.smartdrive_dir(launcher_path) / "docs"
+    docs_dir = Paths.smartdrive_dir(launcher_path) / Paths.DOCUMENTATION_SUBDIR
     docs_dir.mkdir(parents=True, exist_ok=True)
     readme_file = repo_root / README_NAME
     gui_readme_file = repo_root / GUI_README_NAME
     if readme_file.exists():
         shutil.copy2(readme_file, docs_dir / README_NAME)
-        log(f"  Copied {README_NAME} to .smartdrive/docs/")
+        log(f"  Copied {README_NAME} to {docs_dir}")
         pdf_path = docs_dir / README_PDF_NAME
         if generate_pdf_from_markdown(readme_file, pdf_path):
             log(f"  Generated {README_PDF_NAME} (PDF documentation)")
 
     if gui_readme_file.exists():
         shutil.copy2(gui_readme_file, docs_dir / GUI_README_NAME)
-        log(f"  Copied {GUI_README_NAME} to .smartdrive/docs/")
+        log(f"  Copied {GUI_README_NAME} to {docs_dir}")
         gui_pdf_path = docs_dir / GUI_README_PDF_NAME
         if generate_pdf_from_markdown(gui_readme_file, gui_pdf_path):
             log(f"  Generated {GUI_README_PDF_NAME} (PDF GUI documentation)")
@@ -4289,8 +4296,8 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
     _ensure_clean_root_entrypoints(launcher_path, repo_root=repo_root, target_scripts=target_scripts)
 
     # Copy encrypted keyfile
-    shutil.copy2(encrypted_keyfile, target_keys / "keyfile.vc.gpg")
-    log("  Copied keyfile.vc.gpg")
+    shutil.copy2(encrypted_keyfile, target_keys / FileNames.KEYFILE_GPG)
+    log(f"  Copied {FileNames.KEYFILE_GPG}")
 
     # Get current date for metadata
     from datetime import datetime
@@ -4305,7 +4312,7 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
         ConfigKeys.MODE: SecurityMode.PW_GPG_KEYFILE.value,  # Legacy deploy uses GPG keyfile mode
         ConfigKeys.SETUP_DATE: setup_date,
         ConfigKeys.LAST_PASSWORD_CHANGE: setup_date,
-        ConfigKeys.ENCRYPTED_KEYFILE: "../keys/keyfile.vc.gpg",
+        ConfigKeys.ENCRYPTED_KEYFILE: str(Path(Paths.KEYS_SUBDIR) / FileNames.KEYFILE_GPG),
         ConfigKeys.WINDOWS: {
             ConfigKeys.VOLUME_PATH: payload_device,
             ConfigKeys.MOUNT_LETTER: mount_letter,
@@ -4314,7 +4321,7 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
         ConfigKeys.UNIX: {ConfigKeys.VOLUME_PATH: payload_device, ConfigKeys.MOUNT_POINT: "~/veradrive"},
     }
 
-    config_path = launcher_path / "config.json"
+    config_path = launcher_path / FileNames.CONFIG_JSON
     write_config_atomic(config_path, config)
     log("  Created config.json (atomic write)")
 
@@ -4335,7 +4342,7 @@ def deploy_scripts_extended(
     gpg_fingerprints: list = None,
 ) -> bool:
     """
-    Copy scripts and create config on SmartDrive partition.
+    Copy scripts and create config on KeyDrive partition.
     Supports all security modes: password-only, plain keyfile, GPG-encrypted keyfile, GPG password-only.
 
     Args:
@@ -4353,7 +4360,7 @@ def deploy_scripts_extended(
         ├── docs/
         └── integrity/
     """
-    log("Deploying scripts to SmartDrive partition...")
+    log(f"Deploying scripts to {Branding.PRODUCT_NAME} partition...")
 
     scripts_dir = Path(__file__).resolve().parent
     smartdrive_root = scripts_dir.parent  # .smartdrive/
@@ -4364,10 +4371,10 @@ def deploy_scripts_extended(
     repo_root = smartdrive_root.parent
 
     # New folder structure: all data under .smartdrive
-    target_smartdrive = launcher_path / ".smartdrive"
-    target_scripts = target_smartdrive / "scripts"
-    target_keys = target_smartdrive / "keys"
-    target_integrity = target_smartdrive / "integrity"
+    target_smartdrive = launcher_path / Paths.SMARTDRIVE_DIR_NAME
+    target_scripts = target_smartdrive / Paths.SCRIPTS_SUBDIR
+    target_keys = target_smartdrive / Paths.KEYS_SUBDIR
+    target_integrity = target_smartdrive / Paths.INTEGRITY_SUBDIR
 
     # Create directories
     target_scripts.mkdir(parents=True, exist_ok=True)
@@ -4375,26 +4382,8 @@ def deploy_scripts_extended(
     target_integrity.mkdir(parents=True, exist_ok=True)
 
     # Copy scripts - REQUIRED_SCRIPTS must be present for core functionality
-    REQUIRED_SCRIPTS = [
-        "mount.py",
-        "unmount.py",
-        "recovery.py",
-        "recovery_container.py",
-        "veracrypt_cli.py",
-        "crypto_utils.py",
-        "smartdrive.py",
-    ]
-    OPTIONAL_SCRIPTS = [
-        "rekey.py",
-        "keyfile.py",
-        "gui_launcher.py",
-        "gui.py",
-        "gui_i18n.py",
-        "version.py",
-        "setup.py",
-        "update.py",
-        "deploy.py",
-    ]
+    REQUIRED_SCRIPTS = FileNames.REQUIRED_SCRIPTS_FOR_DEPLOYMENT
+    OPTIONAL_SCRIPTS = FileNames.OPTIONAL_SCRIPTS_FOR_DEPLOYMENT
     scripts_to_copy = REQUIRED_SCRIPTS + OPTIONAL_SCRIPTS
 
     missing_required = []
@@ -4437,7 +4426,7 @@ def deploy_scripts_extended(
         log("  Copied core/ (SSOT modules)")
 
         # Verify critical core files
-        core_required = ["__init__.py", "constants.py", "modes.py", "paths.py", "limits.py", "version.py"]
+        core_required = FileNames.REQUIRED_CORE_FILES
         for core_file in core_required:
             if not (target_core / core_file).exists():
                 error(f"  Core module missing: {core_file}")
@@ -4454,18 +4443,18 @@ def deploy_scripts_extended(
         log("  Copied constants.py")
 
     # Copy variables.py from repo root to scripts directory
-    variables_src = repo_root / "variables.py"
+    variables_src = repo_root / FileNames.VARIABLES_PY
     if variables_src.exists():
-        shutil.copy2(variables_src, target_scripts / "variables.py")
+        shutil.copy2(variables_src, target_scripts / FileNames.VARIABLES_PY)
         log("  Copied variables.py")
 
     # Copy static assets to .smartdrive/static/ (deployed structure - same as update.py)
-    static_dir = repo_root / "static"
-    target_static = launcher_path / ".smartdrive" / "static"
+    static_dir = repo_root / Paths.STATIC_SUBDIR
+    target_static = launcher_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR
     if static_dir.exists():
         target_static.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(static_dir, target_static, dirs_exist_ok=True)
-        log("  Copied static assets to .smartdrive/static/")
+        log(f"  Copied static assets to {target_static}")
 
     # Copy GUI executable into .smartdrive/scripts/ (NOT drive root)
     gui_exe_candidates = [
@@ -4479,20 +4468,20 @@ def deploy_scripts_extended(
             break
 
     # Copy docs into .smartdrive/docs/ (drive root must contain entrypoints only)
-    docs_dir = target_smartdrive / "docs"
+    docs_dir = target_smartdrive / Paths.DOCUMENTATION_SUBDIR
     docs_dir.mkdir(parents=True, exist_ok=True)
     readme_file = repo_root / README_NAME
     gui_readme_file = repo_root / GUI_README_NAME
     if readme_file.exists():
         shutil.copy2(readme_file, docs_dir / README_NAME)
-        log(f"  Copied {README_NAME} to .smartdrive/docs/")
+        log(f"  Copied {README_NAME} to {docs_dir}")
         pdf_path = docs_dir / README_PDF_NAME
         if generate_pdf_from_markdown(readme_file, pdf_path):
             log(f"  Generated {README_PDF_NAME} (PDF documentation)")
 
     if gui_readme_file.exists():
         shutil.copy2(gui_readme_file, docs_dir / GUI_README_NAME)
-        log(f"  Copied {GUI_README_NAME} to .smartdrive/docs/")
+        log(f"  Copied {GUI_README_NAME} to {docs_dir}")
         gui_pdf_path = docs_dir / GUI_README_PDF_NAME
         if generate_pdf_from_markdown(gui_readme_file, gui_pdf_path):
             log(f"  Generated {GUI_README_PDF_NAME} (PDF GUI documentation)")
@@ -4506,18 +4495,18 @@ def deploy_scripts_extended(
     if use_keyfile:
         if use_gpg and encrypted_keyfile:
             # GPG-encrypted keyfile
-            shutil.copy2(encrypted_keyfile, target_keys / "keyfile.vc.gpg")
-            log("  Copied keyfile.vc.gpg (GPG-encrypted)")
-            keyfile_config = "../keys/keyfile.vc.gpg"
+            shutil.copy2(encrypted_keyfile, target_keys / FileNames.KEYFILE_GPG)
+            log(f"  Copied {FileNames.KEYFILE_GPG} (GPG-encrypted)")
+            keyfile_config = str(Path(Paths.KEYS_SUBDIR) / FileNames.KEYFILE_GPG) 
         elif plain_keyfile:
             # Plain keyfile (not encrypted)
-            shutil.copy2(plain_keyfile, target_keys / "keyfile.vc")
-            log("  Copied keyfile.vc (plain keyfile)")
-            keyfile_config = "../keys/keyfile.vc"
+            shutil.copy2(plain_keyfile, target_keys / FileNames.KEYFILE_PLAIN)
+            log(f"  Copied {FileNames.KEYFILE_PLAIN} (plain keyfile)")
+            keyfile_config = str(Path(Paths.KEYS_SUBDIR) / FileNames.KEYFILE_PLAIN)
     elif security_mode == SecurityMode.GPG_PW_ONLY.value and encrypted_keyfile:
         # GPG password-only mode - encrypted seed
-        shutil.copy2(encrypted_keyfile, target_keys / "seed.gpg")
-        log("  Copied seed.gpg (GPG-encrypted seed)")
+        shutil.copy2(encrypted_keyfile, target_keys / FileNames.SEED_GPG)
+        log(f"  Copied {FileNames.SEED_GPG} (GPG-encrypted seed)")
         keyfile_config = None  # No keyfile, password derived
     else:
         log("  No keyfile (password-only mode)")
@@ -4547,11 +4536,11 @@ def deploy_scripts_extended(
     if security_mode == SecurityMode.GPG_PW_ONLY.value:
         config.update(
             {
-                ConfigKeys.SEED_GPG_PATH: "../keys/seed.gpg",
-                ConfigKeys.KDF: "hkdf-sha256",
+                ConfigKeys.SEED_GPG_PATH: str(Path(Paths.KEYS_SUBDIR) / FileNames.SEED_GPG),
+                ConfigKeys.KDF: CryptoParams.KDF_HKDF_SHA256,
                 ConfigKeys.SALT_B64: salt_b64 or "",
-                ConfigKeys.HKDF_INFO: "smartdrive-vc-pw-v1",
-                ConfigKeys.PW_ENCODING: "base64url_nopad",
+                ConfigKeys.HKDF_INFO: CryptoParams.HKDF_INFO_DEFAULT,
+                ConfigKeys.PW_ENCODING: CryptoParams.PW_ENCODING_DEFAULT,
             }
         )
         # Add GPG fingerprints for GPG-based modes
@@ -4567,7 +4556,7 @@ def deploy_scripts_extended(
 
     # Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
     # Atomic write for data integrity
-    config_path = target_smartdrive / "config.json"
+    config_path = target_smartdrive / FileNames.CONFIG_JSON
     write_config_atomic(config_path, config)
     log("  Created config.json (atomic write)")
 
@@ -4580,7 +4569,7 @@ def sign_deployed_scripts(launcher_path: Path, gpg_fingerprint: str = None) -> b
     Sign deployed scripts with GPG for integrity verification.
 
     Args:
-        launcher_path: Path to SmartDrive partition
+        launcher_path: Path to KeyDrive partition
         gpg_fingerprint: Optional specific GPG key to use for signing
 
     Returns:
@@ -4591,19 +4580,19 @@ def sign_deployed_scripts(launcher_path: Path, gpg_fingerprint: str = None) -> b
     log("Signing scripts for integrity verification...")
 
     # New folder structure
-    smartdrive_dir = launcher_path / ".smartdrive"
-    target_scripts = smartdrive_dir / "scripts"
-    target_integrity = smartdrive_dir / "integrity"
+    smartdrive_dir = launcher_path / Paths.SMARTDRIVE_DIR_NAME
+    target_scripts = smartdrive_dir / Paths.SCRIPTS_SUBDIR
+    target_integrity = smartdrive_dir / Paths.INTEGRITY_SUBDIR
 
     # Ensure integrity directory exists
     target_integrity.mkdir(parents=True, exist_ok=True)
 
-    hash_file = target_integrity / "scripts.sha256"
-    sig_file = target_integrity / "scripts.sha256.sig"
+    hash_file = target_integrity / FileNames.HASH_FILE
+    sig_file = target_integrity / FileNames.SIGNATURE_FILE
 
     # Calculate hash of all scripts
     hash_obj = hashlib.sha256()
-    scripts = sorted(["smartdrive.py", "mount.py", "unmount.py", "rekey.py", "keyfile.py"])
+    scripts = sorted(FileNames.SIGNATURE_HASH_FILES)
 
     for script_name in scripts:
         script_path = target_scripts / script_name
@@ -4764,9 +4753,9 @@ def run_phase_2_partition_size(state: PagedSetupState) -> tuple:
     print(f"  Drive Size: {state.drive_size} GB")
     print()
 
-    print(f"{Branding.PRODUCT_NAME} partition size (scripts, ~{SMARTDRIVE_SIZE_MB}MB recommended)")
-    size_input = input(f"Enter size in MB [{SMARTDRIVE_SIZE_MB}]: ").strip()
-    state.launcher_size = int(size_input) if size_input.isdigit() else SMARTDRIVE_SIZE_MB
+    print(f"{Branding.PRODUCT_NAME} partition size (scripts, ~{CryptoParams.LAUNCHER_PARTITION_SIZE_MB}MB recommended)")
+    size_input = input(f"Enter size in MB [{CryptoParams.LAUNCHER_PARTITION_SIZE_MB}]: ").strip()
+    state.launcher_size = int(size_input) if size_input.isdigit() else CryptoParams.LAUNCHER_PARTITION_SIZE_MB
 
     print(f"\n[OK] {Branding.PRODUCT_NAME} partition: {state.launcher_size} MB")
 
@@ -4860,7 +4849,7 @@ def run_phase_4_yubikey_verification(state: PagedSetupState) -> tuple:
 
     test_seed = generate_seed()
 
-    tmp_test = get_ram_temp_dir() / f"smartdrive_test_{os.urandom(4).hex()}.gpg"
+    tmp_test = get_ram_temp_dir() / f"{FileNames.TMP_FILE_PREFIX}test_{os.urandom(4).hex()}.gpg"
     try:
         gpg_args = ["gpg", "--encrypt", "--armor", "--output", str(tmp_test)]
         for fpr in state.fingerprints:
@@ -4935,7 +4924,7 @@ def run_phase_5_review_confirm(state: PagedSetupState) -> tuple:
     print("The following operations will be performed:\n")
     print(f"  Target Drive:     {state.drive_id} - {state.drive_name}")
     print(f"  Drive Size:       {state.drive_size} GB")
-    print(f"  {Branding.PRODUCT_NAME}:         {state.launcher_size} MB (exFAT)")
+    print(f"  {Branding.PRODUCT_NAME}:         {state.launcher_size} MB ({CryptoParams.LAUNCHER_FILESYSTEM})")
 
     try:
         payload_size = float(str(state.drive_size).replace("G", "")) - state.launcher_size / 1024
@@ -5203,12 +5192,12 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
             if password != password_confirm:
                 raise RuntimeError("Passwords do not match")
 
-            tmp_keyfile = get_ram_temp_dir() / f"smartdrive_setup_keyfile_{os.urandom(4).hex()}.key"
+            tmp_keyfile = get_ram_temp_dir() / f"{FileNames.TMP_FILE_PREFIX}setup_keyfile_{os.urandom(4).hex()}.key"
             tmp_keyfile.write_bytes(os.urandom(64))
             # Capture keyfile bytes for recovery kit generation (no re-auth)
             state.keyfile_bytes = tmp_keyfile.read_bytes()
 
-            tmp_encrypted = get_ram_temp_dir() / f"smartdrive_setup_keyfile_{os.urandom(4).hex()}.gpg"
+            tmp_encrypted = get_ram_temp_dir() / f"{FileNames.TMP_FILE_PREFIX}setup_keyfile_{os.urandom(4).hex()}.gpg"
             gpg_args = ["gpg", "--encrypt", "--armor", "--output", str(tmp_encrypted)]
             for fpr in fingerprints:
                 gpg_args.extend(["--recipient", fpr])
@@ -5229,7 +5218,7 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
             if password != password_confirm:
                 raise RuntimeError("Passwords do not match")
 
-            tmp_keyfile = get_ram_temp_dir() / f"smartdrive_setup_keyfile_{os.urandom(4).hex()}.key"
+            tmp_keyfile = get_ram_temp_dir() / f"{FileNames.TMP_FILE_PREFIX}setup_keyfile_{os.urandom(4).hex()}.key"
             tmp_keyfile.write_bytes(os.urandom(64))
             # Capture keyfile bytes for recovery kit generation (no re-auth)
             state.keyfile_bytes = tmp_keyfile.read_bytes()
@@ -5242,12 +5231,12 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
             seed = generate_seed()
             salt = generate_salt()
             salt_b64 = base64.b64encode(salt).decode("ascii")
-            hkdf_info = "smartdrive-vc-pw-v1"
+            hkdf_info = CryptoParams.HKDF_INFO_DEFAULT
 
             password = derive_veracrypt_password(seed, salt)
             print(f"  [OK] Derived VeraCrypt password ({len(password)} chars)")
 
-            tmp_seed_gpg = get_ram_temp_dir() / f"smartdrive_setup_seed_{os.urandom(4).hex()}.gpg"
+            tmp_seed_gpg = get_ram_temp_dir() / f"{FileNames.TMP_FILE_PREFIX}setup_seed_{os.urandom(4).hex()}.gpg"
             if tmp_seed_gpg.exists():
                 tmp_seed_gpg.unlink()
 
@@ -5366,7 +5355,9 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
         # Set drive icon and label (Windows only)
         if "windows" in system:
             print("[Deployment] Setting drive icon and label...")
-            set_drive_icon(launcher_mount, project_root / "static" / "keydrive.ico")
+            # set_drive_icon uses SSOT internally for icon paths (FileNames, Paths)
+            drive_letter = str(launcher_mount.drive).rstrip(":\\") if launcher_mount.drive else ""
+            set_drive_icon(launcher_mount, drive_letter, icon_type="launcher")
             label_to_set = state.launcher_label or Branding.PRODUCT_NAME
             set_drive_label(launcher_mount, label_to_set)
             print(f"  [OK] Drive label: {label_to_set}")
@@ -5401,18 +5392,18 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
 
         # Verify deployment - check critical files exist
         print("[Deployment] Verifying deployment...")
-        target_smartdrive = launcher_mount / ".smartdrive"
-        target_scripts = target_smartdrive / "scripts"
-        target_config = target_smartdrive / "config.json"
+        target_smartdrive = launcher_mount / Paths.SMARTDRIVE_DIR_NAME
+        target_scripts = target_smartdrive / Paths.SCRIPTS_SUBDIR
+        target_config = target_smartdrive / FileNames.CONFIG_JSON
 
         deployment_verified = True
         required_items = [
             (target_smartdrive, "directory"),
             (target_scripts, "directory"),
             (target_config, "file"),
-            (target_scripts / "mount.py", "file"),
-            (target_scripts / "unmount.py", "file"),
-            (target_scripts / "recovery.py", "file"),
+            (target_scripts / FileNames.MOUNT_PY, "file"),
+            (target_scripts / FileNames.UNMOUNT_PY, "file"),
+            (target_scripts / FileNames.RECOVERY_PY, "file"),
         ]
 
         for item_path, item_type in required_items:
@@ -5447,7 +5438,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
             {
                 "launcher_mount": str(launcher_mount),
                 "config_exists": target_config.is_file(),
-                "scripts_deployed": (target_scripts / "mount.py").is_file(),
+                "scripts_deployed": (target_scripts / FileNames.MOUNT_PY).is_file(),
             },
         )
 
@@ -5516,8 +5507,8 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
         error("Internal error: launcher_mount is None")
         return 1
 
-    scripts_dir = launcher_mount / ".smartdrive" / "scripts"
-    config_path = launcher_mount / ".smartdrive" / "config.json"
+    scripts_dir = launcher_mount / Paths.SMARTDRIVE_DIR_NAME / Paths.SCRIPTS_SUBDIR
+    config_path = launcher_mount / Paths.SMARTDRIVE_DIR_NAME / FileNames.CONFIG_JSON
 
     if not scripts_dir.exists():
         error(f"Scripts directory not found: {scripts_dir}")
@@ -5529,7 +5520,14 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
     setup_flow_trace("POST_SETUP_MENU_SHOWN", {"launcher_mount": str(launcher_mount)})
 
     # Import helpers (avoid top-level import to keep CLI-only)
-    from recovery import generate_recovery_kit_from_setup
+    # Recovery import may fail if optional dependencies not installed
+    try:
+        from recovery import generate_recovery_kit_from_setup
+        recovery_available = True
+    except ImportError:
+        recovery_available = False
+        generate_recovery_kit_from_setup = None
+    
     from veracrypt_cli import open_veracrypt_gui
 
     # Action dispatch loop
@@ -5559,7 +5557,7 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
             print("\n  [ACTION] Mounting drive...")
             try:
                 # Build mount command (pass password for non-GPG_PW_ONLY modes)
-                cmd = [sys.executable, str(scripts_dir / "mount.py"), "--config", str(config_path)]
+                cmd = [sys.executable, str(scripts_dir / FileNames.MOUNT_PY), "--config", str(config_path)]
                 if state.security_mode != SecurityMode.GPG_PW_ONLY.value and state.password:
                     cmd.extend(["--password", state.password])
                 result = subprocess.run(cmd, cwd=str(scripts_dir))
@@ -5595,17 +5593,21 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
             else:
                 # Generate recovery kit
                 print("\n  [ACTION] Generating recovery kit...")
-                try:
-                    rc = generate_recovery_kit_from_setup(
-                        config_path=config_path, password=state.password, keyfile_bytes=state.keyfile_bytes
-                    )
-                    if rc == 0:
-                        state.recovery_generated = True
-                        print("  [OK] Recovery kit generated successfully")
-                    else:
-                        print(f"  [!] Recovery kit generation exited with code {rc}")
-                except Exception as e:
-                    print(f"  [!] Recovery kit generation failed: {e}")
+                if not recovery_available:
+                    print("  [!] Recovery kit generation unavailable: missing dependencies")
+                    print("      Install with: pip install mnemonic argon2-cffi")
+                else:
+                    try:
+                        rc = generate_recovery_kit_from_setup(
+                            config_path=config_path, password=state.password, keyfile_bytes=state.keyfile_bytes
+                        )
+                        if rc == 0:
+                            state.recovery_generated = True
+                            print("  [OK] Recovery kit generated successfully")
+                        else:
+                            print(f"  [!] Recovery kit generation exited with code {rc}")
+                    except Exception as e:
+                        print(f"  [!] Recovery kit generation failed: {e}")
                 print("\n  Press Enter to return to menu...")
                 input()
 
@@ -5681,7 +5683,7 @@ def main_paged() -> int:
         log("[OK] VeraCrypt available")
 
     state.scripts_dir = Path(__file__).resolve().parent
-    if state.scripts_dir.parent.name == ".smartdrive":
+    if state.scripts_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
         state.project_root = state.scripts_dir.parent.parent
     else:
         state.project_root = state.scripts_dir.parent

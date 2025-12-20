@@ -112,9 +112,9 @@ try:
 except ImportError:
     # Fallback values if variables.py is not available
     PRODUCT_NAME = Branding.PRODUCT_NAME
-    PRODUCT_DESCRIPTION = "KeyDrive Manager"
+    PRODUCT_DESCRIPTION = f"{Branding.PRODUCT_NAME} Manager"
     APP_NAME = PRODUCT_NAME
-    ORGANIZATION_NAME = "KeyDrive Project"
+    ORGANIZATION_NAME = f"{Branding.PRODUCT_NAME} Project"
     TITLE_MAX_CHARS = 18
     TITLE_MIN_SIDE_CHARS = 2
     WINDOW_WIDTH = 360
@@ -122,27 +122,6 @@ except ImportError:
     WINDOW_MARGIN = 20
     CORNER_RADIUS = 12
     COLORS = Branding.THEME.copy()
-    COLORS.update(
-        {
-            "primary": "#2FA36B",  # Primary actions
-            "primary_hover": "#3FBF87",  # Hover/active state
-            "secondary": "#7FD1B2",  # Focus/selection
-            "background": "#0F1F1A",  # Main background
-            "surface": "#162B24",  # Panels, grouped sections
-            "text": "#E6F2ED",  # Primary text
-            "text_secondary": "#B8D6C9",  # Secondary text, labels
-            "text_disabled": "#7FA99A",  # Disabled text
-            "warning": "#D9A441",  # Warning
-            "border": "#1B352C",  # Inactive outlines
-            "separator": "#244238",  # Separators, dividers
-            "smartdrive_used": "#2FA36B",  # SmartDrive used space
-            "smartdrive_free": "#7FD1B2",  # SmartDrive free space
-            "vc_used": "#0891B2",  # VeraCrypt used space (teal)
-            "vc_free": "#67E8F9",  # VeraCrypt free space (cyan)
-            "launch_used": "#2FA36B",  # Launch drive used space (same as smartdrive)
-            "launch_free": "#7FD1B2",  # Launch drive free space (same as smartdrive)
-        }
-    )
     WINDOW_TITLE = f"{PRODUCT_NAME} Manager"
     BANNER_TITLE = f"{PRODUCT_NAME} Manager"
 
@@ -555,7 +534,7 @@ class MountWorker(QThread):
             from pathlib import Path
 
             script_dir = get_script_dir()
-            mount_script = script_dir / "mount.py"
+            mount_script = script_dir / FileNames.MOUNT_PY
 
             if not mount_script.exists():
                 self.finished.emit(False, "worker_mount_script_not_found", {})
@@ -735,7 +714,7 @@ class BarWidget(QWidget):
             self.setToolTip("")
             return
 
-        smartdrive = self.storage_info.get("smartdrive", {})
+        smartdrive = self.storage_info.get("keydrive", {})
         vc = self.storage_info.get("veracrypt", {})
         total_space = smartdrive.get("total", 0) + vc.get("total", 0)
 
@@ -756,15 +735,15 @@ class BarWidget(QWidget):
 
         # Find which segment the mouse is over
         current_x = 0
-        segment_names = ["SmartDrive Used", "SmartDrive Free", "VeraCrypt Used", "VeraCrypt Free"]
+        segment_names = [f"{Branding.PRODUCT_NAME} Used", f"{Branding.PRODUCT_NAME} Free", "VeraCrypt Used", "VeraCrypt Free"]
 
         for i, w in enumerate(widths):
             if w > 0 and current_x <= x < current_x + w:
                 pct = parts[i] * 100
-                if i < 2:  # SmartDrive
+                if i < 2:  # KeyDrive
                     used = smartdrive.get("used" if i == 0 else "free", 0)
                     total = smartdrive.get("total", 0)
-                    drive = "SmartDrive"
+                    drive = f"{Branding.PRODUCT_NAME}"
                 else:  # VeraCrypt
                     used = vc.get("used" if i == 2 else "free", 0)
                     total = vc.get("total", 0)
@@ -803,7 +782,7 @@ class BarWidget(QWidget):
         path.addRoundedRect(rect.toRectF(), 12, 12)
         painter.setClipPath(path)
 
-        smartdrive = self.storage_info.get("smartdrive", {})
+        smartdrive = self.storage_info.get("keydrive", {})
         vc = self.storage_info.get("veracrypt", {})
 
         total_space = smartdrive.get("total", 0) + vc.get("total", 0)
@@ -913,7 +892,7 @@ class KeyfileDropBox(QTextEdit):
 
 
 class SmartDriveGUI(QWidget):
-    """Main SmartDrive GUI window."""
+    """Main KeyDrive GUI window."""
 
     def __init__(self, instance_manager: Optional["SingleInstanceManager"] = None):
         super().__init__()
@@ -1309,21 +1288,52 @@ QPushButton:pressed {{
         """Ensure proper layout after the window becomes visible."""
         super().showEvent(event)
         QTimer.singleShot(0, self._post_show_layout_fix)
+        QTimer.singleShot(50, self.update_storage_display)
 
     def _post_show_layout_fix(self):
         try:
-            if self.layout():
-                self.layout().activate()
-            # Use clamped resize instead of adjustSize to avoid geometry warnings
-            hint = self.sizeHint()
-            new_height = max(self.minimumHeight(), min(hint.height(), self.maximumHeight()))
-            new_width = max(self.minimumWidth(), min(hint.width(), self.maximumWidth()))
-            self.resize(new_width, new_height)
-            self.update_storage_display()
-            # Optionally re-position if needed
-            # self.position_window()
+            self.update_window_size()
         except Exception as e:
             log_exception("Error in post-show layout fix", e)
+
+    def update_window_size(self, reposition: bool = True) -> None:
+        """Recalculate window size based on current layout and clamp to screen bounds."""
+        try:
+            layout = self.layout()
+            if not layout:
+                return
+
+            layout.activate()
+            hint = self.sizeHint()
+
+            min_width = self.minimumWidth() or WINDOW_WIDTH
+            min_height = self.minimumHeight() or WINDOW_HEIGHT
+
+            max_width = self.maximumWidth()
+            max_height = self.maximumHeight()
+
+            new_width = max(min_width, hint.width())
+            new_height = max(min_height, hint.height())
+
+            if 0 < max_width < 16777215:
+                new_width = min(new_width, max_width)
+            if 0 < max_height < 16777215:
+                new_height = min(new_height, max_height)
+
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen:
+                available = screen.availableGeometry()
+                screen_max_height = int(available.height() * 0.8)
+            else:
+                screen_max_height = int(WINDOW_HEIGHT * 2)
+
+            new_height = min(new_height, screen_max_height)
+
+            self.resize(new_width, new_height)
+            if reposition:
+                self.position_window()
+        except Exception as e:
+            log_exception("Error updating window size", e, level="debug")
 
     def set_keyfiles(self, paths: list[str], append: bool = False):
         """Set keyfiles with validation and deduplication."""
@@ -1487,14 +1497,15 @@ QPushButton:pressed {{
         import platform
 
         if platform.system() == "Windows":
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "Unknown")
-            volume_path = self.config.get("windows", {}).get("volume_path", "")
+            windows_cfg = self.config.get(ConfigKeys.WINDOWS, {})
+            mount_letter = windows_cfg.get(ConfigKeys.MOUNT_LETTER, "Unknown")
+            volume_path = windows_cfg.get(ConfigKeys.VOLUME_PATH, "")
             if volume_path.startswith("\\\\.\\PhysicalDrive"):
                 drive_num = volume_path.replace("\\\\.\\PhysicalDrive", "")
                 drive_info.append(f"Drive {drive_num}")
             drive_info.append(f"Mount: {mount_letter}:")
         else:
-            mount_point = self.config.get("unix", {}).get("mount_point", "Unknown")
+            mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "Unknown")
             drive_info.append(f"Mount: {mount_point}")
 
         return " | ".join(drive_info)
@@ -1502,21 +1513,20 @@ QPushButton:pressed {{
     def get_drive_title(self) -> str:
         """Get simple drive title for display."""
         if not self.config:
-            return "SmartDrive"
+            return f"{Branding.PRODUCT_NAME}"
 
         # Get mount letter/point based on platform
         import platform
 
         if platform.system() == "Windows":
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
             if mount_letter:
-                return f"SmartDrive {mount_letter}:"
+                return f"{Branding.PRODUCT_NAME} {mount_letter}:"
         else:
-            mount_point = self.config.get("unix", {}).get("mount_point", "")
+            mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
             if mount_point:
-                return f"SmartDrive {mount_point}"
-
-        return "SmartDrive"
+                return f"{Branding.PRODUCT_NAME} {mount_point}"
+        return f"{Branding.PRODUCT_NAME}"
 
     def get_disk_usage(self, path: str) -> tuple[int, int, int]:
         """Get disk usage information (total, used, free) in bytes."""
@@ -1529,13 +1539,13 @@ QPushButton:pressed {{
             return 0, 0, 0
 
     def get_storage_info(self) -> dict:
-        """Get storage information for SmartDrive partition and VeraCrypt volume."""
+        """Get storage information for KeyDrive partition and VeraCrypt volume."""
         info = {
-            "smartdrive": {"total": 0, "used": 0, "free": 0, "percent": 0},
+            "keydrive": {"total": 0, "used": 0, "free": 0, "percent": 0},
             "veracrypt": {"total": 0, "used": 0, "free": 0, "percent": 0},
         }
 
-        # Get SmartDrive partition info (where the exe is running from)
+        # Get KeyDrive partition info (where the exe is running from)
         exe_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
         try:
             launch_total, launch_used, launch_free = self.get_disk_usage(str(exe_dir))
@@ -1549,7 +1559,7 @@ QPushButton:pressed {{
             print(f"Warning: Could not get {Branding.PRODUCT_NAME} info: {e}")
             launch_total, launch_used, launch_free = 0, 0, 0
 
-        info["smartdrive"] = {
+        info["keydrive"] = {
             "total": launch_total,
             "used": launch_used,
             "free": launch_free,
@@ -1558,7 +1568,7 @@ QPushButton:pressed {{
 
         # Get VeraCrypt volume info (if mounted)
         if self.is_mounted and self.config:
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
             if mount_letter:
                 vc_path = f"{mount_letter}:\\"
                 try:
@@ -1587,7 +1597,7 @@ QPushButton:pressed {{
         import platform
 
         if self.config and platform.system() == "Windows":
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+            mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
             window_title = f"{PRODUCT_NAME} {mount_letter}:" if mount_letter else PRODUCT_NAME
         else:
             window_title = PRODUCT_NAME
@@ -1604,7 +1614,7 @@ QPushButton:pressed {{
         # DO NOT set maximum height constraint here - let the layout handle it
         # Setting hard maxHeight causes QWindowsWindow::setGeometry warnings when
         # the auth_frame is shown/hidden because the layout can't expand/contract properly.
-        # Instead, we clamp during resize operations in show_auth_section/hide_auth_area.
+        # Instead, update_window_size() clamps geometry whenever content visibility changes.
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -2463,6 +2473,9 @@ QPushButton:pressed {{
         except Exception as e:
             log_exception("Error updating lost and found banner", e)
             self.lost_and_found_banner.setVisible(False)
+        finally:
+            # Banner height changes should adjust window geometry immediately
+            self.update_window_size()
 
     def update_button_states(self):
         """Update button enabled states based on mount status."""
@@ -2532,7 +2545,7 @@ QPushButton:pressed {{
     def update_drive_icon(self):
         """Update the drive icon display with software icon."""
         try:
-            # Try to load the SmartDrive software icon deterministically
+            # Try to load the KeyDrive software icon deterministically
             icon_path = self.get_static_asset("LOGO_main.png")
 
             if icon_path and icon_path.exists():
@@ -2631,25 +2644,25 @@ QPushButton:pressed {{
         import shutil
 
         storage_info = {
-            "smartdrive": {"total": 0, "used": 0, "free": 0},
+            "keydrive": {"total": 0, "used": 0, "free": 0},
             "veracrypt": {"total": 0, "used": 0, "free": 0},
         }
 
         try:
-            # Get SmartDrive (launch drive) info
+            # Get KeyDrive (launch drive) info
             script_dir = get_script_dir()
             drive_path = script_dir.parent.parent  # Go up to drive root
 
             if drive_path.exists():
                 stat = shutil.disk_usage(str(drive_path))
-                storage_info["smartdrive"] = {"total": stat.total, "used": stat.used, "free": stat.free}
+                storage_info["keydrive"] = {"total": stat.total, "used": stat.used, "free": stat.free}
         except Exception as e:
-            log_exception("Error getting SmartDrive storage info", e, level="debug")
+            log_exception(f"Error getting {Branding.PRODUCT_NAME} storage info", e, level="debug")
 
         try:
             # Get VeraCrypt volume info if mounted
             if self.config and self.is_mounted:
-                mount_letter = self.config.get("windows", {}).get("mount_letter", "V")
+                mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
                 mount_path = Path(f"{mount_letter}:\\")
 
                 if mount_path.exists():
@@ -2672,7 +2685,11 @@ QPushButton:pressed {{
             self.storage_info = storage_info
 
             # Get mount letter
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "V") if self.config else "V"
+            mount_letter = (
+                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
+                if self.config
+                else "V"
+            )
 
             # Get drive letter for launch drive
             try:
@@ -2690,7 +2707,7 @@ QPushButton:pressed {{
             if total_bar_width <= 0:
                 total_bar_width = 300  # Fallback
 
-            smartdrive = storage_info["smartdrive"]
+            smartdrive = storage_info["keydrive"]
             vc = storage_info["veracrypt"]
 
             # Calculate total space for proportional sizing
@@ -2783,12 +2800,20 @@ QPushButton:pressed {{
 
         vc_path = None
         if is_windows():
-            mount_letter = self.config.get("windows", {}).get("mount_letter", "") if self.config else ""
+            mount_letter = (
+                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
+                if self.config
+                else ""
+            )
             if mount_letter:
                 vc_path = Path(f"{mount_letter}:/")
         else:
             # Unix: use mount point from config
-            mount_point = self.config.get("unix", {}).get("mount_point", "") if self.config else ""
+            mount_point = (
+                self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+                if self.config
+                else ""
+            )
             if mount_point:
                 vc_path = Path(mount_point)
 
@@ -2817,12 +2842,12 @@ QPushButton:pressed {{
             from core.platform import is_windows
 
             if is_windows():
-                mount_letter = self.config.get("windows", {}).get("mount_letter", "")
+                mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
                 if mount_letter:
                     vc_path = Path(f"{mount_letter}:/")
                     vc_enabled = vc_path.exists()
             else:
-                mount_point = self.config.get("unix", {}).get("mount_point", "")
+                mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
                 if mount_point:
                     vc_path = Path(mount_point)
                     vc_enabled = vc_path.exists()
@@ -2873,25 +2898,7 @@ QPushButton:pressed {{
                 self.keyfile_edit.setVisible(False)
                 self.keyfile_label.setVisible(False)
 
-            # Let layout calculate proper size
-            self.layout().activate()
-            hint = self.sizeHint()
-
-            # Get screen-aware max height using WINDOW'S current screen (not primaryScreen)
-            # This fixes QWindowsWindow::setGeometry warnings on multi-monitor setups
-            screen = self.screen()  # Use window's screen, not QApplication.primaryScreen()
-            if screen:
-                available = screen.availableGeometry()
-                screen_max_height = int(available.height() * 0.8)  # Allow up to 80% of screen
-            else:
-                screen_max_height = int(WINDOW_HEIGHT * 2)
-
-            # Clamp to screen bounds to avoid geometry warnings
-            new_height = max(self.minimumHeight(), min(hint.height(), screen_max_height))
-            new_width = max(self.minimumWidth(), hint.width())
-
-            self.resize(new_width, new_height)
-            self.position_window()
+            self.update_window_size()
 
             # Disable main buttons while auth is shown
             self.mount_btn.setEnabled(False)
@@ -2902,23 +2909,7 @@ QPushButton:pressed {{
         self.auth_frame.setMaximumHeight(0)
         self.auth_frame.setVisible(False)
 
-        # Let layout calculate proper size
-        self.layout().activate()
-        hint = self.sizeHint()
-
-        # Get screen-aware max height using WINDOW'S current screen
-        screen = self.screen()
-        if screen:
-            available = screen.availableGeometry()
-            screen_max_height = int(available.height() * 0.8)
-        else:
-            screen_max_height = int(WINDOW_HEIGHT * 2)
-
-        new_height = max(self.minimumHeight(), min(hint.height(), screen_max_height))
-        new_width = max(self.minimumWidth(), hint.width())
-
-        self.resize(new_width, new_height)
-        self.position_window()
+        self.update_window_size()
 
         self.update_button_states()
         self.tools_btn.setEnabled(True)
@@ -2953,12 +2944,7 @@ QPushButton:pressed {{
 
         # Hide auth area and resize window back - use clamped resize
         self.auth_frame.setVisible(False)
-        self.layout().activate()
-        hint = self.sizeHint()
-        new_height = max(self.minimumHeight(), min(hint.height(), self.maximumHeight()))
-        new_width = max(self.minimumWidth(), min(hint.width(), self.maximumWidth()))
-        self.resize(new_width, new_height)
-        self.position_window()
+        self.update_window_size()
         self.tools_btn.setEnabled(True)
 
         # Start mount operation
@@ -3027,7 +3013,7 @@ QPushButton:pressed {{
     def show_recovery(self):
         """Show recovery options by opening Settings dialog to Recovery tab."""
         # Open settings dialog and switch to Recovery tab
-        dialog = SettingsDialog(self.config, self)
+        dialog = SettingsDialog(self.settings, self)
 
         # Find the Recovery tab index
         recovery_tab_index = -1
@@ -3043,8 +3029,10 @@ QPushButton:pressed {{
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Reload config if settings were saved
             try:
-                self.config = load_or_create_config()
-                self.update_display()
+                self.config = self.load_config()
+                self._update_lost_and_found_banner()
+                current_product_name = get_product_name(self.settings)
+                self.apply_branding(current_product_name)
             except Exception as e:
                 log_exception("Error reloading config after settings", e, level="warning")
 
@@ -3603,7 +3591,8 @@ QPushButton:pressed {{
     def showEvent(self, event):
         """Called when the window is shown. Ensure storage labels are visible."""
         super().showEvent(event)
-        # Update storage display when window becomes visible
+        # Update geometry immediately, refresh storage labels shortly after
+        QTimer.singleShot(0, self._post_show_layout_fix)
         QTimer.singleShot(50, self.update_storage_display)
 
     def paintEvent(self, event):
@@ -3718,7 +3707,7 @@ class SettingsDialog(QDialog):
                 translated_tab_name = tr("settings_updates", lang=get_lang())
             elif tab_name == "Recovery":
                 translated_tab_name = tr("settings_recovery", lang=get_lang())
-            elif tab_name == "Lost & Found":
+            elif tab_name == "Lost and Found":
                 translated_tab_name = tr("settings_lost_and_found", lang=get_lang())
             elif tab_name == "Advanced":
                 translated_tab_name = tr("settings_advanced", lang=get_lang())

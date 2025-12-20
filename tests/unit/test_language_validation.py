@@ -84,6 +84,7 @@ def test_error_message_keys_exist():
 def test_theme_translation_keys_exist():
     """Test that theme translation keys exist."""
     required_theme_keys = {
+        "theme_brand",
         "theme_green",
         "theme_blue",
         "theme_rose",

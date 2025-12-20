@@ -30,9 +30,11 @@ Usage:
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Dict, Any
+from constants import Paths
 import platform
 import json
 import logging
+from core.constants import FileNames
 
 _context_logger = logging.getLogger("smartdrive.context")
 
@@ -208,7 +210,7 @@ class RuntimeContext:
     @property
     def keys_dir(self) -> Path:
         """Return .smartdrive/keys/ path."""
-        return self.smartdrive_dir / "keys"
+        return self.smartdrive_dir / Paths.KEYS_SUBDIR
     
     @property
     def static_dir(self) -> Path:
@@ -276,11 +278,11 @@ class RuntimeContext:
     # =========================================================================
     
     def get_subprocess_args(self) -> list:
-        """
+        f"""
         Return args to pass to subprocess for context propagation.
         
         Usage:
-            subprocess.run([sys.executable, "mount.py"] + ctx.get_subprocess_args())
+            subprocess.run([sys.executable, {FileNames.MOUNT_PY}] + ctx.get_subprocess_args())
         """
         return ["--config", str(self.config_path)]
     

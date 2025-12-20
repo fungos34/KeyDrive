@@ -15,7 +15,7 @@ import pytest
 _test_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_test_root / ".smartdrive"))
 
-from core.constants import ConfigKeys
+from core.constants import ConfigKeys, FileNames
 from core.modes import SecurityMode
 from core.paths import Paths
 
@@ -144,7 +144,7 @@ class TestNormalizeMountInputs:
         """Valid PW+keyfile mode should normalize successfully."""
         config = {
             ConfigKeys.MODE: SecurityMode.PW_KEYFILE.value,
-            ConfigKeys.ENCRYPTED_KEYFILE: "keyfile.vc",
+            ConfigKeys.ENCRYPTED_KEYFILE: FileNames.KEYFILE_PLAIN,
             ConfigKeys.WINDOWS: {
                 ConfigKeys.VOLUME_PATH: "\\Device\\Harddisk1\\Partition2",
                 ConfigKeys.MOUNT_LETTER: "V",

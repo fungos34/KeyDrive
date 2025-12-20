@@ -63,7 +63,7 @@ try:
     from core.platform import is_windows as _is_windows
     from core.platform import windows_refresh_explorer, windows_set_attributes
 
-    CONFIG_FILENAME = Paths.CONFIG_FILENAME
+    CONFIG_FILENAME = FileNames.CONFIG_JSON
 except ImportError:
     # Fallback for standalone operation
     CONFIG_FILENAME = "config.json"
@@ -113,13 +113,13 @@ CONFIG_TEMPLATE = {
     # Mode: "pw_only", "pw_keyfile", "pw_gpg_keyfile", "gpg_pw_only"
     "mode": "pw_gpg_keyfile",
     # Keyfile settings (for pw_keyfile/pw_gpg_keyfile modes)
-    "encrypted_keyfile": "../keys/keyfile.vc.gpg",
+    "encrypted_keyfile": f"../keys/{FileNames.KEYFILE_GPG}",
     # GPG password-only settings (for gpg_pw_only mode)
-    "seed_gpg_path": "../keys/seed.gpg",
-    "kdf": "hkdf-sha256",
+    "seed_gpg_path": f"../keys/{FileNames.SEED_GPG}",
+    "kdf": CryptoParams.KDF_HKDF_SHA256,
     "salt_b64": "base64_encoded_salt",
-    "hkdf_info": "smartdrive-vc-pw-v1",
-    "pw_encoding": "base64url_nopad",
+    "hkdf_info": CryptoParams.HKDF_INFO_DEFAULT,
+    "pw_encoding": CryptoParams.PW_ENCODING_DEFAULT,
     "windows": {
         # Use either a device path like:
         #   "\\Device\\Harddisk1\\Partition2"
@@ -571,7 +571,7 @@ def load_keyfile(keyfile_path: Path) -> bytes:
                         "2. Try re-encrypting the keyfile:\n"
                         "   - Use the rekey.py script to create a new encrypted keyfile\n\n"
                         "3. Check the keyfile integrity:\n"
-                        "   gpg --verify keyfile.vc.gpg\n\n"
+                        f"   gpg --verify {FileNames.KEYFILE_GPG}\n\n"
                         "If the problem persists, the keyfile may be corrupted."
                     )
                 else:
@@ -585,7 +585,7 @@ def load_keyfile(keyfile_path: Path) -> bytes:
                         "2. Try re-encrypting the keyfile:\n"
                         "   - Use the rekey.py script to create a new encrypted keyfile\n\n"
                         "3. Check the keyfile integrity:\n"
-                        "   gpg --verify keyfile.vc.gpg\n\n"
+                        f"   gpg --verify {FileNames.KEYFILE_GPG}\n\n"
                         "If the problem persists, the keyfile may be corrupted.\n" + "=" * 70
                     )
             elif "decryption failed" in stderr_lower or "no secret key" in stderr_lower:
@@ -824,8 +824,9 @@ def check_gpg_yubikey_readiness() -> None:
 
     try:
         # Try to list smartcards - this will fail if no YubiKey or agent issues
+        # BUG-20251218-007: --no-tty prevents gpg from waiting on TTY input
         result = subprocess.run(
-            ["gpg", "--card-status"],
+            ["gpg", "--no-tty", "--card-status"],
             capture_output=True,
             text=True,
             timeout=Limits.GPG_CARD_STATUS_TIMEOUT,  # Give it time to prompt for PIN if needed

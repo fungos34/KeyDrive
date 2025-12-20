@@ -31,8 +31,12 @@ from datetime import datetime
 # =============================================================================
 _script_dir = Path(__file__).resolve().parent
 
+# Import FileNames and Paths first (needed for path detection)
+from core.constants import FileNames
+from core.paths import Paths
+
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/update.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -79,25 +83,17 @@ def _log_update(event: str, **kwargs) -> None:
 # IMPORTANT: This updater may run either from a repo checkout or from a deployed drive.
 # In both cases, `_project_root` resolves to the drive/repo root that contains `.smartdrive/`.
 DEV_ROOT = _project_root
-DEV_SCRIPTS = DEV_ROOT / ".smartdrive" / "scripts"
+DEV_SCRIPTS = DEV_ROOT / Paths.SMARTDRIVE_DIR_NAME / Paths.SCRIPTS_SUBDIR
 
 # Import branding variables
 
 
 # Files to update inside .smartdrive/scripts (drive root must contain entrypoints only)
-FILES_TO_UPDATE = [
-    "*.py",
-    "requirements.txt",
-]
+FILES_TO_UPDATE = FileNames.FILES_TO_UPDATE
 
 # Files/folders to NEVER overwrite (user data)
 # Note: config.json user data is protected, but version metadata is updated
-PROTECTED = {
-    "keys",           # Keyfiles directory
-    "integrity",      # Signatures directory
-    "recovery_kits",  # Recovery documents
-    "config.json"     # User configuration (version field updated separately)
-}
+PROTECTED = FileNames.FILES_PROTECTED_FROM_UPDATE
 
 def set_drive_icon(target_path: Path, drive_letter: str) -> None:
     """Set a custom drive icon using desktop.ini (no admin required)."""
@@ -105,7 +101,7 @@ def set_drive_icon(target_path: Path, drive_letter: str) -> None:
         return  # Only for Windows
     
     try:
-        desktop_ini = target_path / "desktop.ini"
+        desktop_ini = target_path / FileNames.DRIVE_ICON
 
         # Always reference the deployed static folder (root must stay clean)
         icon_rel = Path(Paths.SMARTDRIVE_DIR_NAME) / Paths.STATIC_SUBDIR / FileNames.ICON_MAIN
@@ -133,9 +129,9 @@ FolderType=Generic
         windows_set_attributes(target_path, system=True)
         windows_refresh_explorer()
         
-        log(f"Created desktop.ini for custom drive icon on {drive_letter}:")
+        log(f"Created {FileNames.DRIVE_ICON} for custom drive icon on {drive_letter}:")
     except Exception as e:
-        log(f"Could not create desktop.ini: {e}", "WARN")
+        log(f"Could not create {FileNames.DRIVE_ICON}: {e}", "WARN")
 
 def _cleanup_root_legacy_artifacts(target_path: Path) -> None:
     """Best-effort removal of legacy root artifacts to keep drive root clean."""
@@ -168,7 +164,7 @@ def _ensure_clean_root_entrypoints(target_path: Path, target_scripts: Path) -> N
         shortcut_name = Path(FileNames.BAT_LAUNCHER).with_suffix(".lnk").name
         shortcut_path = target_path / shortcut_name
         icon_path = target_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR / FileNames.ICON_MAIN
-        exe_path = target_scripts / f"{Branding.PRODUCT_NAME}GUI.exe"
+        exe_path = target_scripts / FileNames.GUI_EXE
 
         if exe_path.exists():
             windows_create_shortcut(
@@ -270,8 +266,8 @@ def select_drive_interactive() -> str:
 
 def is_smartdrive_drive(drive_path: Path) -> bool:
     """Check if drive has SmartDrive installed."""
-    smartdrive_dir = drive_path / ".smartdrive"
-    config_file = smartdrive_dir / "scripts" / "config.json"
+    smartdrive_dir = drive_path / Paths.SMARTDRIVE_DIR_NAME
+    config_file = smartdrive_dir / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
     return config_file.exists()
 
 def get_files_to_update() -> List[Path]:
@@ -304,7 +300,7 @@ def get_files_to_update() -> List[Path]:
         files.append(constants_file)
     
     # Add variables.py
-    variables_file = DEV_ROOT / "variables.py"
+    variables_file = DEV_ROOT / FileNames.VARIABLES_PY
     if variables_file.exists():
         files.append(variables_file)
     
@@ -313,8 +309,8 @@ def get_files_to_update() -> List[Path]:
 def preview_update(target_drive: str, dry_run: bool = True) -> List[tuple]:
     """Preview what will be updated."""
     target_path = Path(f"{target_drive}:\\")
-    target_scripts = target_path / ".smartdrive" / "scripts"
-    target_docs = target_path / ".smartdrive" / "docs"
+    target_scripts = target_path / Paths.SMARTDRIVE_DIR_NAME / Paths.SCRIPTS_SUBDIR
+    target_docs = target_path / Paths.SMARTDRIVE_DIR_NAME / "docs"
     
     changes = []
     files_to_update = get_files_to_update()
@@ -330,10 +326,10 @@ def preview_update(target_drive: str, dry_run: bool = True) -> List[tuple]:
             dst = target_docs / src.name
         elif src.name == "constants.py" and src.parent == DEV_ROOT:
             # constants.py goes to scripts directory
-            dst = target_scripts / "constants.py"
-        elif src.name == "variables.py" and src.parent == DEV_ROOT:
+            dst = target_scripts / FileNames.CONSTANTS_PY
+        elif src.name == FileNames.VARIABLES_PY and src.parent == DEV_ROOT:
             # variables.py goes to scripts directory
-            dst = target_scripts / "variables.py"
+            dst = target_scripts / FileNames.VARIABLES_PY
         else:
             # Scripts go to .smartdrive/scripts/
             dst = target_scripts / src.name
@@ -408,9 +404,9 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
     print("  PERFORMING UPDATE")
     print(f"{'─' * 70}\n")
     
-    target_scripts = target_path / ".smartdrive" / "scripts"
+    target_scripts = target_path / Paths.SMARTDRIVE_DIR_NAME / Paths.SCRIPTS_SUBDIR
     target_scripts.mkdir(parents=True, exist_ok=True)
-    (target_path / ".smartdrive" / "docs").mkdir(parents=True, exist_ok=True)
+    (target_path / Paths.SMARTDRIVE_DIR_NAME / "docs").mkdir(parents=True, exist_ok=True)
     
     success_count = 0
     error_count = 0
@@ -429,7 +425,7 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
     
     # Update config.json version (only if version actually changed)
     # IMPORTANT: config.json user data is PRESERVED - only version/last_updated are updated
-    config_path = target_scripts / "config.json"
+    config_path = target_scripts / FileNames.CONFIG_JSON
     if config_path.exists():
         try:
             with open(config_path, 'r') as f:
@@ -462,9 +458,9 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
             error_count += 1
     
     # Copy core folder (SSOT modules)
-    core_src = DEV_ROOT / ".smartdrive" / "core"
+    core_src = DEV_ROOT / Paths.SMARTDRIVE_DIR_NAME / "core"
     if core_src.exists():
-        core_dst = target_path / ".smartdrive" / "core"
+        core_dst = target_path / Paths.SMARTDRIVE_DIR_NAME / "core"
         try:
             # Ensure destination exists
             core_dst.mkdir(parents=True, exist_ok=True)
@@ -487,10 +483,10 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
     
     # Copy static folder to .smartdrive/static/ (deployed structure)
     # MANDATORY: Icons must be present for tray/window functionality
-    static_src = DEV_ROOT / "static"
+    static_src = DEV_ROOT / FileNames.STATIC_DIR
     if static_src.exists():
         # Primary destination: .smartdrive/static/
-        static_dst = target_path / ".smartdrive" / "static"
+        static_dst = target_path / FileNames.MAIN_DIR / FileNames.STATIC_DIR
         try:
             static_dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(static_src, static_dst, dirs_exist_ok=True)
@@ -502,7 +498,7 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
             success_count += 1
             
             # Remove legacy ROOT/static/ folder if it exists (migration from old structure)
-            legacy_static = target_path / "static"
+            legacy_static = target_path / Paths.STATIC_SUBDIR
             if legacy_static.exists() and legacy_static.is_dir():
                 try:
                     shutil.rmtree(legacy_static)
@@ -519,17 +515,17 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
         _log_update("update.static.notfound", source=str(static_src))
     
     # Copy GUI executable if it exists (to .smartdrive/scripts)
-    exe_src = DEV_ROOT / "dist" / f"{Branding.PRODUCT_NAME}GUI.exe"
+    exe_src = DEV_ROOT / FileNames.DISTRIBUTION_DIR / FileNames.GUI_EXE
     if exe_src.exists():
-        exe_dst = target_scripts / f"{Branding.PRODUCT_NAME}GUI.exe"
+        exe_dst = target_scripts / FileNames.GUI_EXE
         try:
             # Use copy instead of copy2 to avoid potential metadata issues
             shutil.copy(exe_src, exe_dst)
-            print(f"  ✓ {Branding.PRODUCT_NAME}GUI.exe")
-            _log_update("update.executable.copied", file=f"{Branding.PRODUCT_NAME}GUI.exe")
+            print(f"  ✓ {FileNames.GUI_EXE}")
+            _log_update("update.executable.copied", file=FileNames.GUI_EXE)
             success_count += 1
         except Exception as e:
-            error(f"Failed to copy {Branding.PRODUCT_NAME}GUI.exe: {e}")
+            error(f"Failed to copy {FileNames.GUI_EXE}: {e}")
             _log_update("update.executable.error", error=str(e))
             error_count += 1
 
@@ -600,7 +596,7 @@ if __name__ == "__main__":
             drive_root = deploy_root.parent    # DRIVE:\
             
             # HARD GATE: Verify we're in a .smartdrive deployment
-            expected_dir_name = ".smartdrive"
+            expected_dir_name = Paths.SMARTDRIVE_DIR_NAME
             if deploy_root.name != expected_dir_name:
                 error(f"FATAL: Expected to be in '{expected_dir_name}' but found '{deploy_root.name}'")
                 error(f"Script path: {Path(__file__).resolve()}")
@@ -652,7 +648,7 @@ if __name__ == "__main__":
                     shutil.copy2(item, dst)
 
             # Update version in config.json
-            cfg_path = deploy_root / "scripts" / FileNames.CONFIG_JSON
+            cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
             if cfg_path.exists():
                 try:
                     with open(cfg_path, 'r', encoding='utf-8') as f:

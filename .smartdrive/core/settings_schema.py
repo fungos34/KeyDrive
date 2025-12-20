@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Callable, List, Any
 from core.constants import ConfigKeys
 from core.modes import SecurityMode
-
+from core.paths import Paths
 
 # =============================================================================
 # Field Types
@@ -423,7 +423,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
         key=ConfigKeys.LOST_AND_FOUND_ENABLED,
         label_key="label_lost_and_found_enabled",
         field_type=FieldType.BOOLEAN,
-        tab="Lost & Found",
+        tab="Lost and Found",
         group=None,
         nested_path=[ConfigKeys.LOST_AND_FOUND, ConfigKeys.LOST_AND_FOUND_ENABLED],
         default=False,
@@ -435,7 +435,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
         key=ConfigKeys.LOST_AND_FOUND_MESSAGE,
         label_key="label_lost_and_found_message",
         field_type=FieldType.TEXTAREA,
-        tab="Lost & Found",
+        tab="Lost and Found",
         group=None,
         nested_path=[ConfigKeys.LOST_AND_FOUND, ConfigKeys.LOST_AND_FOUND_MESSAGE],
         placeholder="If found, please contact: your@email.com",
@@ -468,7 +468,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
         field_type=FieldType.TEXT,
         tab="Updates",
         group=None,
-        placeholder="https://updates.example.com/smartdrive",
+        placeholder=Paths.REPO_URL,
+        default=Paths.REPO_URL,
         tooltip_key="tooltip_server_url",
         order=2,
     ),

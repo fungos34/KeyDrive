@@ -82,15 +82,12 @@ def test_gui_theme_config_key_exists():
 
 def test_default_theme_defined():
     """Test that GUIConfig.DEFAULT_THEME is defined."""
-    from core.constants import GUIConfig
+    from core.constants import THEME_PALETTES, GUIConfig
 
     assert hasattr(GUIConfig, "DEFAULT_THEME"), "GUIConfig should have DEFAULT_THEME attribute"
-    assert GUIConfig.DEFAULT_THEME in [
-        "green",
-        "blue",
-        "rose",
-        "slate",
-    ], f"DEFAULT_THEME '{GUIConfig.DEFAULT_THEME}' should be one of the valid themes"
+    assert (
+        GUIConfig.DEFAULT_THEME in THEME_PALETTES.keys()
+    ), f"DEFAULT_THEME '{GUIConfig.DEFAULT_THEME}' should be one of the valid themes: {list(THEME_PALETTES.keys())}"
 
 
 def test_color_values_are_hex():

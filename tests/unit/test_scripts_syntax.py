@@ -79,6 +79,7 @@ def test_script_importable(script_path):
     # Scripts that execute at top level - verify syntax only (no import)
     syntax_only_scripts = {
         "gui_launcher",  # Calls main() at top level which launches GUI
+        "recovery",  # Has optional dependencies (mnemonic, argon2-cffi) that may not be installed
     }
 
     if script_name in syntax_only_scripts:

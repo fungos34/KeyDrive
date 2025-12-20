@@ -24,6 +24,7 @@ if (_project_root / ".smartdrive").exists():
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+from core.constants import FileNames
 from core.context import (
     RuntimeContext,
     add_config_argument,
@@ -32,6 +33,7 @@ from core.context import (
     get_context_from_args,
     infer_context_from_script,
 )
+from core.paths import Paths
 
 
 class TestRuntimeContextFactories(unittest.TestCase):
@@ -233,7 +235,7 @@ class TestRuntimeContextValidation(unittest.TestCase):
             RuntimeContext(
                 drive_root=Path("relative/path"),
                 smartdrive_dir=Path("C:\\") / "absolute" / Paths.SMARTDRIVE_DIR_NAME,
-                config_path=Path("C:\\") / "absolute" / Paths.SMARTDRIVE_DIR_NAME / Paths.CONFIG_FILENAME,
+                config_path=Path("C:\\") / "absolute" / Paths.SMARTDRIVE_DIR_NAME / FileNames.CONFIG_JSON,
             )
 
     def test_all_paths_must_be_absolute(self):

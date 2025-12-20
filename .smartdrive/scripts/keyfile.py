@@ -56,6 +56,7 @@ if str(_project_root) not in sys.path:
 from core.version import VERSION
 from core.constants import CryptoParams
 from core.limits import Limits
+from core.paths import Paths
 
 # Keyfile size from core constants
 KEYFILE_SIZE = CryptoParams.KEYFILE_SIZE
@@ -312,10 +313,10 @@ def cmd_create(args) -> int:
         plaintext_path = encrypted_path.with_suffix(".bin")
     else:
         script_dir = Path(__file__).resolve().parent
-        keys_dir = script_dir.parent / "keys"
+        keys_dir = script_dir.parent / Paths.KEYS_SUBDIR
         keys_dir.mkdir(parents=True, exist_ok=True)
-        plaintext_path = keys_dir / "keyfile.bin"
-        encrypted_path = keys_dir / "keyfile.vc.gpg"
+        plaintext_path = keys_dir / FileNames.KEYFILE_BIN
+        encrypted_path = keys_dir / FileNames.KEYFILE_GPG
     
     # Check if files exist
     if encrypted_path.exists():
