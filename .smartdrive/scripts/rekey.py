@@ -44,6 +44,7 @@ import sys
 import tempfile
 from getpass import getpass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.constants import Branding, FileNames
 from core.paths import Paths
@@ -88,7 +89,10 @@ try:
     _SECRET_PROVIDER_AVAILABLE = True
 except ImportError:
     _SECRET_PROVIDER_AVAILABLE = False
-    SecretProvider = None  # type: ignore
+    if TYPE_CHECKING:
+        from core.secrets import SecretProvider
+    else:
+        SecretProvider = None  # type: ignore
 
 
 def get_ram_temp_dir():
@@ -689,9 +693,21 @@ def secure_delete_file(path: Path) -> None:
 
 
 def change_veracrypt_credentials_windows(
-    vc_exe: Path, volume_path: str, old_keyfile: Path | None, new_keyfile: Path | None
+    vc_exe: Path, volume_path: str, old_keyfile: Path | None, new_keyfile: Path | None, secret_provider: "SecretProvider" = None
 ) -> bool:
     """Change VeraCrypt volume credentials on Windows using GUI.
+
+    SECURITY (per AGENT_ARCHITECTURE.md):
+    - Secrets NOT printed to terminal
+    - CPW/CKF/CDP commands for on-demand credential access
+    - GPG_PW_ONLY mode enforces YubiKey via SecretProvider
+
+    Args:
+        vc_exe: Path to VeraCrypt executable
+        volume_path: Path to volume
+        old_keyfile: Path to old keyfile (or None)
+        new_keyfile: Path to new keyfile (or None)
+        secret_provider: SecretProvider for mode-aware credential access
 
     Returns:
         True if credential change was successful, False otherwise.
@@ -731,6 +747,21 @@ def change_veracrypt_credentials_windows(
     print("")
     print("=" * 70)
 
+    # Print command reference for on-demand secret access
+    if secret_provider:
+        print("\n  " + "=" * 60)
+        print("  ON-DEMAND COPY COMMANDS:")
+        if secret_provider.security_mode == SecurityMode.GPG_PW_ONLY:
+            print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard (GPG-derived)")
+        else:
+            print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard")
+        if old_keyfile:
+            print(f"    {UserInputs.COPY_KEY_FILE}  = Copy Keyfile path to clipboard")
+        print(f"    {UserInputs.COPY_DEVICE_PATH} = Copy Volume path to clipboard")
+        print("")
+        print("  SECURITY: Secrets are NOT printed. Use commands to copy.")
+        print("  " + "=" * 60)
+
     input("\nPress Enter to open VeraCrypt GUI...")
 
     # Open VeraCrypt GUI
@@ -742,14 +773,24 @@ def change_veracrypt_credentials_windows(
             subprocess.Popen([str(vc_exe)])
         print("\n✓ VeraCrypt GUI opened.")
         print("  Complete the credential change, then return here.")
-        input("\nPress Enter when you've finished in VeraCrypt...")
+        print("")
 
-        # Ask if credential change was successful
+        # Command loop for on-demand secret access
+        if secret_provider:
+            print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device), {UserInputs.YES} (success), {UserInputs.NO} (failed)")
+        else:
+            print(f"  Type {UserInputs.YES} when finished, or {UserInputs.NO} if failed")
+
+        # Ask if credential change was successful (with command loop)
         while True:
-            print("\n  Did the credential change succeed?")
-            print(f"  Type '{UserInputs.YES}' if you saw 'Password changed successfully'")
-            print(f"  Type '{UserInputs.NO}' if there was an error or you cancelled")
             response = input("\n> ").strip().upper()
+
+            # Handle CPW/CKF/CDP commands (NON-BLOCKING)
+            if secret_provider and response in (UserInputs.COPY_PASSWORD, UserInputs.COPY_KEY_FILE, UserInputs.COPY_DEVICE_PATH):
+                secret_provider.handle_command(response)
+                continue
+
+            # Handle completion
             if response == UserInputs.YES:
                 log("✓ Credential change confirmed successful")
                 return True
@@ -757,13 +798,27 @@ def change_veracrypt_credentials_windows(
                 warn("Credential change reported as failed - will rollback")
                 return False
             else:
-                print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
+                if secret_provider:
+                    print(f"  Commands: {UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH}/{UserInputs.YES}/{UserInputs.NO}")
+                else:
+                    print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
     except Exception as e:
         raise RuntimeError(f"Failed to open VeraCrypt: {e}")
 
 
-def change_veracrypt_credentials_unix(volume_path: str, old_keyfile: Path | None, new_keyfile: Path | None) -> bool:
+def change_veracrypt_credentials_unix(volume_path: str, old_keyfile: Path | None, new_keyfile: Path | None, secret_provider: "SecretProvider" = None) -> bool:
     """Change VeraCrypt volume credentials on Unix using GUI.
+
+    SECURITY (per AGENT_ARCHITECTURE.md):
+    - Secrets NOT printed to terminal
+    - CPW/CKF/CDP commands for on-demand credential access
+    - GPG_PW_ONLY mode enforces YubiKey via SecretProvider
+
+    Args:
+        volume_path: Path to volume
+        old_keyfile: Path to old keyfile (or None)
+        new_keyfile: Path to new keyfile (or None)
+        secret_provider: SecretProvider for mode-aware credential access
 
     Returns:
         True if credential change was successful, False otherwise.
@@ -803,14 +858,37 @@ def change_veracrypt_credentials_unix(volume_path: str, old_keyfile: Path | None
     print("")
     print("=" * 70)
 
-    input("\nPress Enter when you've finished in VeraCrypt...")
+    # Print command reference for on-demand secret access
+    if secret_provider:
+        print("\n  " + "=" * 60)
+        print("  ON-DEMAND COPY COMMANDS:")
+        if secret_provider.security_mode == SecurityMode.GPG_PW_ONLY:
+            print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard (GPG-derived)")
+        else:
+            print(f"    {UserInputs.COPY_PASSWORD}  = Copy Password to clipboard")
+        if old_keyfile:
+            print(f"    {UserInputs.COPY_KEY_FILE}  = Copy Keyfile path to clipboard")
+        print(f"    {UserInputs.COPY_DEVICE_PATH} = Copy Volume path to clipboard")
+        print("")
+        print("  SECURITY: Secrets are NOT printed. Use commands to copy.")
+        print("  " + "=" * 60)
 
-    # Ask if credential change was successful
+    # Command loop for on-demand secret access
+    if secret_provider:
+        print(f"\n  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device), {UserInputs.YES} (success), {UserInputs.NO} (failed)")
+    else:
+        print(f"\n  Type {UserInputs.YES} when finished, or {UserInputs.NO} if failed")
+
+    # Ask if credential change was successful (with command loop)
     while True:
-        print("\n  Did the credential change succeed?")
-        print(f"  Type '{UserInputs.YES}' if you saw 'Password changed successfully'")
-        print(f"  Type '{UserInputs.NO}' if there was an error or you cancelled")
         response = input("\n> ").strip().upper()
+
+        # Handle CPW/CKF/CDP commands (NON-BLOCKING)
+        if secret_provider and response in (UserInputs.COPY_PASSWORD, UserInputs.COPY_KEY_FILE, UserInputs.COPY_DEVICE_PATH):
+            secret_provider.handle_command(response)
+            continue
+
+        # Handle completion
         if response == UserInputs.YES:
             log("✓ Credential change confirmed successful")
             return True
@@ -818,7 +896,10 @@ def change_veracrypt_credentials_unix(volume_path: str, old_keyfile: Path | None
             warn("Credential change reported as failed - will rollback")
             return False
         else:
-            print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
+            if secret_provider:
+                print(f"  Commands: {UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH}/{UserInputs.YES}/{UserInputs.NO}")
+            else:
+                print(f"  Please type exactly '{UserInputs.YES}' or '{UserInputs.NO}'")
 
 
 def main() -> None:
@@ -903,7 +984,7 @@ def main() -> None:
     old_keyfile_temp = None
 
     if use_old_keyfile:
-        old_encrypted = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")) 
+        old_encrypted = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
         if not old_encrypted.is_absolute():
             old_encrypted = (Path.cwd() / old_encrypted).resolve()
 
@@ -1148,9 +1229,9 @@ def main() -> None:
 
     try:
         if "windows" in system:
-            success = change_veracrypt_credentials_windows(vc_exe, volume_path, old_keyfile_temp, new_keyfile_temp)
+            success = change_veracrypt_credentials_windows(vc_exe, volume_path, old_keyfile_temp, new_keyfile_temp, secret_provider)
         else:
-            success = change_veracrypt_credentials_unix(volume_path, old_keyfile_temp, new_keyfile_temp)
+            success = change_veracrypt_credentials_unix(volume_path, old_keyfile_temp, new_keyfile_temp, secret_provider)
 
         if not success:
             error("Credential change failed - cleaning up temporary files")
@@ -1261,8 +1342,30 @@ def main() -> None:
                 seed_new_path.unlink()
             sys.exit(1)
     else:
+        # Non-GPG_PW_ONLY modes: prompt for password with command loop support
         print("Enter the NEW password you just set in VeraCrypt.\n")
-        new_password = getpass("Enter NEW password: ")
+        
+        if secret_provider and secret_provider.security_mode in (SecurityMode.PW_ONLY, SecurityMode.PW_KEYFILE, SecurityMode.PW_GPG_KEYFILE):
+            # Use SecretProvider's stored password if available (user should have set it in config)
+            # Otherwise, provide CPW command to copy password
+            print(f"  Commands: {UserInputs.COPY_PASSWORD} (copy password), or press Enter to input manually")
+            
+            while True:
+                response = input("  > ").strip().upper()
+                
+                if response == UserInputs.COPY_PASSWORD:
+                    secret_provider.handle_command(response)
+                    print("  Password copied to clipboard. Press Enter to use it for verification.")
+                    continue
+                elif response == "":
+                    # Manual entry
+                    new_password = getpass("Enter NEW password: ")
+                    break
+                else:
+                    print(f"  Type {UserInputs.COPY_PASSWORD} to copy, or press Enter to input manually")
+        else:
+            # Fallback: direct password entry
+            new_password = getpass("Enter NEW password: ")
 
     try:
         if "windows" in system:
@@ -1367,7 +1470,9 @@ def main() -> None:
 
             # Update mode-specific settings
             if new_mode == SecurityMode.GPG_PW_ONLY.value:
-                cfg_update[ConfigKeys.SEED_GPG_PATH] = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
+                cfg_update[ConfigKeys.SEED_GPG_PATH] = Path(
+                    cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
+                )
                 cfg_update[ConfigKeys.KDF] = CryptoParams.KDF_HKDF_SHA256
                 # salt_b64 is set during GPG_PW_ONLY verification phase
                 cfg_update[ConfigKeys.SALT_B64] = salt_b64
@@ -1376,7 +1481,9 @@ def main() -> None:
                 # Remove keyfile settings if they exist
                 cfg_update.pop(ConfigKeys.ENCRYPTED_KEYFILE, None)
             elif new_mode in [SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value]:
-                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
+                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = Path(
+                    cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")
+                )
                 # Remove GPG password-only settings
                 cfg_update.pop(ConfigKeys.SEED_GPG_PATH, None)
                 cfg_update.pop(ConfigKeys.KDF, None)

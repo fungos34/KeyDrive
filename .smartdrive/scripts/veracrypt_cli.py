@@ -25,7 +25,8 @@ from typing import Optional, Tuple
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed: .smartdrive/scripts/veracrypt_cli.py
     # DEPLOY_ROOT = .smartdrive/, add to sys.path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -40,8 +41,8 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 try:
-    from core.limits import Limits
     from core.constants import UserInputs
+    from core.limits import Limits
     from core.paths import Paths
     from core.platform import is_windows, veracrypt_flag_prefix
 
@@ -111,15 +112,13 @@ def reset_gui_launched_state():
 # New code should import from core.clipboard directly.
 
 try:
-    from core.clipboard import (
-        is_available as _clipboard_is_available,
-        set_text as _clipboard_set_text,
-        get_text as _clipboard_get_text,
-        clear_if_ours as _clipboard_clear_if_ours,
-        clear_best_effort as _clipboard_clear,
-        copy_secret_with_ttl as _clipboard_copy_secret,
-        ClipboardError,
-    )
+    from core.clipboard import ClipboardError
+    from core.clipboard import clear_best_effort as _clipboard_clear
+    from core.clipboard import clear_if_ours as _clipboard_clear_if_ours
+    from core.clipboard import copy_secret_with_ttl as _clipboard_copy_secret
+    from core.clipboard import get_text as _clipboard_get_text
+    from core.clipboard import is_available as _clipboard_is_available
+    from core.clipboard import set_text as _clipboard_set_text
 
     _CLIPBOARD_SSOT_AVAILABLE = True
 except ImportError:

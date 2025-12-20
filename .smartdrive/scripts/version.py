@@ -9,7 +9,8 @@ from pathlib import Path
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/version.py
     _deploy_root = _script_dir.parent
     if str(_deploy_root) not in sys.path:

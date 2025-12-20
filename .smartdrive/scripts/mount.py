@@ -41,7 +41,8 @@ _mount_logger = logging.getLogger("smartdrive.mount")
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/mount.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent

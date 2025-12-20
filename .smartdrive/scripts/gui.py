@@ -49,7 +49,8 @@ def log_exception(context: str, exc: Exception = None, level: str = "warning") -
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/gui.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -63,6 +64,9 @@ else:
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+# Import i18n module for translations
+from gui_i18n import AVAILABLE_LANGUAGES, TRANSLATIONS, tr
+
 from core.config import get_drive_id, load_or_create_config, write_config_atomic
 from core.constants import Branding, ConfigKeys, FileNames, GUIConfig
 from core.limits import Limits
@@ -73,9 +77,6 @@ from core.tray import TrayIconManager, is_tray_available
 
 # Import from core modules (single source of truth)
 from core.version import VERSION as APP_VERSION
-
-# Import i18n module for translations
-from gui_i18n import AVAILABLE_LANGUAGES, TRANSLATIONS, tr
 
 # Global language setting (loaded from config or default)
 _current_lang = GUIConfig.DEFAULT_LANG
@@ -93,37 +94,22 @@ def set_lang(lang: str) -> None:
 
 
 # Import all constants from variables.py (which now also imports from core)
-try:
-    from variables import (
-        APP_NAME,
-        BANNER_TITLE,
-        COLORS,
-        CORNER_RADIUS,
-        ORGANIZATION_NAME,
-        PRODUCT_DESCRIPTION,
-        PRODUCT_NAME,
-        TITLE_MAX_CHARS,
-        TITLE_MIN_SIDE_CHARS,
-        WINDOW_HEIGHT,
-        WINDOW_MARGIN,
-        WINDOW_TITLE,
-        WINDOW_WIDTH,
-    )
-except ImportError:
-    # Fallback values if variables.py is not available
-    PRODUCT_NAME = Branding.PRODUCT_NAME
-    PRODUCT_DESCRIPTION = f"{Branding.PRODUCT_NAME} Manager"
-    APP_NAME = PRODUCT_NAME
-    ORGANIZATION_NAME = f"{Branding.PRODUCT_NAME} Project"
-    TITLE_MAX_CHARS = 18
-    TITLE_MIN_SIDE_CHARS = 2
-    WINDOW_WIDTH = 360
-    WINDOW_HEIGHT = 380
-    WINDOW_MARGIN = 20
-    CORNER_RADIUS = 12
-    COLORS = Branding.THEME.copy()
-    WINDOW_TITLE = f"{PRODUCT_NAME} Manager"
-    BANNER_TITLE = f"{PRODUCT_NAME} Manager"
+from core.constants import Branding 
+
+APP_NAME = Branding.APP_NAME
+BANNER_TITLE = Branding.BANNER_TITLE
+COLORS = Branding.COLORS
+CORNER_RADIUS = Branding.CORNER_RADIUS
+ORGANIZATION_NAME = Branding.ORGANIZATION_NAME
+PRODUCT_DESCRIPTION = Branding.PRODUCT_DESCRIPTION
+PRODUCT_NAME = Branding.PRODUCT_NAME
+TITLE_MAX_CHARS = Branding.TITLE_MAX_CHARS
+TITLE_MIN_SIDE_CHARS = Branding.TITLE_MIN_SIDE_CHARS
+WINDOW_HEIGHT = Branding.WINDOW_HEIGHT
+WINDOW_MARGIN = Branding.WINDOW_MARGIN
+WINDOW_TITLE = Branding.WINDOW_TITLE
+WINDOW_WIDTH = Branding.WINDOW_WIDTH
+
 
 
 def sanitize_product_name(name: str) -> str:
@@ -735,7 +721,12 @@ class BarWidget(QWidget):
 
         # Find which segment the mouse is over
         current_x = 0
-        segment_names = [f"{Branding.PRODUCT_NAME} Used", f"{Branding.PRODUCT_NAME} Free", "VeraCrypt Used", "VeraCrypt Free"]
+        segment_names = [
+            f"{Branding.PRODUCT_NAME} Used",
+            f"{Branding.PRODUCT_NAME} Free",
+            "VeraCrypt Used",
+            "VeraCrypt Free",
+        ]
 
         for i, w in enumerate(widths):
             if w > 0 and current_x <= x < current_x + w:
@@ -2686,9 +2677,7 @@ QPushButton:pressed {{
 
             # Get mount letter
             mount_letter = (
-                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
-                if self.config
-                else "V"
+                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V") if self.config else "V"
             )
 
             # Get drive letter for launch drive
@@ -2801,19 +2790,13 @@ QPushButton:pressed {{
         vc_path = None
         if is_windows():
             mount_letter = (
-                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
-                if self.config
-                else ""
+                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "") if self.config else ""
             )
             if mount_letter:
                 vc_path = Path(f"{mount_letter}:/")
         else:
             # Unix: use mount point from config
-            mount_point = (
-                self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
-                if self.config
-                else ""
-            )
+            mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "") if self.config else ""
             if mount_point:
                 vc_path = Path(mount_point)
 
@@ -4171,7 +4154,7 @@ class SettingsDialog(QDialog):
 
             browse_btn = QPushButton("📁")
             browse_btn.setFixedWidth(40)
-            browse_btn.setToolTip("Browse...")
+            browse_btn.setToolTip(tr("btn_browse_container"))
 
             # Connect browse button
             if field.field_type == FieldType.PATH_FILE:

@@ -36,7 +36,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Settings",
-        
         # Button labels
         "btn_mount": "🔓 Mount",
         "btn_unmount": "🔒 Unmount",
@@ -46,7 +45,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Save",
         "btn_cancel": "Cancel",
-        
         # Status messages
         "status_config_not_found": "Configuration not found",
         "status_volume_mounted": "Volume mounted",
@@ -58,7 +56,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Mount failed",
         "status_unmount_success": "✅ Volume unmounted successfully",
         "status_unmount_failed": "❌ Unmount failed",
-        
         # Info labels
         "info_unavailable": "Info unavailable",
         "keyfile_selected_one": "1 keyfile selected",
@@ -66,17 +63,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Drop keyfiles here or click to browse",
         "keyfile_drop_supports_multiple": "Supports multiple keyfiles",
         "label_show_password": "Show password",
-        
         # Size formatting
         "size_free": "Free: {size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "Exit SmartDrive",
         "tooltip_settings": "Advanced tools and settings",
-        
         # Labels
         "label_product_name": "Product Name",
         "label_preview": "Preview:",
@@ -84,10 +77,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Keyfile:",
         "label_hardware_key_hint": "💡 Hardware key may be required for authentication",
         "label_forgot_password": "Forgot your password?",
-        
         # Placeholder text
         "placeholder_password": "Enter your VeraCrypt password...",
-        
         # Menu items
         "menu_settings": "⚙️ Settings",
         "menu_rekey": "🔑 Change Password/Keyfile",
@@ -97,11 +88,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 Open CLI",
         "menu_clear_keyfiles": "Clear Keyfiles",
         "dialog_select_keyfiles": "Select Keyfile(s)",
-        
         # Tray messages
         "tray_minimized_message": "Running in background. Click tray icon to restore.",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "Mount script not found",
         "worker_mount_success": "Volume mounted successfully",
@@ -113,7 +102,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Unmount failed: {error}",
         "worker_unmount_timeout": "Unmount operation timed out",
         "worker_unmount_error": "Unmount error: {error}",
-        
         # Settings dialog - Tab names
         "settings_language": "Language",
         "settings_general": "General",
@@ -125,7 +113,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Recovery",
         "settings_lost_and_found": "Lost+Found",
         "settings_advanced": "Advanced",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Configure display name, language, and theme preferences for the application.",
         "settings_security_desc": "Set the encryption mode and authentication method for your secure drive.",
@@ -136,7 +123,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Set up Shamir Secret Sharing recovery options to recover access if keys are lost.",
         "settings_lost_and_found_desc": "Display a contact message on the drive for recovery if lost.",
         "settings_advanced_desc": "Technical settings for encryption parameters and integrity verification.",
-        
         "settings_restart_not_required": "✓ Changes applied immediately (no restart required)",
         "label_mode": "Mode",
         "label_encrypted_keyfile": "Encrypted keyfile",
@@ -151,7 +137,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "Could not save config.json:",
         "title_invalid_mount_letter": "Invalid Mount Letter",
         "title_save_failed": "Save Failed",
-        
+        "title_error": "Error",
+        "error_apply_theme": "Failed to apply theme: {error}",
+        "error_apply_language": "Failed to apply language: {error}",
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "Drive ID",
         "label_drive_name": "Drive Name",
@@ -174,7 +162,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "HKDF Info",
         "label_schema_version": "Schema Version",
         "label_version": "Version",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Unique identifier for this drive (read-only)",
         "tooltip_drive_name": "Custom name for this drive",
@@ -204,7 +191,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_signing_key_fpr": "GPG key fingerprint used for signing",
         "tooltip_salt_b64": "Cryptographic salt for key derivation",
         "tooltip_hkdf_info": "Context string for HKDF key derivation",
-        
         # Popup dialogs
         "popup_keyfile_required_title": "Keyfile Required",
         "popup_keyfile_required_body": "Please select a keyfile for password + keyfile mode.",
@@ -213,7 +199,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Password Recovery",
         "popup_recovery_available_body": "Recovery kit is available for this drive!\n\nTo recover access to your encrypted volume:\n\n1. Use the SmartDrive CLI: python smartdrive.py\n2. Select option 6: Recovery Kit\n3. Follow the recovery instructions\n\nOr contact your system administrator.",
         "popup_recovery_unavailable_body": "No recovery kit is currently available for this drive.\n\nTo set up password recovery:\n\n1. Use the SmartDrive CLI: python smartdrive.py\n2. Select option 6: Recovery Kit\n3. Choose 'Generate Recovery Kit'\n\nOr contact your system administrator.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Emergency Recovery",
         "recovery_instructions": "Enter your 24-word recovery phrase to recover access to your encrypted volume. You can also provide a recovery container file if you have one.",
@@ -239,7 +224,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Recovery container not found. Please select the container file.",
         "recovery_no_kit_configured": "No recovery kit is configured for this drive.",
         "recovery_generate_first": "Please generate a recovery kit first using Settings or CLI.",
-        
         "popup_unmount_failed_title": "Unmount Failed",
         "popup_mount_failed_title": "Mount Failed",
         "popup_update_not_possible_title": "Update Not Possible",
@@ -257,18 +241,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "Failed to run update:\n\n{error}",
         "popup_cli_failed_title": "CLI Launch Failed",
         "popup_cli_failed_body": "Could not open CLI:\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "Server URL is not configured.\\n\\nGo to Settings to configure the update URL.",
         "error_update_local_root_not_configured": "Local update directory is not configured.\\n\\nGo to Settings to configure the local update root.",
         "error_update_local_root_not_found": "Local update directory not found:\\n\\n{path}\\n\\nCheck Settings to verify the path.",
         "error_update_install_dir_not_found": "Installation directory not found:\\n\\n{path}",
         "error_update_unknown_source_type": "Unknown update source type: {type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "Hardware Key Required",
         "error_hardware_key_missing_body": "Hardware key (YubiKey/GPG card) not detected. Please insert your hardware key and try again.",
-        
         # Theme names (for theme dropdown)
         "theme_brand": "Brand",
         "theme_green": "Green",
@@ -276,7 +257,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Rose",
         "theme_slate": "Slate",
         "label_theme": "Theme",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Open launcher drive",
         "tooltip_open_mounted_volume": "Open mounted volume",
@@ -287,7 +267,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Einstellungen",
-        
         # Button labels
         "btn_mount": "🔓 Einbinden",
         "btn_unmount": "🔒 Aushängen",
@@ -297,7 +276,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Speichern",
         "btn_cancel": "Abbrechen",
-        
         # Status messages
         "status_config_not_found": "Konfiguration nicht gefunden",
         "status_volume_mounted": "Volume eingebunden",
@@ -309,7 +287,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Einbinden fehlgeschlagen",
         "status_unmount_success": "✅ Volume erfolgreich ausgehängt",
         "status_unmount_failed": "❌ Aushängen fehlgeschlagen",
-        
         # Info labels
         "info_unavailable": "Info nicht verfügbar",
         "keyfile_selected_one": "1 Schlüsseldatei ausgewählt",
@@ -317,17 +294,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Schlüsseldateien hier ablegen oder klicken zum Auswählen",
         "keyfile_drop_supports_multiple": "Unterstützt mehrere Schlüsseldateien",
         "label_show_password": "Passwort anzeigen",
-        
         # Size formatting
         "size_free": "Frei: {size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "SmartDrive beenden",
         "tooltip_settings": "Erweiterte Werkzeuge und Einstellungen",
-        
         # Labels
         "label_product_name": "Produktname",
         "label_preview": "Vorschau:",
@@ -335,10 +308,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Schlüsseldatei:",
         "label_hardware_key_hint": "💡 Hardware-Schlüssel kann für Authentifizierung erforderlich sein",
         "label_forgot_password": "Passwort vergessen?",
-        
         # Placeholder text
         "placeholder_password": "Geben Sie Ihr VeraCrypt-Passwort ein...",
-        
         # Menu items
         "menu_settings": "⚙️ Einstellungen",
         "menu_rekey": "🔑 Passwort/Schlüssel ändern",
@@ -348,11 +319,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 CLI öffnen",
         "menu_clear_keyfiles": "Schlüsseldateien löschen",
         "dialog_select_keyfiles": "Schlüsseldatei(en) auswählen",
-        
         # Tray messages
         "tray_minimized_message": "Läuft im Hintergrund. Klicken Sie auf das Tray-Symbol zum Wiederherstellen.",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "Mount-Skript nicht gefunden",
         "worker_mount_success": "Volume erfolgreich eingebunden",
@@ -364,7 +333,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Aushängen fehlgeschlagen: {error}",
         "worker_unmount_timeout": "Unmount-Vorgang Zeitüberschreitung",
         "worker_unmount_error": "Unmount-Fehler: {error}",
-        
         # Settings dialog - Tab names
         "settings_language": "Sprache",
         "settings_general": "Allgemein",
@@ -376,7 +344,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Wiederherstellung",
         "settings_lost_and_found": "Fundsachen",
         "settings_advanced": "Erweitert",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Konfigurieren Sie Anzeigename, Sprache und Design-Einstellungen.",
         "settings_security_desc": "Verschlüsselungsmodus und Authentifizierungsmethode für Ihr sicheres Laufwerk.",
@@ -387,7 +354,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Shamir Secret Sharing Wiederherstellungsoptionen für Notfallzugriff einrichten.",
         "settings_lost_and_found_desc": "Kontaktnachricht auf dem Laufwerk für Rückgabe bei Verlust anzeigen.",
         "settings_advanced_desc": "Technische Einstellungen für Verschlüsselungsparameter und Integritätsprüfung.",
-        
         "settings_restart_not_required": "✓ Änderungen sofort übernommen (kein Neustart erforderlich)",
         "label_mode": "Modus",
         "label_encrypted_keyfile": "Verschlüsselte Schlüsseldatei",
@@ -402,7 +368,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "Konnte config.json nicht speichern:",
         "title_invalid_mount_letter": "Ungültiger Laufwerksbuchstabe",
         "title_save_failed": "Speichern fehlgeschlagen",
-        
+        "title_error": "Fehler",
+        "error_apply_theme": "Thema konnte nicht angewendet werden: {error}",
+        "error_apply_language": "Sprache konnte nicht angewendet werden: {error}",
         # Popup dialogs
         "popup_keyfile_required_title": "Schlüsseldatei erforderlich",
         "popup_keyfile_required_body": "Bitte wählen Sie eine Schlüsseldatei für den Passwort + Schlüsseldatei-Modus.",
@@ -411,7 +379,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Passwort-Wiederherstellung",
         "popup_recovery_available_body": "Wiederherstellungs-Kit ist für dieses Laufwerk verfügbar!\n\nUm Zugriff auf Ihr verschlüsseltes Volume wiederherzustellen:\n\n1. Verwenden Sie die SmartDrive CLI: python smartdrive.py\n2. Wählen Sie Option 6: Recovery Kit\n3. Folgen Sie den Wiederherstellungsanweisungen\n\nOder kontaktieren Sie Ihren Systemadministrator.",
         "popup_recovery_unavailable_body": "Kein Wiederherstellungs-Kit ist derzeit für dieses Laufwerk verfügbar.\n\nUm Passwort-Wiederherstellung einzurichten:\n\n1. Verwenden Sie die SmartDrive CLI: python smartdrive.py\n2. Wählen Sie Option 6: Recovery Kit\n3. Wählen Sie 'Wiederherstellungs-Kit generieren'\n\nOder kontaktieren Sie Ihren Systemadministrator.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Notfall-Wiederherstellung",
         "recovery_instructions": "Geben Sie Ihre 24-Wort-Wiederherstellungsphrase ein, um Zugriff auf Ihr verschlüsseltes Volume wiederherzustellen. Sie können auch eine Wiederherstellungs-Container-Datei angeben, falls vorhanden.",
@@ -437,7 +404,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Wiederherstellungs-Container nicht gefunden. Bitte wählen Sie die Container-Datei aus.",
         "recovery_no_kit_configured": "Kein Wiederherstellungs-Kit für dieses Laufwerk konfiguriert.",
         "recovery_generate_first": "Bitte generieren Sie zuerst ein Wiederherstellungs-Kit über Einstellungen oder CLI.",
-        
         "popup_unmount_failed_title": "Aushängen fehlgeschlagen",
         "popup_mount_failed_title": "Einbinden fehlgeschlagen",
         "popup_update_not_possible_title": "Update nicht möglich",
@@ -455,18 +421,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "Update konnte nicht ausgeführt werden:\n\n{error}",
         "popup_cli_failed_title": "CLI-Start fehlgeschlagen",
         "popup_cli_failed_body": "CLI konnte nicht geöffnet werden:\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "Server-URL ist nicht konfiguriert.\\n\\nGehen Sie zu Einstellungen, um die Update-URL zu konfigurieren.",
         "error_update_local_root_not_configured": "Lokales Update-Verzeichnis ist nicht konfiguriert.\\n\\nGehen Sie zu Einstellungen, um das lokale Update-Root zu konfigurieren.",
         "error_update_local_root_not_found": "Lokales Update-Verzeichnis nicht gefunden:\\n\\n{path}\\n\\nÜberprüfen Sie die Einstellungen, um den Pfad zu verifizieren.",
         "error_update_install_dir_not_found": "Installationsverzeichnis nicht gefunden:\\n\\n{path}",
         "error_update_unknown_source_type": "Unbekannter Update-Quelltyp: {type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "Hardware-Schlüssel erforderlich",
         "error_hardware_key_missing_body": "Hardware-Schlüssel (YubiKey/GPG-Karte) nicht erkannt. Bitte stecken Sie Ihren Hardware-Schlüssel ein und versuchen Sie es erneut.",
-        
         # Theme names (for theme dropdown)
         "theme_brand": "Marke",
         "theme_green": "Grün",
@@ -474,13 +437,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Rosa",
         "theme_slate": "Schiefer",
         "label_theme": "Thema",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Launcher-Laufwerk öffnen",
         "tooltip_open_mounted_volume": "Eingebundenes Volume öffnen",
         "popup_open_failed_title": "Öffnen fehlgeschlagen",
         "popup_open_failed_body": "Dateimanager konnte nicht geöffnet werden:\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "Laufwerk-ID",
         "label_drive_name": "Laufwerksname",
@@ -503,7 +464,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "HKDF-Info",
         "label_schema_version": "Schema-Version",
         "label_version": "Version",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Eindeutige Kennung für dieses Laufwerk (schreibgeschützt)",
         "tooltip_drive_name": "Benutzerdefinierter Name für dieses Laufwerk",
@@ -538,7 +498,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Postavke",
-        
         # Button labels
         "btn_mount": "🔓 Montiraj",
         "btn_unmount": "🔒 Demontiraj",
@@ -548,7 +507,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Sačuvaj",
         "btn_cancel": "Otkaži",
-        
         # Status messages
         "status_config_not_found": "Konfiguracija nije pronađena",
         "status_volume_mounted": "Volumen montiran",
@@ -560,7 +518,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Montiranje nije uspjelo",
         "status_unmount_success": "✅ Volumen uspješno demontiran",
         "status_unmount_failed": "❌ Demontiranje nije uspjelo",
-        
         # Info labels
         "info_unavailable": "Informacije nisu dostupne",
         "keyfile_selected_one": "Odabrana 1 datoteka ključa",
@@ -568,17 +525,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Prevucite datoteke ključa ovdje ili kliknite za odabir",
         "keyfile_drop_supports_multiple": "Podržava više datoteka ključa",
         "label_show_password": "Prikaži lozinku",
-        
         # Size formatting
         "size_free": "Slobodno: {size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "Izađi iz SmartDrive",
         "tooltip_settings": "Napredni alati i postavke",
-        
         # Labels
         "label_product_name": "Naziv proizvoda",
         "label_preview": "Pregled:",
@@ -586,10 +539,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Datoteka ključa:",
         "label_hardware_key_hint": "💡 Hardverski ključ može biti potreban za autentifikaciju",
         "label_forgot_password": "Zaboravili ste lozinku?",
-        
         # Placeholder text
         "placeholder_password": "Unesite svoju VeraCrypt lozinku...",
-        
         # Menu items
         "menu_settings": "⚙️ Postavke",
         "menu_rekey": "🔑 Promijeni lozinku/datoteku ključa",
@@ -599,11 +550,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 Otvori CLI",
         "menu_clear_keyfiles": "Očisti datoteke ključa",
         "dialog_select_keyfiles": "Odaberite datoteku(e) ključa",
-        
         # Tray messages
         "tray_minimized_message": "Radi u pozadini. Kliknite na ikonu u sistemskoj traci za vraćanje.",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "Skripta za montiranje nije pronađena",
         "worker_mount_success": "Volumen uspješno montiran",
@@ -615,7 +564,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Demontiranje nije uspjelo: {error}",
         "worker_unmount_timeout": "Vrijeme za demontiranje je isteklo",
         "worker_unmount_error": "Greška pri demontiranju: {error}",
-        
         # Settings dialog - Tab names
         "settings_language": "Jezik",
         "settings_general": "Opšte",
@@ -627,7 +575,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Oporavak",
         "settings_lost_and_found": "Izgubljeno i nađeno",
         "settings_advanced": "Napredno",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Konfigurirajte ime prikaza, jezik i postavke teme.",
         "settings_security_desc": "Postavite način šifriranja i metodu autentifikacije za vaš sigurni disk.",
@@ -638,7 +585,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Postavite Shamir Secret Sharing opcije oporavka za pristup ako se ključevi izgube.",
         "settings_lost_and_found_desc": "Prikažite poruku za kontakt na disku za vraćanje ako se izgubi.",
         "settings_advanced_desc": "Tehničke postavke za parametre šifriranja i provjeru integriteta.",
-        
         "settings_restart_not_required": "✓ Promjene su odmah primijenjene (restart nije potreban)",
         "label_mode": "Način",
         "label_encrypted_keyfile": "Šifrirana datoteka ključa",
@@ -653,7 +599,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "Nije moguće sačuvati config.json:",
         "title_invalid_mount_letter": "Neispravno slovo diska",
         "title_save_failed": "Neuspjelo čuvanje",
-        
+        "title_error": "Greška",
+        "error_apply_theme": "Nije moguće primijeniti temu: {error}",
+        "error_apply_language": "Nije moguće primijeniti jezik: {error}",
         # Popup dialogs
         "popup_keyfile_required_title": "Potrebna datoteka ključa",
         "popup_keyfile_required_body": "Molimo odaberite datoteku ključa za režim lozinka + datoteka ključa.",
@@ -662,7 +610,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Oporavak lozinke",
         "popup_recovery_available_body": "Paket za oporavak je dostupan za ovaj disk!\n\nZa povrat pristupa vašem šifriranom volumenu:\n\n1. Koristite SmartDrive CLI: python smartdrive.py\n2. Odaberite opciju 6: Paket za oporavak\n3. Pratite upute za oporavak\n\nIli kontaktirajte sistem administratora.",
         "popup_recovery_unavailable_body": "Trenutno nema dostupnog paketa za oporavak za ovaj disk.\n\nZa postavljanje oporavka lozinke:\n\n1. Koristite SmartDrive CLI: python smartdrive.py\n2. Odaberite opciju 6: Paket za oporavak\n3. Izaberite 'Generate Recovery Kit'\n\nIli kontaktirajte sistem administratora.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Hitni oporavak",
         "recovery_instructions": "Unesite svoju frazu za oporavak od 24 riječi da biste povratili pristup vašem šifriranom volumenu. Možete također navesti datoteku kontejnera za oporavak ako je imate.",
@@ -688,7 +635,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Kontejner za oporavak nije pronađen. Molimo odaberite datoteku kontejnera.",
         "recovery_no_kit_configured": "Nijedan paket za oporavak nije konfigurisan za ovaj disk.",
         "recovery_generate_first": "Molimo prvo generirajte paket za oporavak putem Postavki ili CLI-ja.",
-        
         "popup_unmount_failed_title": "Demontiranje nije uspjelo",
         "popup_mount_failed_title": "Montiranje nije uspjelo",
         "popup_update_not_possible_title": "Ažuriranje nije moguće",
@@ -706,18 +652,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "Neuspjelo pokretanje ažuriranja:\n\n{error}",
         "popup_cli_failed_title": "Pokretanje CLI-ja nije uspjelo",
         "popup_cli_failed_body": "Nije moguće otvoriti CLI:\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "Server URL nije konfigurisan.\n\nIdite u Postavke da konfigurirate URL za ažuriranje.",
         "error_update_local_root_not_configured": "Lokalni direktorij za ažuriranje nije konfigurisan.\n\nIdite u Postavke da konfigurirate lokalni root za ažuriranje.",
         "error_update_local_root_not_found": "Lokalni direktorij za ažuriranje nije pronađen:\n\n{path}\n\nProvjerite Postavke da verifikujete putanju.",
         "error_update_install_dir_not_found": "Instalacijski direktorij nije pronađen:\n\n{path}",
         "error_update_unknown_source_type": "Nepoznat tip izvora ažuriranja: {type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "Potreban hardverski ključ",
         "error_hardware_key_missing_body": "Hardverski ključ (YubiKey/GPG kartica) nije detektovan. Molimo ubacite hardverski ključ i pokušajte ponovo.",
-        
         # Theme names (for theme dropdown)
         "theme_brand": "Brend",
         "theme_green": "Zelena",
@@ -725,13 +668,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Ružičasta",
         "theme_slate": "Škriljac",
         "label_theme": "Tema",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Otvori launcher disk",
         "tooltip_open_mounted_volume": "Otvori montirani volumen",
         "popup_open_failed_title": "Otvaranje nije uspjelo",
         "popup_open_failed_body": "Nije moguće otvoriti upravitelj datoteka:\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "ID diska",
         "label_drive_name": "Naziv diska",
@@ -754,7 +695,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "HKDF Info",
         "label_schema_version": "Verzija šeme",
         "label_version": "Verzija",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Jedinstveni identifikator za ovaj disk (samo za čitanje)",
         "tooltip_drive_name": "Prilagođeni naziv za ovaj disk",
@@ -789,7 +729,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Configuración",
-        
         # Button labels
         "btn_mount": "🔓 Montar",
         "btn_unmount": "🔒 Desmontar",
@@ -799,7 +738,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Guardar",
         "btn_cancel": "Cancelar",
-        
         # Status messages
         "status_config_not_found": "Configuración no encontrada",
         "status_volume_mounted": "Volumen montado",
@@ -811,7 +749,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Error al montar",
         "status_unmount_success": "✅ Volumen desmontado correctamente",
         "status_unmount_failed": "❌ Error al desmontar",
-        
         # Info labels
         "info_unavailable": "Información no disponible",
         "keyfile_selected_one": "1 archivo de clave seleccionado",
@@ -819,17 +756,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Arrastra los archivos de clave aquí o haz clic para buscar",
         "keyfile_drop_supports_multiple": "Admite varios archivos de clave",
         "label_show_password": "Mostrar contraseña",
-        
         # Size formatting
         "size_free": "Libre: {size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "Salir de SmartDrive",
         "tooltip_settings": "Herramientas y configuración avanzadas",
-        
         # Labels
         "label_product_name": "Nombre del producto",
         "label_preview": "Vista previa:",
@@ -837,10 +770,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Archivo de clave:",
         "label_hardware_key_hint": "💡 Puede requerirse una llave de hardware para la autenticación",
         "label_forgot_password": "¿Olvidaste tu contraseña?",
-        
         # Placeholder text
         "placeholder_password": "Introduce tu contraseña de VeraCrypt...",
-        
         # Menu items
         "menu_settings": "⚙️ Configuración",
         "menu_rekey": "🔑 Cambiar contraseña/archivo de clave",
@@ -850,11 +781,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 Abrir CLI",
         "menu_clear_keyfiles": "Borrar archivos de clave",
         "dialog_select_keyfiles": "Seleccionar archivo(s) de clave",
-        
         # Tray
         "tray_minimized_message": "Ejecutándose en segundo plano. Haz clic en el icono de la bandeja para abrir.",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "No se encontró el script de montaje",
         "worker_mount_success": "Volumen montado correctamente",
@@ -866,7 +795,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Error al desmontar: {error}",
         "worker_unmount_timeout": "Tiempo de espera agotado al desmontar",
         "worker_unmount_error": "Error de desmontaje: {error}",
-        
         # Settings dialog - Tab names
         "settings_language": "Idioma",
         "settings_general": "General",
@@ -878,7 +806,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Recuperación",
         "settings_lost_and_found": "Perdido y encontrado",
         "settings_advanced": "Avanzado",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Configure el nombre para mostrar, el idioma y las preferencias de tema.",
         "settings_security_desc": "Establezca el modo de cifrado y el método de autenticación para su unidad segura.",
@@ -889,7 +816,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Configure las opciones de recuperación Shamir Secret Sharing para recuperar el acceso si se pierden las claves.",
         "settings_lost_and_found_desc": "Muestre un mensaje de contacto en la unidad para su devolución si se pierde.",
         "settings_advanced_desc": "Configuración técnica para parámetros de cifrado y verificación de integridad.",
-        
         "settings_restart_not_required": "✓ Cambios aplicados inmediatamente (no se requiere reinicio)",
         "label_mode": "Modo",
         "label_encrypted_keyfile": "Archivo de clave cifrado",
@@ -904,7 +830,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "No se pudo guardar config.json:",
         "title_invalid_mount_letter": "Letra de unidad no válida",
         "title_save_failed": "Error al guardar",
-        
+        "title_error": "Error",
+        "error_apply_theme": "No se pudo aplicar el tema: {error}",
+        "error_apply_language": "No se pudo aplicar el idioma: {error}",
         # Popup dialogs
         "popup_keyfile_required_title": "Se requiere archivo de clave",
         "popup_keyfile_required_body": "Selecciona un archivo de clave para el modo contraseña + archivo de clave.",
@@ -913,7 +841,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Recuperación de contraseña",
         "popup_recovery_available_body": "¡Hay un kit de recuperación disponible para esta unidad!\n\nPara recuperar el acceso a tu volumen cifrado:\n\n1. Usa la CLI de SmartDrive: python smartdrive.py\n2. Selecciona la opción 6: Kit de recuperación\n3. Sigue las instrucciones de recuperación\n\nO contacta con tu administrador del sistema.",
         "popup_recovery_unavailable_body": "Actualmente no hay un kit de recuperación disponible para esta unidad.\n\nPara configurar la recuperación de contraseña:\n\n1. Usa la CLI de SmartDrive: python smartdrive.py\n2. Selecciona la opción 6: Kit de recuperación\n3. Elige 'Generate Recovery Kit'\n\nO contacta con tu administrador del sistema.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Recuperación de emergencia",
         "recovery_instructions": "Introduce tu frase de recuperación de 24 palabras para recuperar el acceso a tu volumen cifrado. También puedes proporcionar un archivo contenedor de recuperación si tienes uno.",
@@ -939,7 +866,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Contenedor de recuperación no encontrado. Selecciona el archivo contenedor.",
         "recovery_no_kit_configured": "No hay kit de recuperación configurado para esta unidad.",
         "recovery_generate_first": "Por favor genera primero un kit de recuperación desde Configuración o CLI.",
-        
         "popup_unmount_failed_title": "Error al desmontar",
         "popup_mount_failed_title": "Error al montar",
         "popup_update_not_possible_title": "Actualización no posible",
@@ -957,18 +883,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "No se pudo ejecutar la actualización:\n\n{error}",
         "popup_cli_failed_title": "Error al iniciar CLI",
         "popup_cli_failed_body": "No se pudo abrir la CLI:\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "El URL del servidor no está configurado.\n\nVe a Configuración para configurar el URL de actualización.",
         "error_update_local_root_not_configured": "El directorio de actualización local no está configurado.\n\nVe a Configuración para configurar la raíz local de actualización.",
         "error_update_local_root_not_found": "No se encontró el directorio de actualización local:\n\n{path}\n\nComprueba Configuración para verificar la ruta.",
         "error_update_install_dir_not_found": "No se encontró el directorio de instalación:\n\n{path}",
         "error_update_unknown_source_type": "Tipo de origen de actualización desconocido: {type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "Se requiere llave de hardware",
         "error_hardware_key_missing_body": "No se detectó la llave de hardware (YubiKey/tarjeta GPG). Inserta tu llave de hardware e inténtalo de nuevo.",
-        
         # Theme names (for theme dropdown)
         "theme_brand": "Marca",
         "theme_green": "Verde",
@@ -976,13 +899,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Rosa",
         "theme_slate": "Pizarra",
         "label_theme": "Tema",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Abrir unidad del launcher",
         "tooltip_open_mounted_volume": "Abrir volumen montado",
         "popup_open_failed_title": "Error al abrir",
         "popup_open_failed_body": "No se pudo abrir el explorador de archivos:\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "ID de unidad",
         "label_drive_name": "Nombre de unidad",
@@ -1005,7 +926,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "Info HKDF",
         "label_schema_version": "Versión del esquema",
         "label_version": "Versión",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Identificador único para esta unidad (solo lectura)",
         "tooltip_drive_name": "Nombre personalizado para esta unidad",
@@ -1040,7 +960,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Paramètres",
-        
         # Button labels
         "btn_mount": "🔓 Monter",
         "btn_unmount": "🔒 Démonter",
@@ -1050,7 +969,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Enregistrer",
         "btn_cancel": "Annuler",
-        
         # Status messages
         "status_config_not_found": "Configuration introuvable",
         "status_volume_mounted": "Volume monté",
@@ -1062,7 +980,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Échec du montage",
         "status_unmount_success": "✅ Volume démonté avec succès",
         "status_unmount_failed": "❌ Échec du démontage",
-        
         # Info labels
         "info_unavailable": "Infos indisponibles",
         "keyfile_selected_one": "1 fichier clé sélectionné",
@@ -1070,17 +987,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Déposez les fichiers clés ici ou cliquez pour parcourir",
         "keyfile_drop_supports_multiple": "Prend en charge plusieurs fichiers clés",
         "label_show_password": "Afficher le mot de passe",
-        
         # Size formatting
         "size_free": "Libre : {size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "Quitter SmartDrive",
         "tooltip_settings": "Outils et paramètres avancés",
-        
         # Labels
         "label_product_name": "Nom du produit",
         "label_preview": "Aperçu :",
@@ -1088,10 +1001,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Fichier clé :",
         "label_hardware_key_hint": "💡 Une clé matérielle peut être requise pour l'authentification",
         "label_forgot_password": "Mot de passe oublié ?",
-        
         # Placeholder text
         "placeholder_password": "Saisissez votre mot de passe VeraCrypt...",
-        
         # Menu items
         "menu_settings": "⚙️ Paramètres",
         "menu_rekey": "🔑 Changer mot de passe/fichier clé",
@@ -1101,11 +1012,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 Ouvrir la CLI",
         "menu_clear_keyfiles": "Effacer les fichiers clés",
         "dialog_select_keyfiles": "Sélectionner le(s) fichier(s) clé(s)",
-        
         # Tray
         "tray_minimized_message": "Exécution en arrière-plan. Cliquez sur l'icône de la barre pour ouvrir.",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "Script de montage introuvable",
         "worker_mount_success": "Volume monté avec succès",
@@ -1117,7 +1026,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Échec du démontage : {error}",
         "worker_unmount_timeout": "Délai de démontage dépassé",
         "worker_unmount_error": "Erreur de démontage : {error}",
-        
         # Settings dialog - Tab names
         "settings_language": "Langue",
         "settings_general": "Général",
@@ -1129,7 +1037,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Récupération",
         "settings_lost_and_found": "Objets trouvés",
         "settings_advanced": "Avancé",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Configurez le nom d'affichage, la langue et les préférences de thème.",
         "settings_security_desc": "Définissez le mode de chiffrement et la méthode d'authentification pour votre disque sécurisé.",
@@ -1140,7 +1047,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Configurez les options de récupération Shamir Secret Sharing pour récupérer l'accès si les clés sont perdues.",
         "settings_lost_and_found_desc": "Affichez un message de contact sur le disque pour le récupérer s'il est perdu.",
         "settings_advanced_desc": "Paramètres techniques pour les paramètres de chiffrement et la vérification de l'intégrité.",
-        
         "settings_restart_not_required": "✓ Modifications appliquées immédiatement (aucun redémarrage requis)",
         "label_mode": "Mode",
         "label_encrypted_keyfile": "Fichier clé chiffré",
@@ -1155,7 +1061,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "Impossible d'enregistrer config.json :",
         "title_invalid_mount_letter": "Lettre de montage non valide",
         "title_save_failed": "Échec de l'enregistrement",
-        
+        "title_error": "Erreur",
+        "error_apply_theme": "Échec de l'application du thème : {error}",
+        "error_apply_language": "Échec de l'application de la langue : {error}",
         # Popup dialogs
         "popup_keyfile_required_title": "Fichier clé requis",
         "popup_keyfile_required_body": "Veuillez sélectionner un fichier clé pour le mode mot de passe + fichier clé.",
@@ -1164,7 +1072,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Récupération de mot de passe",
         "popup_recovery_available_body": "Un kit de récupération est disponible pour ce lecteur !\n\nPour récupérer l'accès à votre volume chiffré :\n\n1. Utilisez la CLI SmartDrive : python smartdrive.py\n2. Sélectionnez l'option 6 : Kit de récupération\n3. Suivez les instructions de récupération\n\nOu contactez votre administrateur système.",
         "popup_recovery_unavailable_body": "Aucun kit de récupération n'est actuellement disponible pour ce lecteur.\n\nPour configurer la récupération de mot de passe :\n\n1. Utilisez la CLI SmartDrive : python smartdrive.py\n2. Sélectionnez l'option 6 : Kit de récupération\n3. Choisissez 'Generate Recovery Kit'\n\nOu contactez votre administrateur système.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Récupération d'urgence",
         "recovery_instructions": "Entrez votre phrase de récupération de 24 mots pour récupérer l'accès à votre volume chiffré. Vous pouvez également fournir un fichier conteneur de récupération si vous en avez un.",
@@ -1190,7 +1097,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Conteneur de récupération introuvable. Veuillez sélectionner le fichier conteneur.",
         "recovery_no_kit_configured": "Aucun kit de récupération configuré pour ce lecteur.",
         "recovery_generate_first": "Veuillez d'abord générer un kit de récupération via Paramètres ou CLI.",
-        
         "popup_unmount_failed_title": "Échec du démontage",
         "popup_mount_failed_title": "Échec du montage",
         "popup_update_not_possible_title": "Mise à jour impossible",
@@ -1208,18 +1114,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "Impossible d'exécuter la mise à jour :\n\n{error}",
         "popup_cli_failed_title": "Échec du lancement de la CLI",
         "popup_cli_failed_body": "Impossible d'ouvrir la CLI :\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "L'URL du serveur n'est pas configurée.\n\nAllez dans Paramètres pour configurer l'URL de mise à jour.",
         "error_update_local_root_not_configured": "Le répertoire de mise à jour local n'est pas configuré.\n\nAllez dans Paramètres pour configurer la racine locale de mise à jour.",
         "error_update_local_root_not_found": "Répertoire de mise à jour local introuvable :\n\n{path}\n\nVérifiez Paramètres pour valider le chemin.",
         "error_update_install_dir_not_found": "Répertoire d'installation introuvable :\n\n{path}",
         "error_update_unknown_source_type": "Type de source de mise à jour inconnu : {type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "Clé matérielle requise",
         "error_hardware_key_missing_body": "Clé matérielle (YubiKey/carte GPG) non détectée. Veuillez insérer votre clé matérielle et réessayer.",
-        
         # Theme names (for theme dropdown
         "theme_brand": "Marque",
         "theme_green": "Vert",
@@ -1227,13 +1130,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Rose",
         "theme_slate": "Ardoise",
         "label_theme": "Thème",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Ouvrir le lecteur de lancement",
         "tooltip_open_mounted_volume": "Ouvrir le volume monté",
         "popup_open_failed_title": "Échec de l'ouverture",
         "popup_open_failed_body": "Impossible d'ouvrir l'explorateur de fichiers :\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "ID du disque",
         "label_drive_name": "Nom du disque",
@@ -1256,7 +1157,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "Info HKDF",
         "label_schema_version": "Version du schéma",
         "label_version": "Version",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Identifiant unique pour ce disque (lecture seule)",
         "tooltip_drive_name": "Nom personnalisé pour ce disque",
@@ -1291,7 +1191,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "Настройки",
-
         # Button labels
         "btn_mount": "🔓 Смонтировать",
         "btn_unmount": "🔒 Размонтировать",
@@ -1301,7 +1200,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "Сохранить",
         "btn_cancel": "Отмена",
-
         # Status messages
         "status_config_not_found": "Конфигурация не найдена",
         "status_volume_mounted": "Том смонтирован",
@@ -1313,7 +1211,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ Ошибка монтирования",
         "status_unmount_success": "✅ Том успешно размонтирован",
         "status_unmount_failed": "❌ Ошибка размонтирования",
-
         # Info labels
         "info_unavailable": "Информация недоступна",
         "keyfile_selected_one": "Выбран 1 ключевой файл",
@@ -1321,17 +1218,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "Перетащите ключевые файлы сюда или нажмите для выбора",
         "keyfile_drop_supports_multiple": "Поддерживает несколько ключевых файлов",
         "label_show_password": "Показать пароль",
-
         # Size formatting
         "size_free": "Свободно: {size}",
-
         # Icons/placeholders
         "icon_drive": "🚀",
-
         # Tooltips
         "tooltip_exit": "Выйти из SmartDrive",
         "tooltip_settings": "Дополнительные инструменты и настройки",
-
         # Labels
         "label_product_name": "Название продукта",
         "label_preview": "Предпросмотр:",
@@ -1339,10 +1232,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "Ключевой файл:",
         "label_hardware_key_hint": "💡 Для аутентификации может потребоваться аппаратный ключ",
         "label_forgot_password": "Забыли пароль?",
-
         # Placeholder text
         "placeholder_password": "Введите пароль VeraCrypt...",
-
         # Menu items
         "menu_settings": "⚙️ Настройки",
         "menu_rekey": "🔑 Сменить пароль/ключевой файл",
@@ -1352,11 +1243,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 Открыть CLI",
         "menu_clear_keyfiles": "Очистить ключевые файлы",
         "dialog_select_keyfiles": "Выберите ключевой файл(ы)",
-
         # Tray
         "tray_minimized_message": "Работает в фоновом режиме. Нажмите на значок в трее, чтобы открыть.",
         "tray_tooltip": "{name} ({id})",
-
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "Скрипт монтирования не найден",
         "worker_mount_success": "Том успешно смонтирован",
@@ -1368,7 +1257,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "Ошибка размонтирования: {error}",
         "worker_unmount_timeout": "Время ожидания размонтирования истекло",
         "worker_unmount_error": "Ошибка размонтирования: {error}",
-
         # Settings dialog - Tab names
         "settings_language": "Язык",
         "settings_general": "Общие",
@@ -1380,7 +1268,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "Восстановление",
         "settings_lost_and_found": "Бюро находок",
         "settings_advanced": "Дополнительно",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "Настройте отображаемое имя, язык и параметры темы приложения.",
         "settings_security_desc": "Установите режим шифрования и метод аутентификации для вашего защищённого диска.",
@@ -1391,7 +1278,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "Настройте параметры восстановления Shamir Secret Sharing для доступа при утере ключей.",
         "settings_lost_and_found_desc": "Отображайте контактное сообщение на диске для возврата при потере.",
         "settings_advanced_desc": "Технические настройки параметров шифрования и проверки целостности.",
-        
         "settings_restart_not_required": "✓ Изменения применены сразу (перезапуск не требуется)",
         "label_mode": "Режим",
         "label_encrypted_keyfile": "Зашифрованный ключевой файл",
@@ -1406,7 +1292,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "Не удалось сохранить config.json:",
         "title_invalid_mount_letter": "Недопустимая буква диска",
         "title_save_failed": "Ошибка сохранения",
-
+        "title_error": "Ошибка",
+        "error_apply_theme": "Не удалось применить тему: {error}",
+        "error_apply_language": "Не удалось применить язык: {error}",
         # Popup dialogs
         "popup_keyfile_required_title": "Требуется ключевой файл",
         "popup_keyfile_required_body": "Пожалуйста, выберите ключевой файл для режима пароль + ключевой файл.",
@@ -1415,7 +1303,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "Восстановление пароля",
         "popup_recovery_available_body": "Для этого диска доступен набор восстановления!\n\nЧтобы восстановить доступ к зашифрованному тому:\n\n1. Откройте SmartDrive CLI: python smartdrive.py\n2. Выберите пункт 6: Recovery Kit\n3. Следуйте инструкциям по восстановлению\n\nИли обратитесь к системному администратору.",
         "popup_recovery_unavailable_body": "Набор восстановления для этого диска сейчас недоступен.\n\nЧтобы настроить восстановление пароля:\n\n1. Откройте SmartDrive CLI: python smartdrive.py\n2. Выберите пункт 6: Recovery Kit\n3. Выберите 'Generate Recovery Kit'\n\nИли обратитесь к системному администратору.",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 Аварийное восстановление",
         "recovery_instructions": "Введите вашу фразу восстановления из 24 слов для восстановления доступа к зашифрованному тому. Вы также можете указать файл контейнера восстановления, если он у вас есть.",
@@ -1441,7 +1328,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "Контейнер восстановления не найден. Выберите файл контейнера.",
         "recovery_no_kit_configured": "Для этого диска не настроен набор восстановления.",
         "recovery_generate_first": "Сначала сгенерируйте набор восстановления через Настройки или CLI.",
-        
         "popup_unmount_failed_title": "Ошибка размонтирования",
         "popup_mount_failed_title": "Ошибка монтирования",
         "popup_update_not_possible_title": "Обновление невозможно",
@@ -1459,18 +1345,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "Не удалось запустить обновление:\n\n{error}",
         "popup_cli_failed_title": "Не удалось запустить CLI",
         "popup_cli_failed_body": "Не удалось открыть CLI:\n\n{error}",
-
         # Update configuration error messages
         "error_update_server_url_not_configured": "URL сервера не настроен.\\n\\nОткройте Настройки и укажите URL для обновления.",
         "error_update_local_root_not_configured": "Локальная папка обновления не настроена.\\n\\nОткройте Настройки и укажите локальный путь для обновления.",
         "error_update_local_root_not_found": "Локальная папка обновления не найдена:\\n\\n{path}\\n\\nПроверьте Настройки и убедитесь, что путь указан верно.",
         "error_update_install_dir_not_found": "Каталог установки не найден:\\n\\n{path}",
         "error_update_unknown_source_type": "Неизвестный тип источника обновления: {type}",
-
         # Hardware key error messages
         "error_hardware_key_missing_title": "Требуется аппаратный ключ",
         "error_hardware_key_missing_body": "Аппаратный ключ (YubiKey/GPG-карта) не обнаружен. Подключите аппаратный ключ и повторите попытку.",
-
         # Theme names (for theme dropdown)
         "theme_brand": "Фирменная",
         "theme_green": "Зелёная",
@@ -1478,13 +1361,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "Роза",
         "theme_slate": "Сланец",
         "label_theme": "Тема",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "Открыть диск запуска",
         "tooltip_open_mounted_volume": "Открыть смонтированный том",
         "popup_open_failed_title": "Ошибка открытия",
         "popup_open_failed_body": "Не удалось открыть файловый менеджер:\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "ID диска",
         "label_drive_name": "Имя диска",
@@ -1507,7 +1388,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "Информация HKDF",
         "label_schema_version": "Версия схемы",
         "label_version": "Версия",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "Уникальный идентификатор для этого диска (только чтение)",
         "tooltip_drive_name": "Пользовательское имя для этого диска",
@@ -1542,7 +1422,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Window titles
         "window_title": "KeyDrive",
         "settings_window_title": "设置",
-        
         # Button labels
         "btn_mount": "🔓 挂载",
         "btn_unmount": "🔒 卸载",
@@ -1552,7 +1431,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_close": "✕",
         "btn_save": "保存",
         "btn_cancel": "取消",
-        
         # Status messages
         "status_config_not_found": "未找到配置",
         "status_volume_mounted": "卷已挂载",
@@ -1564,7 +1442,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_mount_failed": "❌ 挂载失败",
         "status_unmount_success": "✅ 卷卸载成功",
         "status_unmount_failed": "❌ 卸载失败",
-        
         # Info labels
         "info_unavailable": "信息不可用",
         "keyfile_selected_one": "已选择 1 个密钥文件",
@@ -1572,17 +1449,13 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keyfile_drop_hint": "将密钥文件拖到此处或点击浏览",
         "keyfile_drop_supports_multiple": "支持多个密钥文件",
         "label_show_password": "显示密码",
-        
         # Size formatting
         "size_free": "可用：{size}",
-        
         # Icons/placeholders
         "icon_drive": "🚀",
-        
         # Tooltips
         "tooltip_exit": "退出 SmartDrive",
         "tooltip_settings": "高级工具和设置",
-        
         # Labels
         "label_product_name": "产品名称",
         "label_preview": "预览：",
@@ -1590,10 +1463,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_keyfile": "密钥文件：",
         "label_hardware_key_hint": "💡 认证可能需要硬件密钥",
         "label_forgot_password": "忘记密码？",
-        
         # Placeholder text
         "placeholder_password": "请输入你的 VeraCrypt 密码...",
-        
         # Menu items
         "menu_settings": "⚙️ 设置",
         "menu_rekey": "🔑 更改密码/密钥文件",
@@ -1603,11 +1474,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_cli": "💻 打开 CLI",
         "menu_clear_keyfiles": "清除密钥文件",
         "dialog_select_keyfiles": "选择密钥文件（可多选）",
-        
         # Tray
         "tray_minimized_message": "正在后台运行。点击托盘图标打开。",
         "tray_tooltip": "{name} ({id})",
-        
         # Worker messages (keys for structured errors)
         "worker_mount_script_not_found": "未找到挂载脚本",
         "worker_mount_success": "卷挂载成功",
@@ -1619,7 +1488,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "worker_unmount_failed": "卸载失败：{error}",
         "worker_unmount_timeout": "卸载操作超时",
         "worker_unmount_error": "卸载错误：{error}",
-        
         # Settings dialog - Tab names
         "settings_language": "语言",
         "settings_general": "常规",
@@ -1631,7 +1499,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery": "恢复",
         "settings_lost_and_found": "失物招领",
         "settings_advanced": "高级",
-        
         # Settings dialog - Tab descriptions
         "settings_general_desc": "配置显示名称、语言和主题首选项。",
         "settings_security_desc": "设置安全驱动器的加密模式和身份验证方法。",
@@ -1642,7 +1509,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "settings_recovery_desc": "设置 Shamir 秘密共享恢复选项，以便在密钥丢失时恢复访问。",
         "settings_lost_and_found_desc": "在驱动器上显示联系信息，以便丢失时归还。",
         "settings_advanced_desc": "加密参数和完整性验证的技术设置。",
-        
         "settings_restart_not_required": "✓ 更改已立即应用（无需重启）",
         "label_mode": "模式",
         "label_encrypted_keyfile": "加密的密钥文件",
@@ -1657,7 +1523,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "error_save_failed": "无法保存 config.json：",
         "title_invalid_mount_letter": "无效盘符",
         "title_save_failed": "保存失败",
-        
+        "title_error": "错误",
+        "error_apply_theme": "无法应用主题：{error}",
+        "error_apply_language": "无法应用语言：{error}",
         # Popup dialogs
         "popup_keyfile_required_title": "需要密钥文件",
         "popup_keyfile_required_body": "在“密码 + 密钥文件”模式下请选择密钥文件。",
@@ -1666,7 +1534,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_recovery_title": "密码恢复",
         "popup_recovery_available_body": "此驱动器有可用的恢复工具包！\n\n要恢复对加密卷的访问：\n\n1. 使用 SmartDrive CLI：python smartdrive.py\n2. 选择选项 6：恢复工具包\n3. 按照恢复说明操作\n\n或联系系统管理员。",
         "popup_recovery_unavailable_body": "此驱动器当前没有可用的恢复工具包。\n\n要设置密码恢复：\n\n1. 使用 SmartDrive CLI：python smartdrive.py\n2. 选择选项 6：恢复工具包\n3. 选择 'Generate Recovery Kit'\n\n或联系系统管理员。",
-        
         # Recovery tab - Phrase input and recovery actions
         "recovery_section_title": "🔐 紧急恢复",
         "recovery_instructions": "输入您的 24 个单词的恢复短语以恢复对加密卷的访问。如果您有恢复容器文件，也可以在这里提供。",
@@ -1692,7 +1559,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "recovery_container_not_found": "未找到恢复容器。请选择容器文件。",
         "recovery_no_kit_configured": "此驱动器未配置恢复工具包。",
         "recovery_generate_first": "请先通过设置或 CLI 生成恢复工具包。",
-        
         "popup_unmount_failed_title": "卸载失败",
         "popup_mount_failed_title": "挂载失败",
         "popup_update_not_possible_title": "无法更新",
@@ -1710,18 +1576,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "popup_update_error_body": "无法运行更新：\n\n{error}",
         "popup_cli_failed_title": "CLI 启动失败",
         "popup_cli_failed_body": "无法打开 CLI：\n\n{error}",
-        
         # Update configuration error messages
         "error_update_server_url_not_configured": "未配置服务器 URL。\n\n请前往设置配置更新 URL。",
         "error_update_local_root_not_configured": "未配置本地更新目录。\n\n请前往设置配置本地更新根目录。",
         "error_update_local_root_not_found": "未找到本地更新目录：\n\n{path}\n\n请检查设置以验证路径。",
         "error_update_install_dir_not_found": "未找到安装目录：\n\n{path}",
         "error_update_unknown_source_type": "未知的更新来源类型：{type}",
-        
         # Hardware key error messages
         "error_hardware_key_missing_title": "需要硬件密钥",
         "error_hardware_key_missing_body": "未检测到硬件密钥（YubiKey/GPG 卡）。请插入硬件密钥后重试。",
-        
         # Theme names (for theme dropdown)
         "theme_brand": "品牌",
         "theme_green": "绿色",
@@ -1729,13 +1592,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "theme_rose": "玫瑰",
         "theme_slate": "石板",
         "label_theme": "主题",
-        
         # File explorer buttons
         "tooltip_open_launcher_drive": "打开启动器驱动器",
         "tooltip_open_mounted_volume": "打开已挂载的卷",
         "popup_open_failed_title": "打开失败",
         "popup_open_failed_body": "无法打开文件管理器:\n\n{path}\n\n{error}",
-        
         # Settings dialog - Additional fields (schema-driven UI)
         "label_drive_id": "驱动器 ID",
         "label_drive_name": "驱动器名称",
@@ -1758,7 +1619,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "label_hkdf_info": "HKDF 信息",
         "label_schema_version": "模式版本",
         "label_version": "版本",
-        
         # Tooltips for settings fields
         "tooltip_drive_id": "此驱动器的唯一标识符（只读）",
         "tooltip_drive_name": "此驱动器的自定义名称",
@@ -1796,21 +1656,22 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 # Translation Function
 # =============================================================================
 
+
 def tr(key: str, *, lang: str = "en", **kwargs) -> str:
     """
     Translate a GUI string key to the specified language.
-    
+
     Args:
         key: Translation key (e.g., "btn_mount")
         lang: Target language code (default: "en")
         **kwargs: Format arguments for string interpolation
-    
+
     Returns:
         Translated string
-    
+
     Raises:
         KeyError: If key is missing in both selected lang and 'en' fallback
-    
+
     Examples:
         tr("btn_mount")  # "🔓 Mount"
         tr("keyfile_selected_many", count=3)  # "3 keyfiles selected"
@@ -1819,12 +1680,12 @@ def tr(key: str, *, lang: str = "en", **kwargs) -> str:
     if lang in TRANSLATIONS and key in TRANSLATIONS[lang]:
         template = TRANSLATIONS[lang][key]
         return template.format(**kwargs) if kwargs else template
-    
+
     # Fallback to English
     if key in TRANSLATIONS.get("en", {}):
         template = TRANSLATIONS["en"][key]
         return template.format(**kwargs) if kwargs else template
-    
+
     # Hard fail - missing key even in English
     raise KeyError(
         f"Translation key '{key}' not found in language '{lang}' "
@@ -1836,20 +1697,19 @@ def tr(key: str, *, lang: str = "en", **kwargs) -> str:
 # Validation Helper
 # =============================================================================
 
+
 def validate_keys(used_keys: set) -> None:
     """
     Validate that all used translation keys exist in English fallback.
-    
+
     Args:
         used_keys: Set of all keys used by GUI code
-    
+
     Raises:
         KeyError: If any key is missing from 'en' translation table
     """
     en_keys = set(TRANSLATIONS.get("en", {}).keys())
     missing = used_keys - en_keys
-    
+
     if missing:
-        raise KeyError(
-            f"Missing translation keys in 'en' fallback: {sorted(missing)}"
-        )
+        raise KeyError(f"Missing translation keys in 'en' fallback: {sorted(missing)}")

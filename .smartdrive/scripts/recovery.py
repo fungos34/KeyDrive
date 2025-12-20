@@ -51,7 +51,8 @@ _project_root = _script_dir.parent
 # Handle deployed vs development paths:
 # Development: scripts/ is at project_root/scripts/, core is at project_root/core/
 # Deployed: scripts is at .smartdrive/scripts/, core is at .smartdrive/core/
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive - core is sibling to scripts under .smartdrive/
     _smartdrive_dir = _script_dir.parent
     _project_root = _smartdrive_dir.parent
@@ -72,7 +73,7 @@ if str(_project_root) not in sys.path:
 # If import fails, script MUST abort with clear error message.
 
 try:
-    from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, UserInputs
+    from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, UserInputs, FileNames
     from core.limits import Limits
     from core.modes import RecoveryOutcome, SecurityMode
     from core.paths import Paths
@@ -126,8 +127,7 @@ def check_dependencies():
     if missing:
         error_msg = (
             "\n" + "=" * 70 + "\n"
-            "MISSING REQUIRED DEPENDENCIES\n"
-            + "=" * 70 + "\n\n"
+            "MISSING REQUIRED DEPENDENCIES\n" + "=" * 70 + "\n\n"
             f"The following packages are required but not installed:\n\n"
         )
         for pkg in missing:
@@ -136,15 +136,14 @@ def check_dependencies():
             f"\nInstall with:\n\n"
             f"  pip install -r requirements.txt\n\n"
             f"Or directly:\n\n"
-            f"  pip install {' '.join(missing)}\n\n"
-            + "=" * 70
+            f"  pip install {' '.join(missing)}\n\n" + "=" * 70
         )
-        
+
         # In test environments, raise ImportError instead of sys.exit
         # This allows pytest to skip/handle the import gracefully
         if "pytest" in sys.modules or "unittest" in sys.modules:
             raise ImportError(error_msg)
-        
+
         print(error_msg)
         sys.exit(1)
 

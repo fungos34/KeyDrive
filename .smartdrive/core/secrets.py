@@ -34,6 +34,7 @@ Commands:
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import subprocess
 import tempfile
@@ -45,10 +46,13 @@ from typing import Callable, Dict, Optional, Tuple
 
 from core.constants import CryptoParams, UserInputs
 from core.limits import Limits
-from core.paths import Paths
 
 # Core SSOT imports
 from core.modes import SecurityMode
+
+# Module-level logger
+from scripts.setup import log, error, warn
+from core.paths import Paths
 
 # Clipboard SSOT import
 try:
@@ -391,7 +395,9 @@ class SecretProvider:
 
             # Salt and HKDF info
             provider.salt_b64 = overrides.get("salt_b64", config.get(ConfigKeys.SALT_B64, ""))
-            provider.hkdf_info = overrides.get("hkdf_info", config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT))
+            provider.hkdf_info = overrides.get(
+                "hkdf_info", config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT)
+            )
 
         elif security_mode == SecurityMode.PW_GPG_KEYFILE:
             # GPG-encrypted keyfile
@@ -430,7 +436,7 @@ class SecretProvider:
 
         if cmd == UserInputs.COPY_PASSWORD:
             return self._handle_cpw()
-        elif cmd == UserInputs.COPY_KEYFILE:
+        elif cmd == UserInputs.COPY_KEY_FILE:
             return self._handle_ckf()
         elif cmd == UserInputs.COPY_DEVICE_PATH:
             return self._handle_cdp()
@@ -738,30 +744,30 @@ class SecretProvider:
         - Clears clipboard if we wrote to it
         - Deletes any temp keyfile
         """
-        _logger.debug("[CLEANUP] Starting cleanup")
+        log("[CLEANUP] Starting cleanup")
 
         # Clear clipboard if we copied sensitive data
         if self._password_copied:
-            _logger.debug("[CLEANUP] Attempting clipboard clear")
+            log("[CLEANUP] Attempting clipboard clear")
             try:
                 clipboard_clear_if_ours()
-                _logger.debug("[CLEANUP] clipboard_clear_if_ours completed")
+                log("[CLEANUP] clipboard_clear_if_ours completed")
             except Exception as e:
-                _logger.debug(f"[CLEANUP] clipboard_clear_if_ours failed: {e}")
+                log(f"[CLEANUP] clipboard_clear_if_ours failed: {e}")
                 try:
                     clipboard_clear_best_effort()
-                    _logger.debug("[CLEANUP] clipboard_clear_best_effort completed")
+                    log("[CLEANUP] clipboard_clear_best_effort completed")
                 except Exception as e2:
-                    _logger.debug(f"[CLEANUP] clipboard_clear_best_effort failed: {e2}")
+                    log(f"[CLEANUP] clipboard_clear_best_effort failed: {e2}")
                     pass
             self._password_copied = False
         else:
-            _logger.debug("[CLEANUP] No clipboard clear needed (_password_copied=False)")
+            log("[CLEANUP] No clipboard clear needed (_password_copied=False)")
 
         # Clean up temp keyfile
-        _logger.debug("[CLEANUP] Attempting temp keyfile cleanup")
+        log("[CLEANUP] Attempting temp keyfile cleanup")
         self._cleanup_temp_keyfile()
-        _logger.debug("[CLEANUP] Cleanup complete")
+        log("[CLEANUP] Cleanup complete")
 
     def __del__(self):
         """Ensure cleanup on garbage collection."""

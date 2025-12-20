@@ -1,5 +1,6 @@
 # core/filesystems.py
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -8,7 +9,7 @@ from typing import Sequence
 class FsSpec:
     id: str
     display: str
-    unix_mkfs_cmd: Sequence[str]   # prefix; you append <LABEL> <DEV>
+    unix_mkfs_cmd: Sequence[str]  # prefix; you append <LABEL> <DEV>
     windows_diskpart_fs: str
     macos_diskutil_fs: str
     cross_platform: bool = True

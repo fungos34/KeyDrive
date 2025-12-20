@@ -46,7 +46,8 @@ _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
 # Note: ".smartdrive" literal used here because FileNames not yet imported
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     # Deployed on drive: .smartdrive/scripts/setup.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -61,11 +62,13 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from core.config import write_config_atomic
+
+# Import configuration constants (legacy - for file names)
 from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, FileNames, Prompts, UserInputs
 from core.filesystems import FS, launcher_fs_spec
 from core.limits import Limits
-from core.modes import SECURITY_MODE_DISPLAY, SecurityMode, VolumeIdentifier, VolumeIdentifierKind
 from core.modes import _SECRETS_AVAILABLE  # Module-level flag (not Enum attribute)
+from core.modes import SECURITY_MODE_DISPLAY, SecurityMode, VolumeIdentifier, VolumeIdentifierKind
 from core.paths import DEPLOYED_SCRIPTS_DIR, Paths, normalize_mount_letter
 from core.platform import get_platform
 from core.platform import is_windows as _is_windows
@@ -85,26 +88,16 @@ from core.safety import (
 )
 from core.version import VERSION
 
-# Import configuration constants (legacy - for file names)
-try:
-    from constants import *
-except ImportError:
-    # Fallback to FileNames from core - SSOT branding from Branding class
-    BAT_LAUNCHER_NAME = FileNames.BAT_LAUNCHER
-    GUI_BAT_LAUNCHER_NAME = FileNames.GUI_BAT_LAUNCHER
-    SH_LAUNCHER_NAME = FileNames.SH_LAUNCHER
-    GUI_EXE_NAME = FileNames.GUI_EXE
-    README_NAME = FileNames.README
-    GUI_README_NAME = FileNames.GUI_README
-    README_PDF_NAME = FileNames.README_PDF
-    GUI_README_PDF_NAME = FileNames.GUI_README_PDF
-    PRODUCT_NAME = Branding.PRODUCT_NAME  # SSOT: Never hardcode product name
-
-# Import user-customizable variables for branding
-try:
-    from variables import *
-except ImportError:
-    pass
+# Fallback to FileNames from core - SSOT branding from Branding class
+BAT_LAUNCHER_NAME = FileNames.BAT_LAUNCHER
+GUI_BAT_LAUNCHER_NAME = FileNames.GUI_BAT_LAUNCHER
+SH_LAUNCHER_NAME = FileNames.SH_LAUNCHER
+GUI_EXE_NAME = FileNames.GUI_EXE
+README_NAME = FileNames.README
+GUI_README_NAME = FileNames.GUI_README
+README_PDF_NAME = FileNames.README_PDF
+GUI_README_PDF_NAME = FileNames.GUI_README_PDF
+PRODUCT_NAME = Branding.PRODUCT_NAME  # SSOT: Never hardcode product name
 
 # Import render_vc_guide from SSOT (veracrypt_cli.py)
 from veracrypt_cli import render_vc_guide
@@ -328,7 +321,7 @@ class PagedSetupState:
         if phase <= SetupPhase.SECURITY_CONFIG:
             self.fingerprints = []
             self.security_mode = None
-            self.mount_letter = "V"
+            self.mount_letter = Defaults.WINDOWS_MOUNT_LETTER
         if phase <= SetupPhase.REVIEW_CONFIRM:
             self.confirmed = False
             self.partition_done = False
@@ -444,30 +437,30 @@ def render_page_header(phase_num: int, total_phases: int, title: str, phase_name
 def prompt_navigation(
     phase_num: int, total_phases: int, can_go_back: bool = True, can_rerun: bool = False, auto_next: bool = False
 ) -> str:
-    """
+    f"""
     Display navigation options and get user choice.
 
     CHG-20251218-002: [B]ack/[N]ext navigation.
 
-    Returns: 'B' (back), 'N' (next), 'R' (rerun), 'Q' (quit)
+    Returns: '{UserInputs.BACK}' (back), '{UserInputs.NEXT}' (next), '{UserInputs.RETRY}' (rerun), '{UserInputs.QUIT}' (quit)
     """
     if auto_next:
-        return "N"
+        return UserInputs.NEXT
 
     print()
     print("  " + "-" * 66)
 
     options = []
-    valid = ["N", "Q"]
+    valid = [UserInputs.NEXT, UserInputs.QUIT]
 
     if can_go_back and phase_num > 1:
-        options.append("[B]ack")
-        valid.append("B")
-    options.append("[N]ext")
+        options.append(f"[{UserInputs.BACK}] Back")
+        valid.append(UserInputs.BACK)
+    options.append(f"[{UserInputs.NEXT}] Next")
     if can_rerun:
-        options.append("[R]erun")
-        valid.append("R")
-    options.append("[Q]uit")
+        options.append(f"[{UserInputs.RETRY}] Rerun")
+        valid.append(UserInputs.RETRY)
+    options.append(f"[{UserInputs.QUIT}] Quit")
 
     print(f"  Navigation: {' | '.join(options)}")
 
@@ -475,7 +468,7 @@ def prompt_navigation(
         choice = input("  Your choice: ").strip().upper()
         if choice in valid:
             return choice
-        if choice == "B" and "B" not in valid:
+        if choice == UserInputs.BACK and UserInputs.BACK not in valid:
             print("  Cannot go back from this page.")
         else:
             print(f"  Invalid. Choose: {', '.join(valid)}")
@@ -916,7 +909,7 @@ def generate_pdf_from_markdown(markdown_path: Path, output_path: Path) -> bool:
 
 def get_ram_temp_dir():
     """Get a RAM-backed temp directory if available, else system temp.
-    
+
     SSOT: Uses Paths class constants for platform-specific paths.
     """
     if platform.system() == "Linux":
@@ -1657,7 +1650,7 @@ def generate_seed() -> bytes:
 # Constants
 # =============================================================================
 
-  # Default KeyDrive partition size
+# Default KeyDrive partition size
 
 # VERSION is imported from core.version above
 
@@ -2368,6 +2361,52 @@ def verify_mode_prerequisites_or_prompt_manual(
 # =============================================================================
 
 
+def check_disk_ready_windows(disk_number: int) -> bool:
+    """
+    BUG-20251220-002: Check if a disk is ready for I/O operations on Windows.
+
+    Uses diskpart to verify the disk exists and is accessible.
+    Returns True if disk is ready, False otherwise.
+    """
+    try:
+        # Use diskpart to query disk status
+        script = f"""select disk {disk_number}
+detail disk
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(script)
+            script_path = f.name
+
+        try:
+            result = subprocess.run(
+                ["diskpart", "/s", script_path],
+                capture_output=True,
+                text=True,
+                encoding="cp1252",
+                errors="replace",
+                timeout=Limits.POWERSHELL_QUICK_TIMEOUT,
+            )
+
+            # Check if diskpart succeeded and didn't report device not ready
+            if result.returncode == 0:
+                output_lower = result.stdout.lower()
+                # Look for common "not ready" indicators
+                if "nicht bereit" in output_lower or "not ready" in output_lower:
+                    return False
+                # Look for "fehler" (error) indicators
+                if "fehler" in output_lower and "ger„t" in output_lower:
+                    return False
+                return True
+            return False
+        finally:
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+    except Exception:
+        return False
+
+
 def partition_drive_windows(disk_number: int, launcher_size_mb: int, launcher_label: str) -> tuple[str, str]:
     """
     Partition a drive on Windows using diskpart.
@@ -2375,6 +2414,37 @@ def partition_drive_windows(disk_number: int, launcher_size_mb: int, launcher_la
     Formats LAUNCHER using CryptoParams.LAUNCHER_FILESYSTEM_ID (SSOT via core/filesystems.py)
     Returns: (launcher_drive_letter, payload_device_path)
     """
+    # BUG-20251220-002: Check device readiness before partitioning
+    log(f"Checking if disk {disk_number} is ready...")
+    max_retries = Limits.DISKPART_DEVICE_READY_MAX_RETRIES
+    retry_delay = Limits.DISKPART_DEVICE_READY_RETRY_DELAY_SECONDS
+
+    for attempt in range(1, max_retries + 1):
+        if check_disk_ready_windows(disk_number):
+            log(f"[OK] Disk {disk_number} is ready")
+            break
+
+        if attempt < max_retries:
+            print(f"\n⚠️  Device not ready yet (attempt {attempt}/{max_retries})... waiting {retry_delay} seconds...")
+            print("   Press Ctrl+C to cancel if the device will not become ready.")
+            try:
+                time.sleep(retry_delay)
+            except KeyboardInterrupt:
+                print("\n\n[!] Cancelled by user")
+                raise RuntimeError("Device readiness check cancelled by user")
+        else:
+            # All retries exhausted
+            error("Device is not ready after multiple attempts!")
+            print("\n❌ The drive could not be accessed. Common causes:")
+            print("   • Drive was recently inserted and is still initializing")
+            print("   • Drive is faulty or not fully connected")
+            print("   • Windows has not finished enumerating the drive")
+            print("\n💡 Troubleshooting steps:")
+            print("   1. Remove and reinsert the drive, then run setup again")
+            print("   2. Check Windows Disk Management (diskmgmt.msc) to verify the disk appears")
+            print("   3. Try a different USB port or cable")
+            raise RuntimeError(f"Disk {disk_number} is not ready for partitioning")
+
     log(f"Partitioning disk {disk_number}...")
 
     spec = launcher_fs_spec(CryptoParams)
@@ -2395,17 +2465,56 @@ create partition primary
         script_path = f.name
 
     try:
-        # Run diskpart
-        result = run_cmd(["diskpart", "/s", script_path], check=False, timeout=120)
+        # Run diskpart with real-time output streaming
+        log("Running diskpart (this may take 30-60 seconds for disk operations)...")
+        log("Progress will be shown below:")
+        print()
+
+        # Use Popen for real-time output streaming
+        process = subprocess.Popen(
+            ["diskpart", "/s", script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="cp1252",
+            errors="replace",
+        )
+
+        stdout_lines = []
+        timeout_seconds = 120
+        start_time = time.time()
+
+        # Read output in real-time
+        while True:
+            # Check for timeout
+            elapsed = time.time() - start_time
+            if elapsed > timeout_seconds:
+                process.kill()
+                error(f"Diskpart timed out after {timeout_seconds} seconds")
+                raise RuntimeError("Diskpart operation timed out")
+
+            line = process.stdout.readline()
+            if not line:
+                # Process finished
+                break
+
+            # Show progress in real-time
+            line = line.rstrip()
+            if line:
+                print(f"  {line}")
+                stdout_lines.append(line)
+
+        # Wait for process to complete
+        returncode = process.wait(timeout=5)
+        stdout = "\n".join(stdout_lines)
 
         # Check for errors in diskpart output
-        if result.returncode != 0 or (result.stdout and "error" in result.stdout.lower()):
+        if returncode != 0 or (stdout and "error" in stdout.lower()):
             error("Diskpart failed!")
-            print(f"\nDiskpart output:\n{result.stdout}")
-            if getattr(result, "stderr", None):
-                print(f"\nDiskpart errors:\n{result.stderr}")
+            print(f"\nDiskpart output:\n{stdout}")
             raise RuntimeError("Diskpart partitioning failed - see output above")
 
+        print()
         log("[OK] Partitioning complete")
 
         # Wait for Windows to recognize new partitions
@@ -2485,6 +2594,7 @@ def partition_drive_unix(device: str, launcher_size_mb: int, launcher_label: str
     run_cmd(["mount", launcher_dev, mount_point], check=True)
 
     return mount_point, payload_dev
+
 
 # =============================================================================
 # VeraCrypt Functions
@@ -3472,14 +3582,14 @@ def create_veracrypt_volume_gui(
         "Select 'Encrypt a non-system partition/drive' -> Next",
         "Select 'Standard VeraCrypt volume' -> Next",
         {
-            "text": "Click 'Select Device' and choose your device (type CDP to copy path):",
-            "substeps": ["Type CDP below to copy device path to clipboard"],
+            "text": f"Click 'Select Device' and choose your device (type {UserInputs.COPY_DEVICE_PATH} to copy path):",
+            "substeps": [f"Type {UserInputs.COPY_DEVICE_PATH} below to copy device path to clipboard"],
         },
         {
             "text": "Select 'Create encrypted volume and format it'",
             "substeps": ["NOT 'Encrypt partition in place'!"],
         },
-        "Choose encryption: AES and SHA-512 -> Next",
+        f"Choose encryption: {CryptoParams.VERACRYPT_ENCRYPTION} and {CryptoParams.VERACRYPT_HASH} -> Next",
         "Verify the volume size is correct -> Next",
     ]
 
@@ -3499,14 +3609,18 @@ def create_veracrypt_volume_gui(
         pw_step = {"text": "Enter your password"}
         if keyfile_path:
             pw_step["substeps"] = [
-                "Click 'Use keyfiles', then 'Add File...'",
-                f"Type {UserInputs.COPY_KEY_FILE} to copy keyfile path, then paste in VeraCrypt",
+                "Check 'Use keyfiles', then 'Keyfiles...'",
+                "In the Context Menug, click 'Add Files...'",
+                f"Type {UserInputs.COPY_KEY_FILE} to copy keyfile path, then paste in file browser and 'Open'.",
+                "The Keyfile should now be listed.",
+                "Confirm the Context Menu with 'OK'. -> Next",
             ]
         steps.append(pw_step)
 
     steps.extend(
         [
-            "Select 'Yes' for large files support -> Next",
+            "Select 'Yes' for large files support",
+            "(relevant for the applied File System in the next step) -> Next",
             {
                 "text": "Choose filesystem and format options:",
                 "substeps": [
@@ -3601,31 +3715,35 @@ def create_veracrypt_volume_gui(
 
         # Command loop for on-demand secret access
         setup_flow_trace("MANUAL_LOOP_ENTER", {"has_secrets_provider": secrets_provider is not None})
-        log(f"[DEBUG] Entered command loop ({UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH}/{UserInputs.YES}/{UserInputs.NO})")
-        print(f"\n  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)")
+        log(
+            f"[DEBUG] Entered command loop ({UserInputs.COPY_PASSWORD}/{UserInputs.COPY_KEY_FILE}/{UserInputs.COPY_DEVICE_PATH}/{UserInputs.YES}/{UserInputs.NO})"
+        )
+        print(
+            f"\n  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)"
+        )
         while True:
             response = input("  > ").strip().upper()
             setup_flow_trace("MANUAL_LOOP_CMD", {"cmd": response})
             log(f"[DEBUG] Command received: {response}")
 
             # Handle on-demand secret commands
-            if response in ({UserInputs.COPY_PASSWORD}, {UserInputs.COPY_KEY_FILE}, {UserInputs.COPY_DEVICE_PATH}):
+            if response in {UserInputs.COPY_PASSWORD, UserInputs.COPY_KEY_FILE, UserInputs.COPY_DEVICE_PATH}:
                 if secrets_provider:
                     secrets_provider.handle_command(response)
-                elif response == {UserInputs.COPY_PASSWORD}:
+                elif response == UserInputs.COPY_PASSWORD:
                     # Fallback: use clipboard directly (NON-BLOCKING in command loop)
                     if clipboard_available():
                         password_to_clipboard_with_timeout(password, timeout_seconds=120, wait_for_enter=False)
                     else:
                         print("  [!] Clipboard unavailable. Cannot copy password.")
-                        print("      Type PRINTPW if you must see the password (not recommended).")
-                elif response == {UserInputs.COPY_DEVICE_PATH}:
+                        print(f"      Type {UserInputs.PRINT_PASSWORD} if you must see the password (not recommended).")
+                elif response == UserInputs.COPY_DEVICE_PATH:
                     if clipboard_available():
                         copy_to_clipboard(device_path)
                         print(f"  [OK] Device path copied: {device_path}")
                     else:
                         print(f"  Device path: {device_path}")
-                elif response == {UserInputs.COPY_KEY_FILE}:
+                elif response == UserInputs.COPY_KEY_FILE:
                     if keyfile_path:
                         if clipboard_available():
                             copy_to_clipboard(str(keyfile_path))
@@ -3637,12 +3755,12 @@ def create_veracrypt_volume_gui(
                 continue
 
             # Handle PRINTPW for clipboard-unavailable fallback (explicit opt-in)
-            if response == "PRINTPW":
+            if response == UserInputs.PRINT_PASSWORD:
                 print("\n  " + "!" * 60)
                 print("  WARNING: Printing password to terminal (shoulder-surfing risk)")
                 print("  " + "!" * 60)
-                confirm = input("  Type 'IUNDERSTAND' to confirm: ").strip()
-                if confirm == "IUNDERSTAND":
+                confirm = input(f"  Type '{UserInputs.CONFIRM}' to confirm: ").strip()
+                if confirm == UserInputs.CONFIRM:
                     print(f"\n  Password: {password}\n")
                 else:
                     print("  Cancelled - password not shown.")
@@ -3651,7 +3769,7 @@ def create_veracrypt_volume_gui(
             # Handle completion
             if response == UserInputs.YES:
                 setup_flow_trace("MANUAL_LOOP_YES", {"returning": True})
-                log("[DEBUG] YES received - exiting command loop")
+                log(f"[DEBUG] {UserInputs.YES} received - exiting command loop")
                 # Clean up secrets (fire-and-forget, exceptions must NOT affect return)
                 if secrets_provider:
                     try:
@@ -3662,9 +3780,9 @@ def create_veracrypt_volume_gui(
                 setup_flow_trace("MANUAL_LOOP_EXIT", {"result": "MANUAL_DONE"})
                 log("[DEBUG] Returning MANUAL_DONE (True)")
                 return True
-            elif response == "NO":
+            elif response == UserInputs.NO:
                 setup_flow_trace("MANUAL_LOOP_NO", {"returning": False})
-                log("[DEBUG] NO received - exiting command loop")
+                log(f"[DEBUG] {UserInputs.NO} received - exiting command loop")
                 if secrets_provider:
                     try:
                         secrets_provider.cleanup()
@@ -3674,7 +3792,9 @@ def create_veracrypt_volume_gui(
                 log("[DEBUG] Returning MANUAL_ABORT (False)")
                 return False
 
-            print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)")
+            print(
+                f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.COPY_KEY_FILE} (keyfile), {UserInputs.COPY_DEVICE_PATH} (device path), {UserInputs.YES} (done), {UserInputs.NO} (abort)"
+            )
     except Exception as e:
         if secrets_provider:
             secrets_provider.cleanup()
@@ -3721,7 +3841,9 @@ def try_auto_mount_volume(
     password: str,
     keyfile_path: Path | None,
     disk_num: int,
-    preferred_letter: str = "Z",
+    preferred_letter: str = (
+        Defaults.WINDOWS_MOUNT_LETTER if "windows" in platform.system().lower() else Defaults.UNIX_MOUNT_POINT
+    ),
     security_mode: str = None,
 ) -> tuple[bool, str | None]:
     """
@@ -3783,7 +3905,9 @@ def try_auto_mount_volume(
 
 
 def prompt_manual_gui_mount(
-    preferred_letter: str = "Z",
+    preferred_letter: str = (
+        Defaults.WINDOWS_MOUNT_LETTER if "windows" in platform.system().lower() else Defaults.UNIX_MOUNT_POINT
+    ),
     password: str = None,
     security_mode: str = None,
     vc_exe: Path = None,
@@ -3823,7 +3947,9 @@ def prompt_manual_gui_mount(
     print()
 
     while True:
-        choice = input(f"  Mount manually via GUI? [{UserInputs.YES.lower()}/{UserInputs.NO.lower()}]: ").strip().lower()
+        choice = (
+            input(f"  Mount manually via GUI? [{UserInputs.YES.lower()}/{UserInputs.NO.lower()}]: ").strip().lower()
+        )
         if choice == UserInputs.YES.lower():
             break
         elif choice == UserInputs.NO.lower():
@@ -3868,7 +3994,9 @@ def prompt_manual_gui_mount(
 
     # Command loop for on-demand secret access
     log(f"[DEBUG] Entered manual mount command loop ({UserInputs.COPY_PASSWORD}/{UserInputs.YES}/{UserInputs.NO})")
-    print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)")
+    print(
+        f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)"
+    )
 
     # Create SecretProvider for GPG_PW_ONLY mode (BUG-20251218-006 fix)
     # This enforces hardware key presence before decrypting secrets
@@ -3921,7 +4049,9 @@ def prompt_manual_gui_mount(
         if response == UserInputs.PRINT_PASSWORD:
             if secrets_provider:
                 print(f"  [!] {UserInputs.PRINT_PASSWORD} not available in {SecurityMode(security_mode)} mode.")
-                print(f"      Use {UserInputs.COPY_PASSWORD} to copy password (might require hardware key for authentication).")
+                print(
+                    f"      Use {UserInputs.COPY_PASSWORD} to copy password (might require hardware key for authentication)."
+                )
                 continue
             print("\n  " + "!" * 60)
             print("  WARNING: Printing password to terminal (shoulder-surfing risk)")
@@ -3946,7 +4076,7 @@ def prompt_manual_gui_mount(
             if "windows" in system:
                 while True:
                     mount_letter = (
-                        input(f"\n  What drive letter did you mount to? (e.g., {preferred_letter}): ").strip().upper()
+                        input(f"\n  What drive letter did you mount to? (e.g., '{preferred_letter}'): ").strip().upper()
                     )
                     if mount_letter and len(mount_letter) == 1 and mount_letter.isalpha():
                         # Verify it exists
@@ -3980,7 +4110,9 @@ def prompt_manual_gui_mount(
             clear_clipboard()  # Clean up
             return None
 
-        print(f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)")
+        print(
+            f"  Commands: {UserInputs.COPY_PASSWORD} (password), {UserInputs.YES} (mount succeeded), {UserInputs.NO} (failed/cancel)"
+        )
 
 
 # =============================================================================
@@ -4497,7 +4629,7 @@ def deploy_scripts_extended(
             # GPG-encrypted keyfile
             shutil.copy2(encrypted_keyfile, target_keys / FileNames.KEYFILE_GPG)
             log(f"  Copied {FileNames.KEYFILE_GPG} (GPG-encrypted)")
-            keyfile_config = str(Path(Paths.KEYS_SUBDIR) / FileNames.KEYFILE_GPG) 
+            keyfile_config = str(Path(Paths.KEYS_SUBDIR) / FileNames.KEYFILE_GPG)
         elif plain_keyfile:
             # Plain keyfile (not encrypted)
             shutil.copy2(plain_keyfile, target_keys / FileNames.KEYFILE_PLAIN)
@@ -4639,8 +4771,8 @@ def print_banner():
     """Print welcome banner."""
     print("\n" + "=" * 70)
     print("  +" + "=" * 63 + "+")
-    print(f"  |           {PRODUCT_NAME} Setup Wizard v{VERSION}                        |")
-    print(f"  |   {PRODUCT_DESCRIPTION}           |")
+    print(f"  |           {Branding.PRODUCT_NAME} Setup Wizard v{VERSION}                        |")
+    print(f"  |   {Branding.PRODUCT_DESCRIPTION}           |")
     print("  +" + "=" * 63 + "+")
     print("=" * 70)
 
@@ -4954,18 +5086,20 @@ def run_phase_5_review_confirm(state: PagedSetupState) -> tuple:
     # Don't use standard navigation here - need explicit confirmation
     print()
     print("  " + "-" * 66)
-    print("  [B]ack to change settings | [C]onfirm and proceed | [Q]uit")
+    print(
+        f"  [{UserInputs.BACK}] Back to change settings | [{UserInputs.CONTINUE}] Confirm and proceed | [{UserInputs.QUIT}] Quit"
+    )
 
     while True:
         choice = input("  Your choice: ").strip().upper()
-        if choice == "B":
-            return True, "B"
-        elif choice == "Q":
+        if choice == UserInputs.BACK:
+            return True, UserInputs.BACK
+        elif choice == UserInputs.QUIT:
             log("Setup cancelled by user.")
-            return False, "Q"
-        elif choice == "C":
+            return False, UserInputs.QUIT
+        elif choice == UserInputs.CONTINUE:
             # Additional confirmation with ERASE keyword
-            if confirm_destructive("This will ERASE ALL DATA on the selected drive.", "ERASE"):
+            if confirm_destructive("This will ERASE ALL DATA on the selected drive.", UserInputs.ERASE):
                 # =================================================================
                 # CRITICAL: ERASE confirmed → Partition drive IMMEDIATELY
                 # =================================================================
@@ -4992,7 +5126,7 @@ def run_phase_5_review_confirm(state: PagedSetupState) -> tuple:
                     print(safety_result.format_error())
                     print("!" * 70)
                     error("ABORTING: Safety validation failed!")
-                    return False, "Q"
+                    return False, UserInputs.QUIT
 
                 print("[OK] Safety validation passed\n")
 
@@ -5046,9 +5180,9 @@ def run_phase_5_review_confirm(state: PagedSetupState) -> tuple:
 
                     # CRITICAL: Wait for operator to explicitly proceed
                     nav = prompt_navigation(4, TOTAL_SETUP_PAGES, can_go_back=False, can_rerun=False, auto_next=False)
-                    if nav == "Q":
+                    if nav == UserInputs.QUIT:
                         log("Setup cancelled by user after partitioning.")
-                        return False, "Q"
+                        return False, UserInputs.QUIT
                     return True, nav
 
                 except Exception as e:
@@ -5056,12 +5190,12 @@ def run_phase_5_review_confirm(state: PagedSetupState) -> tuple:
                     print("\n  The drive could not be partitioned.")
                     print("  No VeraCrypt volume has been created.")
                     print("  Please check the error above and try again.")
-                    return False, "Q"
+                    return False, UserInputs.QUIT
             else:
                 log("Setup cancelled by user.")
-                return False, "Q"
+                return False, UserInputs.QUIT
         else:
-            print("  Invalid. Choose B, C, or Q.")
+            print(f"  Invalid. Choose {UserInputs.BACK}, {UserInputs.CONTINUE}, or {UserInputs.QUIT}.")
 
 
 def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
@@ -5100,10 +5234,10 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
     print("  ⚠️  This process cannot be interrupted once started.")
     print("  ⚠️  Estimated time: 5-15 minutes depending on drive size.\n")
 
-    print("  Press [Enter] to begin volume creation, or [Q] to quit...")
+    print(f"  Press [{UserInputs.CONTINUE}] to begin volume creation, or [{UserInputs.QUIT}] to quit...")
     choice = input("  Your choice: ").strip().upper()
-    if choice == "Q":
-        return False, "Q"
+    if choice == UserInputs.QUIT:
+        return False, UserInputs.QUIT
 
     # Extract state variables
     system = state.system
@@ -5155,7 +5289,7 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
                 print(safety_result.format_error())
                 print("!" * 70)
                 error("ABORTING: Safety validation failed!")
-                return False, "Q"
+                return False, UserInputs.QUIT
 
             print("  [OK] Safety validation passed")
 
@@ -5420,7 +5554,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
             error("\n[X] Deployment verification failed!")
             print("  Some required files are missing from the deployed drive.")
             setup_flow_trace("DEPLOYMENT_ERROR", {"error": "deployment verification failed"})
-            return False, "Q"
+            return False, UserInputs.QUIT
 
         print("[OK] Deployment verified - all required files present")
 
@@ -5465,7 +5599,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
         print(f"    {target_config}")
 
         if auto_nav:
-            return True, "N"
+            return True, UserInputs.NEXT
 
         nav = prompt_navigation(7, TOTAL_SETUP_PAGES, can_go_back=False, can_rerun=False, auto_next=False)
         return True, nav
@@ -5473,7 +5607,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
     except Exception as e:
         error(f"\n[X] Deployment failed with error: {e}")
         setup_flow_trace("DEPLOYMENT_ERROR", {"error": str(e)})
-        return False, "Q"
+        return False, UserInputs.QUIT
 
 
 def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> int:
@@ -5523,11 +5657,12 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
     # Recovery import may fail if optional dependencies not installed
     try:
         from recovery import generate_recovery_kit_from_setup
+
         recovery_available = True
     except ImportError:
         recovery_available = False
         generate_recovery_kit_from_setup = None
-    
+
     from veracrypt_cli import open_veracrypt_gui
 
     # Action dispatch loop
@@ -5552,7 +5687,7 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
         setup_flow_trace("POST_SETUP_ACTION", {"action": choice})
 
         # Dispatch actions
-        if choice == "M":
+        if choice == UserInputs.MOUNT:
             # Mount
             print("\n  [ACTION] Mounting drive...")
             try:
@@ -5570,7 +5705,7 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
             print("\n  Press Enter to return to menu...")
             input()
 
-        elif choice == "G":
+        elif choice == UserInputs.GUI:
             # Open GUI
             print("\n  [ACTION] Opening VeraCrypt GUI...")
             if open_veracrypt_gui():
@@ -5580,7 +5715,7 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
             print("\n  Press Enter to return to menu...")
             input()
 
-        elif choice == "P":
+        elif choice == UserInputs.RECOVERY:
             # Recovery kit
             if recovery_generated:
                 # Open recovery directory
@@ -5611,23 +5746,23 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
                 print("\n  Press Enter to return to menu...")
                 input()
 
-        elif choice == "R":
+        elif choice == UserInputs.REKEY:
             # Rekey
             print("\n  [ACTION] Launching rekey flow...")
             try:
-                subprocess.run([sys.executable, str(scripts_dir / "rekey.py")], cwd=str(scripts_dir))
+                subprocess.run([sys.executable, str(scripts_dir / FileNames.REKEY_PY)], cwd=str(scripts_dir))
                 print("  [OK] Rekey completed")
             except Exception as e:
                 print(f"  [!] Rekey failed: {e}")
             print("\n  Press Enter to return to menu...")
             input()
 
-        elif choice == "Q":
+        elif choice == UserInputs.EXIT:
             # Quit - show log review option and exit
             print("\n  " + "-" * 66)
-            print("  [L] Review setup logs | [Enter] Exit")
+            print(f"  [{UserInputs.LOGS}] Review setup logs | [Enter] Exit")
             log_choice = input("  Your choice: ").strip().upper()
-            if log_choice == "L":
+            if log_choice == UserInputs.LOGS:
                 show_log_review(state)
             return 0
 
@@ -5701,8 +5836,12 @@ def main_paged() -> int:
         if current_phase == 1:
             # Phase 1: Drive Selection
             success, nav = run_phase_1_drive_selection(state)
-            if not success or nav == "Q":
+            if not success:
+                # BUG-20251220-001: Return proper exit code based on failure vs user quit
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                # User quit without failure
+                return 0
             if nav == "R":
                 state.clear_from_phase(SetupPhase.DRIVE_SELECTION)
                 continue  # Re-run phase 1
@@ -5711,8 +5850,10 @@ def main_paged() -> int:
         elif current_phase == 2:
             # Phase 2a: Partition Size
             success, nav = run_phase_2_partition_size(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             if nav == "B":
                 state.clear_from_phase(SetupPhase.DRIVE_SELECTION)
                 current_phase = 1
@@ -5724,8 +5865,10 @@ def main_paged() -> int:
         elif current_phase == 3:
             # Phase 3: Security Configuration
             success, nav = run_phase_3_security_config(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             if nav == "B":
                 state.clear_from_phase(SetupPhase.PARTITION_SIZE)
                 current_phase = 2
@@ -5738,8 +5881,10 @@ def main_paged() -> int:
         elif current_phase == 4:
             # Phase 4: Hardware Key Verification
             success, nav = run_phase_4_yubikey_verification(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             if nav == "B":
                 state.clear_from_phase(SetupPhase.SECURITY_CONFIG)
                 current_phase = 3
@@ -5751,8 +5896,10 @@ def main_paged() -> int:
         elif current_phase == 5:
             # Phase 5: Review & Confirm
             success, nav = run_phase_5_review_confirm(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             if nav == "B":
                 # Can go back to verification
                 current_phase = 4
@@ -5763,16 +5910,20 @@ def main_paged() -> int:
         elif current_phase == 6:
             # Phase 6: VeraCrypt Volume Creation (point of no return)
             success, nav = run_phase_6_veracrypt_creation(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             # After successful volume creation, proceed to deployment
             current_phase = 7
 
         elif current_phase == 7:
             # Phase 7: Deployment (now paged)
             success, nav = run_phase_7_deployment(state)
-            if not success or nav == "Q":
+            if not success:
                 return 0 if nav == "Q" else 1
+            if nav == "Q":
+                return 0
             current_phase = 8
 
         elif current_phase == 8:

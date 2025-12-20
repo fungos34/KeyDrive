@@ -23,22 +23,23 @@ from typing import List, Optional
 def is_admin() -> bool:
     """
     Check if the current process has administrator/root privileges.
-    
+
     Windows: Uses ctypes to check for admin token
     Unix: Checks effective user ID (euid == 0)
-    
+
     Returns:
         True if running with elevated privileges, False otherwise.
-    
+
     Note:
         This does NOT attempt privileged operations to detect admin status.
         It uses direct OS API checks only.
     """
     system = _platform.system().lower()
-    
+
     if system == "windows":
         try:
             import ctypes
+
             return ctypes.windll.shell32.IsUserAnAdmin() != 0
         except (AttributeError, OSError):
             # Fallback: assume not admin if check fails
@@ -55,7 +56,7 @@ def is_admin() -> bool:
 def get_platform() -> str:
     """
     Get normalized platform name.
-    
+
     Returns:
         One of: "windows", "darwin", "linux", or the raw system name lowercase.
     """
@@ -86,13 +87,14 @@ def is_unix() -> bool:
 # Cross-Platform CLI Support (Per AGENT_ARCHITECTURE.md Section 2.5)
 # ===========================================================================
 
+
 def veracrypt_flag_prefix() -> str:
     """
     Get the VeraCrypt CLI flag prefix for current platform.
-    
+
     Windows: Uses forward-slash syntax (/volume, /password, /dismount)
     Unix: Uses double-dash syntax (--volume, --password, --dismount)
-    
+
     Returns:
         "/" for Windows, "--" for Unix-like systems.
     """
@@ -102,17 +104,17 @@ def veracrypt_flag_prefix() -> str:
 def clipboard_copy_cmd() -> Optional[List[str]]:
     """
     Get the platform-specific clipboard copy command.
-    
+
     Returns:
         List of command args that accept stdin for clipboard, or None if unavailable.
-        
+
     Platform commands:
         Windows: ['clip']
         macOS: ['pbcopy']
         Linux: ['xclip', '-selection', 'clipboard'] or ['xsel', '--clipboard', '--input']
     """
     plat = get_platform()
-    
+
     if plat == "windows":
         return ["clip"]
     elif plat == "darwin":
@@ -120,20 +122,21 @@ def clipboard_copy_cmd() -> Optional[List[str]]:
     elif plat == "linux":
         # Check for xclip first, then xsel
         import shutil
+
         if shutil.which("xclip"):
             return ["xclip", "-selection", "clipboard"]
         elif shutil.which("xsel"):
             return ["xsel", "--clipboard", "--input"]
-    
+
     return None
 
 
 def veracrypt_cli_dialect() -> str:
     """
     Get the VeraCrypt CLI dialect identifier.
-    
+
     Used for documentation and capability checks.
-    
+
     Returns:
         "windows" or "unix"
     """
@@ -147,7 +150,7 @@ _admin_override = None
 def _set_admin_override(value: bool | None) -> None:
     """
     Override admin status for testing.
-    
+
     Args:
         value: True/False to override, None to use real detection.
     """
@@ -158,7 +161,7 @@ def _set_admin_override(value: bool | None) -> None:
 def _get_admin_status() -> bool:
     """
     Get admin status, respecting any test override.
-    
+
     For internal use by is_admin() when testing.
     """
     if _admin_override is not None:
@@ -169,6 +172,7 @@ def _get_admin_status() -> bool:
 # ===========================================================================
 # Windows Shell Helpers (OS-specific commands live here)
 # ===========================================================================
+
 
 def windows_set_attributes(
     target: Path,

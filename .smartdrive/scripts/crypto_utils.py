@@ -19,7 +19,8 @@ from pathlib import Path
 # =============================================================================
 _script_dir = Path(__file__).resolve().parent
 _project_root = _script_dir.parent
-if _script_dir.parent.name == ".smartdrive":
+from core.paths import Paths
+if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
     _project_root = _script_dir.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))

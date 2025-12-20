@@ -10,12 +10,13 @@ Usage:
     python deploy.py --drive G          # Deploy to specific drive
 """
 
+import json
 import os
 import shutil
 import sys
-import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 from core.paths import Paths
 
 # =============================================================================
@@ -49,9 +50,10 @@ if str(REPO_SMARTDRIVE) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.constants import Branding, FileNames
+
 # Import PathResolver for SSOT path management
 from core.path_resolver import RuntimePaths, consolidate_duplicates
-from core.constants import Branding, FileNames
 from core.platform import is_windows as _is_windows
 from core.platform import windows_create_shortcut, windows_set_attributes
 
@@ -68,10 +70,12 @@ import logging
 
 _deploy_logger = logging.getLogger("smartdrive.deploy")
 
+
 def _log_deploy(event: str, **kwargs) -> None:
     """Emit structured deploy log event."""
     details = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
     _deploy_logger.info(f"{event}{': ' + details if details else ''}")
+
 
 def get_available_drives():
     """Get list of available drive letters."""
@@ -81,6 +85,7 @@ def get_available_drives():
         if os.path.exists(path):
             drives.append(drive)
     return drives
+
 
 def select_drive_interactive():
     """Interactive drive selection."""
@@ -96,6 +101,7 @@ def select_drive_interactive():
         try:
             # Get drive label if possible
             import ctypes
+
             kernel32 = ctypes.windll.kernel32
             volume_name = ctypes.create_unicode_buffer(1024)
             file_system = ctypes.create_unicode_buffer(1024)
@@ -188,10 +194,11 @@ PAYLOAD_MANIFEST = {
     },
 }
 
+
 def get_required_files_for_verification() -> dict:
     """
     Build REQUIRED_DEPLOYED_FILES dict from PAYLOAD_MANIFEST.
-    
+
     Returns dict compatible with existing verify_deployed_layout().
     """
     required = {}
@@ -202,6 +209,7 @@ def get_required_files_for_verification() -> dict:
                 required[rel_path] = description
     return required
 
+
 # Required files for a valid deployed .smartdrive layout
 # Built from PAYLOAD_MANIFEST for backwards compatibility
 REQUIRED_DEPLOYED_FILES = get_required_files_for_verification()
@@ -210,13 +218,13 @@ REQUIRED_DEPLOYED_FILES = get_required_files_for_verification()
 def verify_deployed_layout(smartdrive_dir: Path) -> tuple[bool, list[str]]:
     """
     Verify that a deployed .smartdrive directory has all required files.
-    
+
     Per AGENT_ARCHITECTURE.md: If any required file is missing,
     operations MUST abort with explicit missing-file list.
-    
+
     Args:
         smartdrive_dir: Path to .smartdrive directory
-    
+
     Returns:
         (is_valid, missing_files): Tuple of validation result and missing file list
     """
@@ -225,27 +233,27 @@ def verify_deployed_layout(smartdrive_dir: Path) -> tuple[bool, list[str]]:
         full_path = smartdrive_dir / rel_path
         if not full_path.exists():
             missing.append(f"{rel_path} ({description})")
-    
+
     return (len(missing) == 0, missing)
 
 
 def deploy_to_drive(target_drive):
     """
     Deploy KeyDrive to the specified drive.
-    
+
     Uses PathResolver as SSOT for all target paths.
     Copies 1:1 from repo/.smartdrive/ to DRIVE:/.smartdrive/ per AGENT_ARCHITECTURE.md.
     """
     # Use PathResolver as SSOT for target paths (cross-drive support)
     target_path = Path(f"{target_drive}:\\")
-    
+
     # Create RuntimePaths for target (SSOT)
     target_paths = RuntimePaths.for_target(target_path, create_dirs=True)
-    
+
     # Source directories from repo's canonical .smartdrive structure
     src_core = REPO_SMARTDRIVE / "core"
     src_scripts = REPO_SMARTDRIVE / "scripts"
-    
+
     _log_deploy("deploy.start", target=str(target_path), source=str(REPO_SMARTDRIVE))
 
     print(f"\n🚀 Deploying {PRODUCT_NAME} to {target_drive}:\\")
@@ -257,7 +265,7 @@ def deploy_to_drive(target_drive):
     target_core = target_paths.smartdrive_root / "core"
     target_scripts = target_paths.scripts_root
     target_keys = target_paths.keys_dir
-    
+
     target_core.mkdir(parents=True, exist_ok=True)
     target_scripts.mkdir(parents=True, exist_ok=True)
     target_keys.mkdir(parents=True, exist_ok=True)
@@ -278,7 +286,7 @@ def deploy_to_drive(target_drive):
         else:
             missing_core.append(core_file)
             print(f"  ❌ core/{core_file} MISSING")
-    
+
     if missing_core:
         print(f"\n❌ FATAL: Missing SSOT core modules: {missing_core}")
         print("   Deployment ABORTED. core/* modules are required per AGENT_ARCHITECTURE.md.")
@@ -366,7 +374,7 @@ def deploy_to_drive(target_drive):
     command_path = target_path / command_name
     command_path.write_text(
         "#!/bin/bash\n"
-        "cd \"$(dirname \"$0\")\"\n"
+        'cd "$(dirname "$0")"\n'
         f"chmod +x './{FileNames.SH_LAUNCHER}' 2>/dev/null || true\n"
         f"./{FileNames.SH_LAUNCHER}\n",
         encoding="utf-8",
@@ -404,7 +412,7 @@ def deploy_to_drive(target_drive):
         print("\nDeployment is incomplete. Cannot proceed.")
         return False
     print("  ✓ All required files present")
-    
+
     # Check for duplicates (SSOT enforcement)
     print("🔍 Checking for duplicates...")
     duplicates = target_paths.detect_duplicates()
@@ -424,7 +432,7 @@ def deploy_to_drive(target_drive):
         print("  ✓ Duplicates consolidated")
     else:
         print("  ✓ No duplicates found")
-    
+
     _log_deploy("deploy.verify.success")
 
     _log_deploy("deploy.complete", target=str(target_path))
@@ -438,6 +446,7 @@ def deploy_to_drive(target_drive):
     print(f"📂 Static assets at: {target_paths.static_dir}")
 
     return True
+
 
 def main():
     """Main deployment function."""
@@ -466,7 +475,7 @@ def main():
     if smartdrive_dir.exists():
         print(f"\n⚠️  {PRODUCT_NAME} is already deployed to {target_drive}:\\")
         response = input("Overwrite existing deployment? (y/N): ").strip().lower()
-        if response != 'y':
+        if response != "y":
             print("❌ Deployment cancelled.")
             sys.exit(0)
 
@@ -477,6 +486,7 @@ def main():
     else:
         print("❌ Deployment failed.")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

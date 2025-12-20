@@ -10,9 +10,10 @@ Defines metadata for all config.json fields to enable:
 - Validation
 """
 
-from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Any
+from enum import Enum
+from typing import Any, Callable, List, Optional
+
 from core.constants import ConfigKeys
 from core.modes import SecurityMode
 from core.paths import Paths
@@ -21,27 +22,30 @@ from core.paths import Paths
 # Field Types
 # =============================================================================
 
+
 class FieldType(Enum):
     """Widget type for settings field."""
-    TEXT = "text"           # QLineEdit
-    PATH_FILE = "path_file" # QLineEdit + Browse button (file)
-    PATH_DIR = "path_dir"   # QLineEdit + Browse button (directory)
-    NUMBER = "number"       # QSpinBox
-    BOOLEAN = "boolean"     # QCheckBox
-    DROPDOWN = "dropdown"   # QComboBox
-    TEXTAREA = "textarea"   # QTextEdit (multiline)
-    READONLY = "readonly"   # QLabel (display only)
+
+    TEXT = "text"  # QLineEdit
+    PATH_FILE = "path_file"  # QLineEdit + Browse button (file)
+    PATH_DIR = "path_dir"  # QLineEdit + Browse button (directory)
+    NUMBER = "number"  # QSpinBox
+    BOOLEAN = "boolean"  # QCheckBox
+    DROPDOWN = "dropdown"  # QComboBox
+    TEXTAREA = "textarea"  # QTextEdit (multiline)
+    READONLY = "readonly"  # QLabel (display only)
 
 
 # =============================================================================
 # Setting Field Definition
 # =============================================================================
 
+
 @dataclass
 class SettingField:
     """
     Metadata for a single settings field.
-    
+
     Attributes:
         key: ConfigKeys constant
         label_key: i18n translation key for label
@@ -58,6 +62,7 @@ class SettingField:
         nested_path: Path to nested key, e.g., ["windows", "volume_path"]
         order: Display order within group (lower = first)
     """
+
     key: str
     label_key: str
     field_type: FieldType
@@ -78,12 +83,13 @@ class SettingField:
 # Validation Functions
 # =============================================================================
 
+
 def validate_mount_letter(value: str) -> tuple[bool, str]:
     """Validate Windows mount letter (A-Z)."""
     if not value:
         return True, ""  # Empty is valid (will use default)
     value = value.strip().upper()
-    if len(value) != 1 or not ('A' <= value <= 'Z'):
+    if len(value) != 1 or not ("A" <= value <= "Z"):
         return False, "Mount letter must be a single letter (A-Z)"
     return True, ""
 
@@ -93,7 +99,8 @@ def validate_uuid(value: str) -> tuple[bool, str]:
     if not value:
         return True, ""
     import re
-    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+
+    uuid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     if not re.match(uuid_pattern, value, re.IGNORECASE):
         return False, "Invalid UUID format"
     return True, ""
@@ -113,6 +120,7 @@ def validate_positive_int(value: Any) -> tuple[bool, str]:
 # =============================================================================
 # Visibility Conditions
 # =============================================================================
+
 
 def show_if_keyfile_mode(config: dict) -> bool:
     """Show field only if mode uses keyfile."""
@@ -140,7 +148,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
     # =========================================================================
     # General Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.DRIVE_ID,
         label_key="label_drive_id",
@@ -151,7 +158,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_drive_id",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.DRIVE_NAME,
         label_key="label_drive_name",
@@ -162,7 +168,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_drive_name",
         order=2,
     ),
-    
     SettingField(
         key=ConfigKeys.GUI_LANG,
         label_key="settings_language",
@@ -173,7 +178,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_language",
         order=10,
     ),
-    
     SettingField(
         key=ConfigKeys.GUI_THEME,
         label_key="label_theme",
@@ -184,7 +188,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_theme",
         order=11,
     ),
-    
     SettingField(
         key=ConfigKeys.SETUP_DATE,
         label_key="label_setup_date",
@@ -194,7 +197,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         order=20,
     ),
-    
     SettingField(
         key=ConfigKeys.LAST_PASSWORD_CHANGE,
         label_key="label_last_password_change",
@@ -204,7 +206,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         order=21,
     ),
-    
     SettingField(
         key=ConfigKeys.LAST_VERIFIED,
         label_key="label_last_verified",
@@ -214,11 +215,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         order=22,
     ),
-    
     # =========================================================================
     # Security Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.MODE,
         label_key="label_mode",
@@ -235,7 +234,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_mode",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.ENCRYPTED_KEYFILE,
         label_key="label_encrypted_keyfile",
@@ -246,7 +244,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_keyfile_mode,
         order=10,
     ),
-    
     SettingField(
         key=ConfigKeys.KEYFILE,
         label_key="label_plain_keyfile",
@@ -256,7 +253,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_plain_keyfile",
         order=11,
     ),
-    
     SettingField(
         key=ConfigKeys.SEED_GPG_PATH,
         label_key="label_seed_gpg_path",
@@ -267,7 +263,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_gpg_mode,
         order=20,
     ),
-    
     SettingField(
         key=ConfigKeys.KDF,
         label_key="label_kdf",
@@ -283,7 +278,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_gpg_mode,
         order=21,
     ),
-    
     SettingField(
         key=ConfigKeys.PW_ENCODING,
         label_key="label_pw_encoding",
@@ -299,11 +293,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_gpg_mode,
         order=22,
     ),
-    
     # =========================================================================
     # Windows Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.VOLUME_PATH,
         label_key="label_volume_path",
@@ -315,7 +307,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_windows_volume_path",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.MOUNT_LETTER,
         label_key="label_mount_letter",
@@ -329,7 +320,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_mount_letter",
         order=2,
     ),
-    
     SettingField(
         key=ConfigKeys.VERACRYPT_PATH,
         label_key="label_veracrypt_path",
@@ -341,11 +331,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_veracrypt_path",
         order=3,
     ),
-    
     # =========================================================================
     # Unix Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.VOLUME_PATH,
         label_key="label_volume_path",
@@ -357,7 +345,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_unix_volume_path",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.MOUNT_POINT,
         label_key="label_mount_point",
@@ -370,11 +357,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_mount_point",
         order=2,
     ),
-    
     # =========================================================================
     # Recovery Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.RECOVERY_ENABLED,
         label_key="label_recovery_enabled",
@@ -386,7 +371,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_recovery_enabled",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.RECOVERY_SHARE_COUNT,
         label_key="label_recovery_share_count",
@@ -400,7 +384,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_recovery_enabled,
         order=2,
     ),
-    
     SettingField(
         key=ConfigKeys.RECOVERY_THRESHOLD,
         label_key="label_recovery_threshold",
@@ -414,11 +397,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_recovery_enabled,
         order=3,
     ),
-    
     # =========================================================================
     # Lost & Found Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.LOST_AND_FOUND_ENABLED,
         label_key="label_lost_and_found_enabled",
@@ -430,7 +411,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_lost_and_found_enabled",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.LOST_AND_FOUND_MESSAGE,
         label_key="label_lost_and_found_message",
@@ -442,11 +422,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_lost_and_found_message",
         order=2,
     ),
-    
     # =========================================================================
     # Updates Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.UPDATE_SOURCE_TYPE,
         label_key="label_source_type",
@@ -461,7 +439,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_source_type",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.UPDATE_URL,
         label_key="label_server_url",
@@ -473,7 +450,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_server_url",
         order=2,
     ),
-    
     SettingField(
         key=ConfigKeys.UPDATE_LOCAL_ROOT,
         label_key="label_local_root",
@@ -484,11 +460,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_local_root",
         order=3,
     ),
-    
     # =========================================================================
     # Advanced Tab
     # =========================================================================
-    
     SettingField(
         key=ConfigKeys.VERIFICATION_OVERRIDDEN,
         label_key="label_verification_overridden",
@@ -499,7 +473,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_verification_overridden",
         order=1,
     ),
-    
     SettingField(
         key=ConfigKeys.INTEGRITY_SIGNED,
         label_key="label_integrity_signed",
@@ -510,7 +483,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_integrity_signed",
         order=2,
     ),
-    
     SettingField(
         key=ConfigKeys.SIGNING_KEY_FPR,
         label_key="label_signing_key_fpr",
@@ -521,7 +493,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_signing_key_fpr",
         order=3,
     ),
-    
     SettingField(
         key=ConfigKeys.SALT_B64,
         label_key="label_salt_b64",
@@ -533,7 +504,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_gpg_mode,
         order=10,
     ),
-    
     SettingField(
         key=ConfigKeys.HKDF_INFO,
         label_key="label_hkdf_info",
@@ -544,7 +514,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         visibility_condition=show_if_gpg_mode,
         order=11,
     ),
-    
     SettingField(
         key=ConfigKeys.SCHEMA_VERSION,
         label_key="label_schema_version",
@@ -554,7 +523,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         order=20,
     ),
-    
     SettingField(
         key=ConfigKeys.VERSION,
         label_key="label_version",
@@ -570,6 +538,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
 # =============================================================================
 # Schema Query Functions
 # =============================================================================
+
 
 def get_fields_for_tab(tab_name: str) -> List[SettingField]:
     """Get all fields for a specific tab, sorted by order."""
