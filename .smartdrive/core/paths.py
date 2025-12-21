@@ -28,6 +28,8 @@ class Paths:
 
     # Github repository URL
     REPO_URL = "https://github.com/fungos34/KeyDrive"
+    UPDATES_URL = "http://server:8000/api/update/download/latest"
+    INTEGRITY_URL = "http://127.0.0.1:8000/api/check"
 
     # ==========================================================================
     # Directory structure constants (relative)

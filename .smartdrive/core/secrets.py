@@ -44,15 +44,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
-from core.constants import CryptoParams, UserInputs
+from core.constants import CryptoParams, FileNames, UserInputs
 from core.limits import Limits
 
 # Core SSOT imports
 from core.modes import SecurityMode
+from core.paths import Paths
 
 # Module-level logger
-from scripts.setup import log, error, warn
-from core.paths import Paths
+from scripts.setup import error, log, warn
 
 # Clipboard SSOT import
 try:

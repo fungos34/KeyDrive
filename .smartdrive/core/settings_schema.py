@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Any, Callable, List, Optional
 
 from core.constants import ConfigKeys
-from core.modes import SecurityMode
+from core.modes import SecurityMode, SECURITY_MODE_DISPLAY
 from core.paths import Paths
 
 # =============================================================================
@@ -226,10 +226,10 @@ SETTINGS_SCHEMA: List[SettingField] = [
         group="Security Mode",
         default=SecurityMode.PW_ONLY.value,
         options=[
-            ("Password Only", SecurityMode.PW_ONLY.value),
-            ("Password + Keyfile", SecurityMode.PW_KEYFILE.value),
-            ("GPG Password-Only (YubiKey)", SecurityMode.GPG_PW_ONLY.value),
-            ("Password + GPG Keyfile (YubiKey)", SecurityMode.PW_GPG_KEYFILE.value),
+            (SECURITY_MODE_DISPLAY[SecurityMode.PW_ONLY], SecurityMode.PW_ONLY.value),
+            (SECURITY_MODE_DISPLAY[SecurityMode.PW_KEYFILE], SecurityMode.PW_KEYFILE.value),
+            (SECURITY_MODE_DISPLAY[SecurityMode.GPG_PW_ONLY], SecurityMode.GPG_PW_ONLY.value),
+            (SECURITY_MODE_DISPLAY[SecurityMode.PW_GPG_KEYFILE], SecurityMode.PW_GPG_KEYFILE.value),
         ],
         tooltip_key="tooltip_mode",
         order=1,
@@ -448,8 +448,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
         field_type=FieldType.TEXT,
         tab="Updates",
         group=None,
-        placeholder=Paths.REPO_URL,
-        default=Paths.REPO_URL,
+        placeholder=Paths.UPDATES_URL,
+        default=Paths.UPDATES_URL,
         tooltip_key="tooltip_server_url",
         order=2,
     ),
@@ -517,7 +517,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
         field_type=FieldType.TEXT,
         tab="Integrity",
         group="Remote Verification",
-        default="",
+        placeholder=Paths.INTEGRITY_URL,
+        default=Paths.INTEGRITY_URL,
         tooltip_key="tooltip_integrity_server_url",
         order=10,
     ),

@@ -1,0 +1,21 @@
+# KeyDrive Django Server Requirements
+# CHG-20251221-013: Django refactor
+
+# Django framework
+Django>=5.0,<6.0
+
+# Django REST Framework for API
+djangorestframework>=3.14,<4.0
+
+# CORS support
+django-cors-headers>=4.3,<5.0
+
+# Production WSGI server
+gunicorn>=21.0,<23.0
+
+# Database (SQLite included by default, these are optional for other DBs)
+# psycopg2-binary>=2.9,<3.0  # PostgreSQL
+# mysqlclient>=2.2,<3.0      # MySQL
+
+# Security
+django-ratelimit>=4.1,<5.0

@@ -3354,6 +3354,178 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def cmd_generate_non_interactive(args):
+    """
+    BUG-20251221-019: Non-interactive recovery kit generation for GUI integration.
+    
+    Reads pre-derived credentials from environment variables (set by GUI):
+      - KEYDRIVE_VOLUME_PASSWORD: Mount password
+      - KEYDRIVE_KEYFILE_PATH: Path to keyfile (optional)
+      - KEYDRIVE_KEYFILE_B64: Base64-encoded keyfile bytes (optional alternative)
+    
+    Generates kit in printable (HTML) or terminal mode based on --format flag.
+    No user interaction required - suitable for subprocess calls from GUI.
+    
+    Security notes:
+      - Environment variables are process-isolated (safer than CLI args)
+      - Credentials are scrubbed from environment after use
+      - Keyfile is written to RAM temp dir if needed
+    
+    Returns:
+      Exits with code 0 on success, non-zero on failure.
+    """
+    try:
+        config = load_config()
+        volume_path, mount_target = get_volume_info(config)
+        mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+        
+        # BUG-20251219-004: Enforce single-shot generation
+        recovery_config = config.get(RECOVERY_CONFIG_KEY, {})
+        force_regenerate = getattr(args, "force", False)
+        
+        if recovery_config.get("enabled") and not recovery_config.get("used"):
+            if not force_regenerate:
+                error("[BLOCKED] Active recovery kit exists. Use --force to regenerate.")
+                sys.exit(1)
+            # Force mode: allow regeneration (already confirmed by GUI)
+            log("[FORCE] Regenerating recovery kit...")
+        
+        # Read credentials from environment variables
+        password = os.environ.get("KEYDRIVE_VOLUME_PASSWORD")
+        if not password:
+            error("[ENV] Missing KEYDRIVE_VOLUME_PASSWORD environment variable")
+            sys.exit(1)
+        
+        # Handle keyfile if present
+        keyfile_bytes = None
+        keyfile_path_env = os.environ.get("KEYDRIVE_KEYFILE_PATH")
+        keyfile_b64_env = os.environ.get("KEYDRIVE_KEYFILE_B64")
+        
+        if keyfile_path_env:
+            keyfile_path = Path(keyfile_path_env)
+            if not keyfile_path.exists():
+                error(f"[ENV] Keyfile not found: {keyfile_path}")
+                sys.exit(1)
+            keyfile_bytes = keyfile_path.read_bytes()
+        elif keyfile_b64_env:
+            try:
+                keyfile_bytes = base64.b64decode(keyfile_b64_env)
+            except Exception as e:
+                error(f"[ENV] Failed to decode KEYDRIVE_KEYFILE_B64: {e}")
+                sys.exit(1)
+        
+        # Build credentials dict
+        credentials = {
+            "volume_path": volume_path,
+            "security_mode": mode,
+            "mount_password": password,
+            "mount_target": mount_target,
+            "created_at": utc_timestamp_iso(),
+        }
+        
+        if keyfile_bytes:
+            credentials["keyfile_bytes_b64"] = base64.b64encode(keyfile_bytes).decode("ascii")
+        
+        log("[NON-INTERACTIVE] Using credentials from environment variables")
+        
+        # Generate BIP39 phrase
+        log("[1/5] Generating recovery phrase...")
+        phrase = generate_bip39_phrase()
+        phrase_hash = hash_phrase(phrase)
+        log(f"[1/5] Generated 24-word BIP39 phrase (hash: {phrase_hash[:16]}...)")
+        
+        # Determine output format
+        use_printable_kit = args.format == "printable"
+        log(f"[2/5] Format: {'Printable (HTML)' if use_printable_kit else 'Terminal (text)'}")
+        
+        # Create encrypted recovery container
+        log("[3/5] Creating encrypted recovery container...")
+        recovery_dir = Paths.recovery_dir(CONFIG_FILE.parent.parent if CONFIG_FILE else Path.cwd())
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        
+        container_path = recovery_dir / FileNames.RECOVERY_CONTAINER
+        create_recovery_container(
+            phrase=phrase,
+            credentials=credentials,
+            output_path=container_path,
+        )
+        log(f"[3/5] Container created: {container_path}")
+        
+        # Export VeraCrypt header
+        log("[4/5] Exporting VeraCrypt header backup...")
+        header_path = recovery_dir / FileNames.RECOVERY_HEADER
+        export_header_backup(
+            volume_path=volume_path,
+            header_path=header_path,
+            password=password,
+            keyfile_bytes=keyfile_bytes,
+        )
+        log(f"[4/5] Header exported: {header_path}")
+        
+        # Update config
+        log("[5/5] Updating configuration...")
+        recovery_config = {
+            "enabled": True,
+            "state": "RECOVERY_STATE_ENABLED",
+            "created_at": utc_timestamp_iso(),
+            "phrase_hash": phrase_hash,
+            "container_path": str(container_path),
+            "header_path": str(header_path),
+        }
+        config[RECOVERY_CONFIG_KEY] = recovery_config
+        save_config_atomic(config)
+        log("[5/5] Configuration updated")
+        
+        # Generate printable HTML kit if requested
+        if use_printable_kit:
+            drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
+            volume_identity = compute_volume_identity(volume_path)
+            
+            gpg_pw_only_info = None
+            if mode == SecurityMode.GPG_PW_ONLY.value:
+                gpg_pw_only_info = {
+                    "kdf": config.get("kdf", CryptoParams.KDF_HKDF_SHA256),
+                    "salt_b64": config.get("salt_b64", ""),
+                    "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
+                }
+            
+            html = generate_recovery_html(
+                phrase=phrase,
+                chunks=None,
+                header_chunks=None,
+                volume_name=drive_name,
+                volume_identity=volume_identity,
+                security_mode=mode,
+                gpg_pw_only_info=gpg_pw_only_info,
+                include_qr=True,
+            )
+            
+            html_path = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            log(f"[HTML] Recovery kit saved: {html_path}")
+            
+            # Output kit path for GUI to capture
+            print(f"RECOVERY_KIT_PATH:{html_path}")
+        
+        # Audit log
+        audit_log("RECOVERY_GENERATED", details={"mode": "non_interactive", "format": args.format})
+        
+        log("[SUCCESS] Recovery kit generation complete")
+        sys.exit(0)
+        
+    except Exception as e:
+        error(f"[FATAL] Recovery generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    finally:
+        # Scrub credentials from environment
+        for var in ["KEYDRIVE_VOLUME_PASSWORD", "KEYDRIVE_KEYFILE_PATH", "KEYDRIVE_KEYFILE_B64"]:
+            if var in os.environ:
+                del os.environ[var]
+
+
 def cmd_generate(args):
     """
     Generate a recovery kit.
@@ -5085,6 +5257,17 @@ Examples:
         action="store_true",
         help="Force regeneration even if active kit exists (requires explicit confirmation)",
     )
+    gen_parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="BUG-20251221-019: Non-interactive mode for GUI - reads credentials from env vars",
+    )
+    gen_parser.add_argument(
+        "--format",
+        choices=["printable", "terminal"],
+        default="printable",
+        help="Output format: printable (HTML) or terminal (text)",
+    )
 
     # Recover command
     rec_parser = subparsers.add_parser("recover", help="Recover access using recovery phrase")
@@ -5126,7 +5309,11 @@ Examples:
         print(f"  Paths: {Paths is not None}")
         sys.exit(0)
     elif args.command == "generate":
-        cmd_generate(args)
+        # BUG-20251221-019: Check if non-interactive mode requested
+        if getattr(args, "non_interactive", False):
+            cmd_generate_non_interactive(args)
+        else:
+            cmd_generate(args)
     elif args.command == "recover":
         cmd_recover(args)
     elif args.command == "reconstruct":

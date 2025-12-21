@@ -1,0 +1,21 @@
+# KeyDrive Server Dependencies
+# Development only - not deployed to KeyDrive devices
+
+# Web framework
+Flask>=3.0.0
+
+# Database ORM
+Flask-SQLAlchemy>=3.1.0
+
+# Request rate limiting
+Flask-Limiter>=3.5.0
+
+# CORS support
+Flask-CORS>=4.0.0
+
+# Production WSGI server
+gunicorn>=21.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-flask>=1.3.0

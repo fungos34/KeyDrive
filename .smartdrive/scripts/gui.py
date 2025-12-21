@@ -75,6 +75,7 @@ from core.single_instance import SingleInstanceManager, check_single_instance
 from core.tray import TrayIconManager, is_tray_available
 
 # Import from core modules (single source of truth)
+from core.version import BUILD_ID, COMPATIBILITY_VERSION
 from core.version import VERSION as APP_VERSION
 
 # Global language setting (loaded from config or default)
@@ -327,6 +328,7 @@ try:
         QGridLayout,
         QGroupBox,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QLineEdit,
         QMenu,
@@ -620,6 +622,182 @@ class UnmountWorker(QThread):
             self.finished.emit(False, "worker_unmount_timeout", {})
         except Exception as e:
             self.finished.emit(False, "worker_unmount_error", {"error": str(e)})
+
+
+# ============================================================
+# RECOVERY KIT GENERATION WORKER THREAD (CHG-20251221-001)
+# ============================================================
+
+
+class RecoveryGenerateWorker(QThread):
+    """Worker thread for recovery kit generation to prevent UI blocking."""
+
+    finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
+    progress = pyqtSignal(str)  # status message
+
+    def __init__(self, config: dict, smartdrive_dir: Path, force: bool = False):
+        super().__init__()
+        self.config = config
+        self.smartdrive_dir = smartdrive_dir
+        self.force = force
+
+    def run(self):
+        """
+        Execute recovery kit generation in background thread.
+        
+        BUG-20251221-019 FIX:
+        1. Derive credentials using SecretProvider (same flow as rekey)
+        2. Pass credentials to recovery.py via environment variables
+        3. Call recovery.py generate --non-interactive --format printable
+        4. No user interaction required - fully automated
+        """
+        try:
+            import subprocess
+            import os
+            import base64
+            from pathlib import Path
+            from core.secrets import SecretProvider
+
+            script_dir = get_script_dir()
+            recovery_script = script_dir / FileNames.RECOVERY_PY
+
+            if not recovery_script.exists():
+                self.finished.emit(False, "recovery_generate_status_failed", {"error": "Recovery script not found"})
+                return
+
+            python_exe = get_python_exe()
+            mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+
+            self.progress.emit("recovery_generate_status_deriving")
+
+            # Derive credentials using SecretProvider
+            try:
+                provider = SecretProvider.from_config(self.config, self.smartdrive_dir)
+
+                # Get password
+                if mode == SecurityMode.PW_ONLY.value:
+                    # User must enter password (we can't derive it)
+                    self.finished.emit(
+                        False, 
+                        "recovery_generate_status_failed", 
+                        {"error": "PW_ONLY mode requires manual password entry (not implemented in GUI yet)"}
+                    )
+                    return
+                elif mode == SecurityMode.GPG_PW_ONLY.value:
+                    password = provider._derive_password_gpg_pw_only()
+                elif mode == SecurityMode.PW_KEYFILE.value:
+                    # Password provided during setup, stored in config (not secure, needs improvement)
+                    password = self.config.get(ConfigKeys.VOLUME_PASSWORD, "")
+                    if not password:
+                        self.finished.emit(
+                            False,
+                            "recovery_generate_status_failed",
+                            {"error": "PW_KEYFILE mode: password not available in config"}
+                        )
+                        return
+                elif mode == SecurityMode.PW_GPG_KEYFILE.value:
+                    # Similar to PW_KEYFILE
+                    password = self.config.get(ConfigKeys.VOLUME_PASSWORD, "")
+                    if not password:
+                        self.finished.emit(
+                            False,
+                            "recovery_generate_status_failed",
+                            {"error": "PW_GPG_KEYFILE mode: password not available in config"}
+                        )
+                        return
+                else:
+                    self.finished.emit(
+                        False, 
+                        "recovery_generate_status_failed", 
+                        {"error": f"Unsupported security mode: {mode}"}
+                    )
+                    return
+
+                # Handle keyfile if needed
+                keyfile_b64 = None
+                if mode in [SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value]:
+                    keyfile_path_config = self.config.get(ConfigKeys.KEYFILE_PATH)
+                    if keyfile_path_config:
+                        keyfile_path = Path(keyfile_path_config)
+                        if keyfile_path.exists():
+                            keyfile_bytes = keyfile_path.read_bytes()
+                            keyfile_b64 = base64.b64encode(keyfile_bytes).decode("ascii")
+                        else:
+                            # Try GPG keyfile decryption
+                            try:
+                                keyfile_bytes = provider._decrypt_keyfile_gpg()
+                                keyfile_b64 = base64.b64encode(keyfile_bytes).decode("ascii")
+                            except Exception as e:
+                                self.finished.emit(
+                                    False,
+                                    "recovery_generate_status_failed",
+                                    {"error": f"Failed to decrypt keyfile: {e}"}
+                                )
+                                return
+
+            except Exception as e:
+                self.finished.emit(
+                    False, 
+                    "recovery_generate_status_failed", 
+                    {"error": f"Credential derivation failed: {e}"}
+                )
+                return
+
+            # Build command with non-interactive mode
+            cmd = [str(python_exe), str(recovery_script), "generate", "--non-interactive", "--format", "printable"]
+            if self.force:
+                cmd.append("--force")
+
+            # Pass credentials via environment variables (secure, process-isolated)
+            env = os.environ.copy()
+            env["KEYDRIVE_VOLUME_PASSWORD"] = password
+            if keyfile_b64:
+                env["KEYDRIVE_KEYFILE_B64"] = keyfile_b64
+
+            self.progress.emit("recovery_generate_status_running")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=script_dir,
+                timeout=120,  # 2 minutes timeout
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+
+            if result.returncode == 0:
+                # Extract kit path from output (recovery.py prints RECOVERY_KIT_PATH:...)
+                kit_path = ""
+                for line in result.stdout.split("\n"):
+                    if line.startswith("RECOVERY_KIT_PATH:"):
+                        kit_path = line.split(":", 1)[1].strip()
+                        break
+                    elif "recovery" in line.lower() and "html" in line.lower():
+                        # Fallback: extract any path-looking string
+                        import re
+                        path_match = re.search(r"[A-Z]:\\[^\s]+|/[^\s]+", line)
+                        if path_match:
+                            kit_path = path_match.group(0)
+                            break
+                self.finished.emit(True, "recovery_generate_status_success", {"path": kit_path})
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                # Clean up error message
+                if "Traceback" in error_msg:
+                    lines = error_msg.split("\n")
+                    for line in reversed(lines):
+                        if line.strip() and not line.startswith(" "):
+                            error_msg = line.strip()
+                            break
+                self.finished.emit(False, "recovery_generate_status_failed", {"error": error_msg})
+
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "recovery_generate_status_failed", {"error": "Generation timed out"})
+        except Exception as e:
+            import traceback
+            error_detail = f"{e}\n{traceback.format_exc()}"
+            self.finished.emit(False, "recovery_generate_status_failed", {"error": error_detail})
 
 
 # ============================================================
@@ -3698,6 +3876,239 @@ QPushButton:pressed {{
 
 
 # ============================================================
+# GPG KEY SELECTION DIALOG (CHG-20251221-008)
+# ============================================================
+
+
+class GPGKeySelectionDialog(QDialog):
+    """Dialog for selecting a GPG key from available secret keys or entering manually.
+
+    Provides:
+    - Combo box with all available GPG secret keys (fingerprint + email/name)
+    - Clear hint text explaining what value is expected
+    - Manual entry option for keys not yet recognized by the system
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("gpg_key_select_title", lang=get_lang()))
+        self.setModal(True)
+        self.setMinimumWidth(500)
+
+        self._selected_key = ""
+        self._keys: list[dict] = []
+
+        self._init_ui()
+        self._load_gpg_keys()
+
+    def _init_ui(self):
+        """Initialize the dialog UI."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        # Hint label
+        hint_label = QLabel(tr("gpg_key_select_hint", lang=get_lang()))
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint_label)
+
+        # Key selection combo box
+        key_layout = QHBoxLayout()
+        key_label = QLabel(tr("gpg_key_select_label", lang=get_lang()))
+        key_label.setMinimumWidth(80)
+        key_layout.addWidget(key_label)
+
+        self._key_combo = QComboBox()
+        self._key_combo.setEditable(False)
+        self._key_combo.setMinimumWidth(350)
+        self._key_combo.currentIndexChanged.connect(self._on_combo_changed)
+        key_layout.addWidget(self._key_combo, 1)
+        layout.addLayout(key_layout)
+
+        # Manual entry field (hidden by default)
+        manual_layout = QHBoxLayout()
+        self._manual_label = QLabel(tr("gpg_key_manual_label", lang=get_lang()))
+        self._manual_label.setMinimumWidth(80)
+        manual_layout.addWidget(self._manual_label)
+
+        self._manual_entry = QLineEdit()
+        self._manual_entry.setPlaceholderText(tr("gpg_key_select_placeholder", lang=get_lang()))
+        manual_layout.addWidget(self._manual_entry, 1)
+        layout.addLayout(manual_layout)
+
+        # Initially hide manual entry
+        self._manual_label.setVisible(False)
+        self._manual_entry.setVisible(False)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self._ok_btn = QPushButton(tr("btn_ok", lang=get_lang()))
+        self._ok_btn.setDefault(True)
+        self._ok_btn.clicked.connect(self._on_accept)
+        button_layout.addWidget(self._ok_btn)
+
+        cancel_btn = QPushButton(tr("btn_cancel", lang=get_lang()))
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+
+        layout.addLayout(button_layout)
+
+    def _load_gpg_keys(self):
+        """Load available GPG secret keys using gpg --list-secret-keys --with-colons."""
+        self._keys = []
+        self._key_combo.clear()
+
+        try:
+            from core.limits import Limits
+
+            result = subprocess.run(
+                ["gpg", "--list-secret-keys", "--with-colons"],
+                capture_output=True,
+                text=True,
+                timeout=Limits.SUBPROCESS_DEFAULT_TIMEOUT,
+            )
+            if result.returncode == 0:
+                self._parse_gpg_colon_output(result.stdout)
+        except Exception as e:
+            log_exception("Failed to list GPG keys", e, level="warning")
+
+        # Populate combo box
+        if self._keys:
+            for key in self._keys:
+                display = self._format_key_display(key)
+                self._key_combo.addItem(display, key)
+            # Add manual entry option at the end
+            self._key_combo.addItem(tr("gpg_key_select_manual", lang=get_lang()), None)
+        else:
+            self._key_combo.addItem(tr("gpg_key_select_none", lang=get_lang()), None)
+            # Show manual entry by default if no keys found
+            self._manual_label.setVisible(True)
+            self._manual_entry.setVisible(True)
+
+    def _parse_gpg_colon_output(self, output: str):
+        """Parse gpg --with-colons output to extract key information.
+
+        Format reference: https://github.com/gpg/gnupg/blob/master/doc/DETAILS
+        sec::4096:1:KEYID:created:expires::::name <email>::
+        """
+        current_key: dict | None = None
+
+        for line in output.strip().split("\n"):
+            fields = line.split(":")
+            if not fields:
+                continue
+
+            record_type = fields[0]
+
+            if record_type == "sec":
+                # Start of a new secret key
+                if current_key:
+                    self._keys.append(current_key)
+                current_key = {
+                    "fingerprint": "",
+                    "keyid": fields[4] if len(fields) > 4 else "",
+                    "created": fields[5] if len(fields) > 5 else "",
+                    "uid": "",
+                    "email": "",
+                    "name": "",
+                }
+            elif record_type == "fpr" and current_key:
+                # Fingerprint
+                current_key["fingerprint"] = fields[9] if len(fields) > 9 else ""
+            elif record_type == "uid" and current_key and not current_key.get("uid"):
+                # User ID (take first one)
+                uid = fields[9] if len(fields) > 9 else ""
+                current_key["uid"] = uid
+                # Parse name and email from uid
+                self._parse_uid(current_key, uid)
+
+        # Don't forget the last key
+        if current_key:
+            self._keys.append(current_key)
+
+    def _parse_uid(self, key: dict, uid: str):
+        """Parse uid field to extract name and email."""
+        import re
+
+        # Pattern: "Name <email@example.com>"
+        match = re.match(r"^(.+?)\s*<([^>]+)>", uid)
+        if match:
+            key["name"] = match.group(1).strip()
+            key["email"] = match.group(2).strip()
+        else:
+            # No email found, use entire uid as name
+            key["name"] = uid
+
+    def _format_key_display(self, key: dict) -> str:
+        """Format key for display in combo box."""
+        name = key.get("name", "")
+        email = key.get("email", "")
+        fingerprint = key.get("fingerprint", "") or key.get("keyid", "")
+
+        # Short fingerprint (last 16 chars)
+        short_fp = fingerprint[-16:] if len(fingerprint) > 16 else fingerprint
+
+        if name and email:
+            return f"{name} <{email}> ({short_fp})"
+        elif name:
+            return f"{name} ({short_fp})"
+        else:
+            return short_fp
+
+    def _on_combo_changed(self, index: int):
+        """Handle combo box selection change."""
+        data = self._key_combo.itemData(index)
+
+        # Show/hide manual entry based on selection
+        is_manual = data is None and self._keys  # Manual option selected
+        self._manual_label.setVisible(is_manual)
+        self._manual_entry.setVisible(is_manual)
+
+        if is_manual:
+            self._manual_entry.setFocus()
+
+    def _on_accept(self):
+        """Handle OK button click."""
+        data = self._key_combo.currentData()
+
+        if data is None:
+            # Manual entry selected or no keys found
+            value = self._manual_entry.text().strip()
+            if not value:
+                QMessageBox.warning(
+                    self,
+                    tr("gpg_key_select_title", lang=get_lang()),
+                    tr("gpg_key_manual_label", lang=get_lang()),
+                )
+                return
+            self._selected_key = value
+        else:
+            # Key from list selected - use fingerprint for encryption
+            self._selected_key = data.get("fingerprint") or data.get("email") or data.get("keyid", "")
+
+        self.accept()
+
+    def get_selected_key(self) -> str:
+        """Return the selected key (fingerprint or manual entry)."""
+        return self._selected_key
+
+    @staticmethod
+    def get_key(parent=None) -> tuple[str, bool]:
+        """Static method to show dialog and return (key, ok).
+
+        Usage:
+            fingerprint, ok = GPGKeySelectionDialog.get_key(self)
+            if ok and fingerprint:
+                # Use fingerprint for GPG encryption
+        """
+        dialog = GPGKeySelectionDialog(parent)
+        result = dialog.exec()
+        return dialog.get_selected_key(), result == QDialog.DialogCode.Accepted
+
+
+# ============================================================
 # SETTINGS DIALOG
 # ============================================================
 
@@ -3721,6 +4132,10 @@ class SettingsDialog(QDialog):
         else:
             # Fallback: detect from scripts directory
             self._launcher_root = get_script_dir().parent
+        
+        # BUG-20251221-020: Get _smartdrive_dir for RecoveryGenerateWorker
+        # Required for credential derivation in recovery kit generation
+        self._smartdrive_dir = self._launcher_root / Paths.SMARTDRIVE_DIR_NAME
 
         # SECURITY: Initialize sensitive credential storage to None
         # These are only populated during recovery operations
@@ -3838,6 +4253,9 @@ class SettingsDialog(QDialog):
 
         # Special handling for product name (QSettings, not config.json)
         self._add_product_name_to_general_tab()
+
+        # CHG-20251221-012: Add About section with version info
+        self._add_about_section_to_general_tab()
 
     def _create_tab(self, tab_name: str):
         """Create a tab widget with fields from schema."""
@@ -4156,6 +4574,7 @@ class SettingsDialog(QDialog):
         Generate a new GPG-encrypted seed for password derivation.
 
         CHG-20251221-003: Implements GPG seed generation for mode changes to GPG modes.
+        CHG-20251221-008: Uses GPGKeySelectionDialog for improved key selection UX.
         Creates a cryptographically secure seed, encrypts it with GPG, and derives
         the password to show the user.
         """
@@ -4166,7 +4585,7 @@ class SettingsDialog(QDialog):
         import subprocess
         import tempfile
 
-        from PyQt6.QtWidgets import QFileDialog, QInputDialog
+        from PyQt6.QtWidgets import QFileDialog
 
         # Check for GPG
         if not shutil.which("gpg"):
@@ -4188,42 +4607,10 @@ class SettingsDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # Get GPG key fingerprint(s) from user
-        # First, list available keys
-        try:
-            from core.limits import Limits
-
-            result = subprocess.run(
-                ["gpg", "--list-secret-keys", "--keyid-format", "long"],
-                capture_output=True,
-                text=True,
-                timeout=Limits.SUBPROCESS_DEFAULT_TIMEOUT,
-            )
-            if result.returncode != 0:
-                QMessageBox.warning(
-                    self,
-                    tr("gpg_seed_generate_title", lang=get_lang()),
-                    f"Failed to list GPG keys: {result.stderr}",
-                )
-                return
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                tr("gpg_seed_generate_title", lang=get_lang()),
-                f"Failed to list GPG keys: {e}",
-            )
+        # CHG-20251221-008: Use GPGKeySelectionDialog for better UX
+        fingerprint, ok = GPGKeySelectionDialog.get_key(self)
+        if not ok or not fingerprint:
             return
-
-        # Ask for fingerprint
-        fingerprint, ok = QInputDialog.getText(
-            self,
-            tr("gpg_seed_generate_title", lang=get_lang()),
-            "Enter GPG key fingerprint (or email) to encrypt to:\n\n" "Available secret keys:\n" + result.stdout[:500],
-        )
-        if not ok or not fingerprint.strip():
-            return
-
-        fingerprint = fingerprint.strip()
 
         # Ask where to save the seed file
         save_path, _ = QFileDialog.getSaveFileName(
@@ -4272,7 +4659,17 @@ class SettingsDialog(QDialog):
             # User needs to note this or it will be stored when rekey completes
             self._generated_seed_salt = salt_b64
 
-            # Show success and derived password
+            # Copy password to clipboard with TTL (30 seconds)
+            from PyQt6.QtWidgets import QApplication
+            from PyQt6.QtCore import QTimer
+
+            clipboard = QApplication.clipboard()
+            clipboard.setText(derived_password)
+
+            # Auto-clear after 30 seconds
+            QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == derived_password else None)
+
+            # Show success message with clipboard warning
             QMessageBox.information(
                 self,
                 tr("gpg_seed_generate_title", lang=get_lang()),
@@ -4280,14 +4677,10 @@ class SettingsDialog(QDialog):
                 f"Seed file: {save_path}\n"
                 f"Salt (SAVE THIS): {salt_b64}\n\n"
                 f"{tr('gpg_seed_derive_info', lang=get_lang())}\n\n"
-                f"Derived password ({len(derived_password)} chars):\n{derived_password}",
+                f"\u26a0\ufe0f Derived password ({len(derived_password)} chars) copied to clipboard\n"
+                f"Clipboard will auto-clear after 30 seconds\n\n"
+                f"Paste the password into VeraCrypt now.",
             )
-
-            # Copy password to clipboard
-            from PyQt6.QtWidgets import QApplication
-
-            clipboard = QApplication.clipboard()
-            clipboard.setText(derived_password)
 
             self._gui_audit_log("GPG_SEED_GENERATED", details={"path": save_path, "fingerprint": fingerprint[:8]})
 
@@ -4404,9 +4797,12 @@ class SettingsDialog(QDialog):
                 from core.secrets import SecretProvider
 
                 # BUG-20251221-004 FIX: SecretProvider is a dataclass, use from_config() factory
+                # BUG-20251221-009 FIX: Use _derive_password_gpg_pw_only() instead of non-existent get_password()
                 smartdrive_dir = self._launcher_root / ".smartdrive"
                 provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
-                derived_password = provider.get_password()
+
+                # Derive password using the internal method (same as rekey.py derive_password_via_provider)
+                derived_password = provider._derive_password_gpg_pw_only()
 
                 # Copy to clipboard with SSOT-defined TTL
                 clipboard_timeout = Limits.CLIPBOARD_TIMEOUT
@@ -4492,7 +4888,7 @@ class SettingsDialog(QDialog):
         """
         from datetime import datetime
 
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Update post_recovery to mark rekey completed
         if "post_recovery" in self.config:
@@ -4516,7 +4912,8 @@ class SettingsDialog(QDialog):
                 if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
                     gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
                     if gpg_seed_path:
-                        self.config[FileNames.SEED_GPG] = gpg_seed_path
+                        # BUG-20251221-007 FIX: Use ConfigKeys.SEED_GPG_PATH (config key) not FileNames.SEED_GPG (filename)
+                        self.config[ConfigKeys.SEED_GPG_PATH] = gpg_seed_path
 
                     # CHG-20251221-003: Save generated salt if available
                     if hasattr(self, "_generated_seed_salt") and self._generated_seed_salt:
@@ -4825,7 +5222,7 @@ class SettingsDialog(QDialog):
                 self.integrity_result_label.setVisible(True)
 
                 # BUG-20251221-006 FIX: Update config with signing status and fingerprint
-                self.config[ConfigKeys.INTEGRITY_SIGNED] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.config[ConfigKeys.INTEGRITY_SIGNED] = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if signer_fpr:
                     self.config[ConfigKeys.SIGNING_KEY_FPR] = signer_fpr
                 self._save_config_atomic()
@@ -4864,6 +5261,28 @@ class SettingsDialog(QDialog):
             self.integrity_status_label.setStyleSheet(f"color: {COLORS.get('warning', '#FFA500')}; font-size: 11px;")
             return
 
+        # Validate and fix URL format
+        if not server_url.startswith(("http://", "https://")):
+            # Assume HTTPS if no protocol specified
+            server_url = f"https://{server_url}"
+            _gui_logger.info(f"Added https:// protocol to server URL: {server_url}")
+
+        # Basic URL validation
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(server_url)
+            if not parsed.netloc:
+                raise ValueError("Invalid URL format")
+        except Exception as e:
+            _gui_logger.error(f"Invalid server URL format: {server_url} - {e}")
+            self.integrity_status_label.setText(tr("integrity_status_remote_fail", lang=get_lang()))
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self.integrity_result_label.setText(f"Invalid server URL: {server_url}")
+            self.integrity_result_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 10px;")
+            self.integrity_result_label.setVisible(True)
+            return
+
         self.integrity_status_label.setText(tr("integrity_status_remote_checking", lang=get_lang()))
         self.integrity_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         QApplication.processEvents()
@@ -4875,7 +5294,7 @@ class SettingsDialog(QDialog):
             # Build payload
             payload = {
                 "id": self.config.get(ConfigKeys.DRIVE_ID, "unknown"),
-                "datetime": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime": datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "hash": scripts_hash,
                 "version": self.config.get("version", "unknown"),
                 "integrity_signed": self.config.get(ConfigKeys.INTEGRITY_SIGNED, ""),
@@ -5092,6 +5511,143 @@ class SettingsDialog(QDialog):
         # Pre-populate container path from config or default location
         self._init_recovery_container_path()
 
+        # CHG-20251221-001: Add recovery kit generation section
+        self._add_recovery_generate_section(tab_layout)
+
+    def _add_recovery_generate_section(self, tab_layout: QVBoxLayout):
+        """Add the recovery kit generation section to the Recovery tab (CHG-20251221-001)."""
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        tab_layout.addWidget(separator)
+
+        # Recovery generation group box
+        self.recovery_generate_box = QGroupBox(tr("recovery_generate_section_title", lang=get_lang()))
+        generate_layout = QVBoxLayout()
+        generate_layout.setSpacing(10)
+
+        # Instructions
+        gen_instructions = QLabel(tr("recovery_generate_instructions", lang=get_lang()))
+        gen_instructions.setWordWrap(True)
+        gen_instructions.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        generate_layout.addWidget(gen_instructions)
+        self.field_labels["recovery_generate_instructions"] = (gen_instructions, "recovery_generate_instructions")
+
+        # Generate button
+        self.btn_generate_recovery_kit = QPushButton(tr("btn_generate_recovery_kit", lang=get_lang()))
+        self.btn_generate_recovery_kit.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.btn_generate_recovery_kit.clicked.connect(self._on_generate_recovery_kit)
+        generate_layout.addWidget(self.btn_generate_recovery_kit)
+
+        # Status label
+        self.recovery_generate_status = QLabel(tr("recovery_generate_status_ready", lang=get_lang()))
+        self.recovery_generate_status.setWordWrap(True)
+        self.recovery_generate_status.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        generate_layout.addWidget(self.recovery_generate_status)
+        self.field_labels["recovery_generate_status"] = (
+            self.recovery_generate_status,
+            "recovery_generate_status_ready",
+        )
+
+        self.recovery_generate_box.setLayout(generate_layout)
+        tab_layout.addWidget(self.recovery_generate_box)
+
+    def _on_generate_recovery_kit(self):
+        """
+        Handle recovery kit generation button click (CHG-20251221-001).
+        
+        BUG-20251221-019 FIX:
+        - Use QMessageBox.question() for simple Yes/No confirmation
+        - No more "type GENERATE" text input requirement
+        - Pass config and smartdrive_dir to worker for credential derivation
+        """
+        # Check if recovery kit already exists
+        recovery_config = self.config.get("recovery", {})
+        recovery_state = recovery_config.get("state", "")
+
+        # Determine if this is a regeneration
+        is_regeneration = recovery_state == "RECOVERY_STATE_ENABLED"
+
+        # Show confirmation dialog (simple Yes/No)
+        if is_regeneration:
+            title = tr("recovery_generate_regen_confirm_title", lang=get_lang())
+            body = tr("recovery_generate_regen_confirm_body", lang=get_lang())
+        else:
+            title = tr("recovery_generate_confirm_title", lang=get_lang())
+            body = tr("recovery_generate_confirm_body", lang=get_lang())
+
+        # Use QMessageBox.question for Yes/No confirmation
+        reply = QMessageBox.question(
+            self,
+            title,
+            body,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No  # Default to No for safety
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Disable button during generation
+        self.btn_generate_recovery_kit.setEnabled(False)
+        self.recovery_generate_status.setText(tr("recovery_generate_status_running", lang=get_lang()))
+        self.recovery_generate_status.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px;")
+
+        # Start worker thread with config and smartdrive_dir for credential derivation
+        self._recovery_generate_worker = RecoveryGenerateWorker(
+            config=self.config,
+            smartdrive_dir=self._smartdrive_dir,
+            force=is_regeneration
+        )
+        self._recovery_generate_worker.progress.connect(self._on_recovery_generate_progress)
+        self._recovery_generate_worker.finished.connect(self._on_recovery_generate_finished)
+        self._recovery_generate_worker.start()
+
+    def _on_recovery_generate_progress(self, message_key: str):
+        """Update status during recovery kit generation."""
+        self.recovery_generate_status.setText(tr(message_key, lang=get_lang()))
+
+    def _on_recovery_generate_finished(self, success: bool, message_key: str, args: dict):
+        """Handle recovery kit generation completion (CHG-20251221-001)."""
+        self.btn_generate_recovery_kit.setEnabled(True)
+
+        if success:
+            self.recovery_generate_status.setText(tr(message_key, lang=get_lang(), **args))
+            self.recovery_generate_status.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+            # Show success dialog with kit location
+            kit_path = args.get("path", "")
+            QMessageBox.information(
+                self,
+                tr("recovery_generate_success_title", lang=get_lang()),
+                tr("recovery_generate_success_body", lang=get_lang(), path=kit_path),
+            )
+
+            # Reload config to reflect new recovery state
+            self._reload_config()
+        else:
+            self.recovery_generate_status.setText(tr(message_key, lang=get_lang(), **args))
+            self.recovery_generate_status.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
     def _init_recovery_container_path(self):
         """Initialize recovery container path from config or default location."""
         try:
@@ -5230,7 +5786,7 @@ class SettingsDialog(QDialog):
             # Phase 3: Transition to "used" state + set rekey requirement
             from datetime import datetime
 
-            timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             self.config["recovery"] = {
                 "enabled": False,
@@ -5305,7 +5861,7 @@ class SettingsDialog(QDialog):
         import platform
         from datetime import datetime
 
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         entry = {
             "timestamp": timestamp,
             "event": event,
@@ -5533,7 +6089,19 @@ class SettingsDialog(QDialog):
             h_layout.setSpacing(4)
 
             line_edit = QLineEdit()
-            line_edit.setText(str(current_value) if current_value is not None else "")
+            
+            # BUG-20251221-020: Pre-fill default paths from Paths SSOT when field is empty
+            display_value = current_value
+            if not current_value:
+                # Map ConfigKeys to their default Paths.* methods
+                if field.key == ConfigKeys.SEED_GPG_PATH:
+                    display_value = str(Paths.seed_gpg(self._launcher_root))
+                elif field.key == ConfigKeys.ENCRYPTED_KEYFILE:
+                    display_value = str(Paths.keyfile_gpg(self._launcher_root))
+                elif field.key == ConfigKeys.KEYFILE:
+                    display_value = str(Paths.keyfile_plain(self._launcher_root))
+            
+            line_edit.setText(str(display_value) if display_value is not None else "")
             if field.placeholder:
                 line_edit.setPlaceholderText(field.placeholder)
 
@@ -5692,6 +6260,58 @@ class SettingsDialog(QDialog):
                         group_layout.insertRow(0, tr("label_product_name", lang=get_lang()), self.product_name_edit)
                 break
 
+    def _add_about_section_to_general_tab(self):
+        """
+        Add About section to General tab showing version information.
+
+        CHG-20251221-012: Displays version, build ID, and compatibility version
+        in a dedicated About group box at the bottom of the General tab.
+        """
+        # Find General tab
+        for i in range(self.tab_widget.count()):
+            tab_text = self.tab_widget.tabText(i)
+            # Handle translated tab names
+            if tab_text in ["General", "Allgemein", "Opšte", "General", "Général", "Общие", "常规"]:
+                tab = self.tab_widget.widget(i)
+                layout = tab.layout()
+
+                # Add stretch before About section to push it to bottom
+                layout.addStretch()
+
+                # Create About group box
+                about_group = QGroupBox(tr("settings_about", lang=get_lang()))
+                about_layout = QFormLayout()
+                about_layout.setSpacing(8)
+                about_layout.setContentsMargins(12, 12, 12, 12)
+
+                # Version label (read-only)
+                self.version_label = QLabel(APP_VERSION)
+                self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                about_layout.addRow(tr("label_version", lang=get_lang()), self.version_label)
+
+                # Build ID label (read-only, shows "Development" if not set)
+                build_display = BUILD_ID if BUILD_ID else tr("label_build_dev", lang=get_lang())
+                self.build_id_label = QLabel(build_display)
+                self.build_id_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                about_layout.addRow(tr("label_build_id", lang=get_lang()), self.build_id_label)
+
+                # Compatibility version label (read-only)
+                self.compat_version_label = QLabel(COMPATIBILITY_VERSION)
+                self.compat_version_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                about_layout.addRow(tr("label_compat_version", lang=get_lang()), self.compat_version_label)
+
+                about_group.setLayout(about_layout)
+
+                # Store for i18n refresh
+                self.group_boxes["about"] = (about_group, "settings_about")
+                self.field_labels["about_version"] = (None, "label_version")  # Row labels refreshed via group
+                self.field_labels["about_build"] = (None, "label_build_id")
+                self.field_labels["about_compat"] = (None, "label_compat_version")
+
+                # Add at bottom of General tab
+                layout.addWidget(about_group)
+                break
+
     def on_language_changed(self, index):
         """Handle language dropdown change with immediate UI update."""
         widget = self.sender()
@@ -5815,12 +6435,29 @@ class SettingsDialog(QDialog):
             pass
 
         # Update field labels
-        for field_key, label in self.field_labels.items():
-            # Find field in schema to get label_key
-            for field in self.schema:
-                if self._make_field_key(field) == field_key:
-                    label.setText(tr(field.label_key, lang=lang_code))
-                    break
+        for field_key, label_info in self.field_labels.items():
+            # Handle both schema-driven labels and manual tuple labels
+            if isinstance(label_info, tuple):
+                # Manual label: (widget, translation_key)
+                widget, trans_key = label_info
+                if widget is not None and hasattr(widget, "setText"):
+                    widget.setText(tr(trans_key, lang=lang_code))
+            else:
+                # Schema-driven label: find field in schema
+                for field in self.schema:
+                    if self._make_field_key(field) == field_key:
+                        label_info.setText(tr(field.label_key, lang=lang_code))
+                        break
+
+        # Update group box titles for recovery sections
+        if hasattr(self, "recovery_action_box"):
+            self.recovery_action_box.setTitle(tr("recovery_section_title", lang=lang_code))
+        if hasattr(self, "recovery_generate_box"):
+            self.recovery_generate_box.setTitle(tr("recovery_generate_section_title", lang=lang_code))
+        if hasattr(self, "rekey_section_box"):
+            self.rekey_section_box.setTitle(tr("rekey_section_title", lang=lang_code))
+        if hasattr(self, "integrity_verify_box"):
+            self.integrity_verify_box.setTitle(tr("integrity_section_title", lang=lang_code))
 
         # Refresh theme combo box translations
         if hasattr(self, "theme_combo"):
