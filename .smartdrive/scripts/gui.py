@@ -4037,6 +4037,7 @@ class SettingsDialog(QDialog):
         self.rekey_keyfile_row.setVisible(False)
 
         # GPG seed path input (for GPG modes)
+        # CHG-20251221-003: Added generate button for creating new GPG-encrypted seed
         self.rekey_gpg_row = QWidget()
         gpg_layout = QHBoxLayout()
         gpg_layout.setContentsMargins(0, 0, 0, 0)
@@ -4046,6 +4047,11 @@ class SettingsDialog(QDialog):
         self.rekey_gpg_browse_btn = QPushButton(tr("btn_browse_keyfile", lang=get_lang()))
         self.rekey_gpg_browse_btn.clicked.connect(self._browse_rekey_gpg_seed)
         gpg_layout.addWidget(self.rekey_gpg_browse_btn)
+        # CHG-20251221-003: Generate button for new GPG seed
+        self.rekey_gpg_generate_btn = QPushButton(tr("btn_generate_gpg_seed", lang=get_lang()))
+        self.rekey_gpg_generate_btn.setToolTip(tr("tooltip_generate_gpg_seed", lang=get_lang()))
+        self.rekey_gpg_generate_btn.clicked.connect(self._generate_gpg_seed)
+        gpg_layout.addWidget(self.rekey_gpg_generate_btn)
         self.rekey_gpg_row.setLayout(gpg_layout)
         self.rekey_gpg_label = QLabel(tr("rekey_new_gpg_seed_label", lang=get_lang()))
         conditional_layout.addRow(self.rekey_gpg_label, self.rekey_gpg_row)
@@ -4145,6 +4151,154 @@ class SettingsDialog(QDialog):
         if file_path:
             self.rekey_gpg_seed_edit.setText(file_path)
 
+    def _generate_gpg_seed(self):
+        """
+        Generate a new GPG-encrypted seed for password derivation.
+
+        CHG-20251221-003: Implements GPG seed generation for mode changes to GPG modes.
+        Creates a cryptographically secure seed, encrypts it with GPG, and derives
+        the password to show the user.
+        """
+        import base64
+        import os
+        import secrets
+        import shutil
+        import subprocess
+        import tempfile
+
+        from PyQt6.QtWidgets import QFileDialog, QInputDialog
+
+        # Check for GPG
+        if not shutil.which("gpg"):
+            QMessageBox.warning(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                "GPG not found. Please install GPG to generate encrypted seeds.",
+            )
+            return
+
+        # Confirm generation
+        reply = QMessageBox.question(
+            self,
+            tr("gpg_seed_generate_title", lang=get_lang()),
+            tr("gpg_seed_generate_confirm", lang=get_lang()),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Get GPG key fingerprint(s) from user
+        # First, list available keys
+        try:
+            from core.limits import Limits
+
+            result = subprocess.run(
+                ["gpg", "--list-secret-keys", "--keyid-format", "long"],
+                capture_output=True,
+                text=True,
+                timeout=Limits.SUBPROCESS_DEFAULT_TIMEOUT,
+            )
+            if result.returncode != 0:
+                QMessageBox.warning(
+                    self,
+                    tr("gpg_seed_generate_title", lang=get_lang()),
+                    f"Failed to list GPG keys: {result.stderr}",
+                )
+                return
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                f"Failed to list GPG keys: {e}",
+            )
+            return
+
+        # Ask for fingerprint
+        fingerprint, ok = QInputDialog.getText(
+            self,
+            tr("gpg_seed_generate_title", lang=get_lang()),
+            "Enter GPG key fingerprint (or email) to encrypt to:\n\n" "Available secret keys:\n" + result.stdout[:500],
+        )
+        if not ok or not fingerprint.strip():
+            return
+
+        fingerprint = fingerprint.strip()
+
+        # Ask where to save the seed file
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("gpg_seed_generate_title", lang=get_lang()),
+            str(self._launcher_root / ".smartdrive" / "keys" / "seed.gpg"),
+            "GPG Encrypted Files (*.gpg);;All Files (*.*)",
+        )
+        if not save_path:
+            return
+
+        try:
+            # Generate cryptographically secure seed
+            seed = secrets.token_bytes(32)  # 256-bit seed
+
+            # Generate salt for HKDF
+            salt = secrets.token_bytes(32)  # 256-bit salt
+            salt_b64 = base64.b64encode(salt).decode("ascii")
+
+            # Encrypt seed with GPG
+            gpg_args = [
+                "gpg",
+                "--encrypt",
+                "--armor",
+                "--output",
+                save_path,
+                "--recipient",
+                fingerprint,
+            ]
+
+            proc = subprocess.Popen(gpg_args, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            _, stderr = proc.communicate(input=seed)
+
+            if proc.returncode != 0:
+                raise RuntimeError(f"GPG encryption failed: {stderr.decode()}")
+
+            # Derive password from seed (for display to user)
+            from core.secrets import _derive_password_from_seed
+
+            derived_password = _derive_password_from_seed(seed, salt, b"veracrypt-password")
+
+            # Update the GPG seed path field
+            self.rekey_gpg_seed_edit.setText(save_path)
+
+            # Store salt in config for future derivation
+            # User needs to note this or it will be stored when rekey completes
+            self._generated_seed_salt = salt_b64
+
+            # Show success and derived password
+            QMessageBox.information(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                f"{tr('gpg_seed_generate_success', lang=get_lang())}\n\n"
+                f"Seed file: {save_path}\n"
+                f"Salt (SAVE THIS): {salt_b64}\n\n"
+                f"{tr('gpg_seed_derive_info', lang=get_lang())}\n\n"
+                f"Derived password ({len(derived_password)} chars):\n{derived_password}",
+            )
+
+            # Copy password to clipboard
+            from PyQt6.QtWidgets import QApplication
+
+            clipboard = QApplication.clipboard()
+            clipboard.setText(derived_password)
+
+            self._gui_audit_log("GPG_SEED_GENERATED", details={"path": save_path, "fingerprint": fingerprint[:8]})
+
+        except Exception as e:
+            _gui_logger.error(f"GPG seed generation failed: {e}")
+            QMessageBox.critical(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                f"{tr('gpg_seed_generate_fail', lang=get_lang())}\n\n{e}",
+            )
+
     def _start_rekey_flow(self):
         """
         Start the credential change (rekey) flow.
@@ -4241,6 +4395,7 @@ class SettingsDialog(QDialog):
                 return
 
             # Derive password using SecretProvider
+            # BUG-20251221-004 FIX: Use from_config() classmethod instead of direct instantiation
             self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
             QApplication.processEvents()
 
@@ -4248,11 +4403,9 @@ class SettingsDialog(QDialog):
                 from core.limits import Limits
                 from core.secrets import SecretProvider
 
-                provider = SecretProvider(
-                    config_path=self.config_path,
-                    config=self.config,
-                    launcher_root=self._launcher_root,
-                )
+                # BUG-20251221-004 FIX: SecretProvider is a dataclass, use from_config() factory
+                smartdrive_dir = self._launcher_root / ".smartdrive"
+                provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
                 derived_password = provider.get_password()
 
                 # Copy to clipboard with SSOT-defined TTL
@@ -4335,6 +4488,7 @@ class SettingsDialog(QDialog):
         """
         Mark rekey as completed and update config.
         CHG-20251221-001: Also handle mode changes during rekey.
+        CHG-20251221-003: Save generated GPG seed salt if available.
         """
         from datetime import datetime
 
@@ -4363,6 +4517,11 @@ class SettingsDialog(QDialog):
                     gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
                     if gpg_seed_path:
                         self.config[FileNames.SEED_GPG] = gpg_seed_path
+
+                    # CHG-20251221-003: Save generated salt if available
+                    if hasattr(self, "_generated_seed_salt") and self._generated_seed_salt:
+                        self.config[ConfigKeys.SALT] = self._generated_seed_salt
+                        self._generated_seed_salt = None
 
                 _gui_logger.info(f"Security mode changed from {old_mode} to {target_mode}")
 
@@ -4478,6 +4637,30 @@ class SettingsDialog(QDialog):
         self.verify_local_btn.clicked.connect(self._verify_integrity_local)
         btn_layout.addWidget(self.verify_local_btn)
 
+        # CHG-20251221-002: Verify Remote button
+        self.verify_remote_btn = QPushButton(tr("btn_verify_remote", lang=get_lang()))
+        self.verify_remote_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 15px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.verify_remote_btn.clicked.connect(self._verify_integrity_remote)
+        btn_layout.addWidget(self.verify_remote_btn)
+
         # Sign Scripts button
         self.sign_scripts_btn = QPushButton(tr("btn_sign_scripts", lang=get_lang()))
         self.sign_scripts_btn.setStyleSheet(
@@ -4528,7 +4711,9 @@ class SettingsDialog(QDialog):
 
         CHG-20251220-002: Uses core.integrity.Integrity.validate_integrity()
         to check scripts against signed manifest.
+        BUG-20251221-005 FIX: Honor verification_overridden config setting.
         """
+        from core.constants import ConfigKeys
         from core.integrity import Integrity
 
         self.integrity_status_label.setText(tr("integrity_status_checking", lang=get_lang()))
@@ -4536,7 +4721,11 @@ class SettingsDialog(QDialog):
         QApplication.processEvents()
 
         try:
-            result = Integrity.validate_integrity(self._launcher_root, bypass_enabled=False, verify_signature=True)
+            # BUG-20251221-005 FIX: Read verification_overridden from config
+            bypass_enabled = self.config.get(ConfigKeys.VERIFICATION_OVERRIDDEN, False)
+            result = Integrity.validate_integrity(
+                self._launcher_root, bypass_enabled=bypass_enabled, verify_signature=True
+            )
 
             if result.valid:
                 self.integrity_status_label.setText(tr("integrity_status_pass", lang=get_lang()))
@@ -4581,10 +4770,13 @@ class SettingsDialog(QDialog):
         Sign scripts with hardware key (GPG).
 
         CHG-20251220-002: Creates integrity manifest and signs with GPG.
+        BUG-20251221-006 FIX: Updates config with signing status and fingerprint.
         Requires YubiKey/GPG card.
         """
         import shutil
+        from datetime import datetime
 
+        from core.constants import ConfigKeys
         from core.integrity import Integrity
 
         # Check for GPG
@@ -4618,17 +4810,29 @@ class SettingsDialog(QDialog):
             # Create manifest
             hash_value, manifest_path = Integrity.create_manifest(self._launcher_root)
 
-            # Sign manifest
-            if Integrity.sign_manifest(self._launcher_root):
+            # Sign manifest (BUG-20251221-006: now returns tuple with fingerprint)
+            sign_success, signer_fpr = Integrity.sign_manifest(self._launcher_root)
+            if sign_success:
                 self.integrity_status_label.setText(tr("integrity_status_sign_success", lang=get_lang()))
                 self.integrity_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
 
-                # Show hash
-                self.integrity_result_label.setText(f"Hash: {hash_value}")
+                # Show hash and fingerprint
+                result_text = f"Hash: {hash_value}"
+                if signer_fpr:
+                    result_text += f"\nSigned by: {signer_fpr}"
+                self.integrity_result_label.setText(result_text)
                 self.integrity_result_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 10px;")
                 self.integrity_result_label.setVisible(True)
 
-                self._gui_audit_log("INTEGRITY_SIGN_GUI", details={"hash": hash_value[:16]})
+                # BUG-20251221-006 FIX: Update config with signing status and fingerprint
+                self.config[ConfigKeys.INTEGRITY_SIGNED] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                if signer_fpr:
+                    self.config[ConfigKeys.SIGNING_KEY_FPR] = signer_fpr
+                self._save_config_atomic()
+
+                self._gui_audit_log(
+                    "INTEGRITY_SIGN_GUI", details={"hash": hash_value[:16], "fingerprint": signer_fpr or "unknown"}
+                )
             else:
                 self.integrity_status_label.setText(tr("integrity_status_sign_fail", lang=get_lang()))
                 self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
@@ -4637,6 +4841,100 @@ class SettingsDialog(QDialog):
             _gui_logger.error(f"Signing failed: {e}")
             self.integrity_status_label.setText(f"Error: {e}")
             self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+    def _verify_integrity_remote(self):
+        """
+        Verify integrity with a remote server.
+
+        CHG-20251221-002: Sends hash and metadata to configured server for verification.
+        Server URL must be configured in INTEGRITY_SERVER_URL.
+        """
+        import json
+        import urllib.error
+        import urllib.request
+        from datetime import datetime
+
+        from core.constants import ConfigKeys
+        from core.integrity import Integrity
+
+        # Get server URL from config
+        server_url = self.config.get(ConfigKeys.INTEGRITY_SERVER_URL, "").strip()
+        if not server_url:
+            self.integrity_status_label.setText(tr("integrity_status_no_server_url", lang=get_lang()))
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS.get('warning', '#FFA500')}; font-size: 11px;")
+            return
+
+        self.integrity_status_label.setText(tr("integrity_status_remote_checking", lang=get_lang()))
+        self.integrity_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            # Calculate scripts hash
+            scripts_hash = Integrity.calculate_scripts_hash(self._launcher_root)
+
+            # Build payload
+            payload = {
+                "id": self.config.get(ConfigKeys.DRIVE_ID, "unknown"),
+                "datetime": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "hash": scripts_hash,
+                "version": self.config.get("version", "unknown"),
+                "integrity_signed": self.config.get(ConfigKeys.INTEGRITY_SIGNED, ""),
+                "signing_key_fpr": self.config.get(ConfigKeys.SIGNING_KEY_FPR, ""),
+            }
+
+            # Make request
+            req = urllib.request.Request(
+                server_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            from core.limits import Limits
+
+            with urllib.request.urlopen(req, timeout=Limits.HTTP_REQUEST_TIMEOUT) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+
+            # Check response
+            if response_data.get("valid", False):
+                self.integrity_status_label.setText(tr("integrity_status_remote_success", lang=get_lang()))
+                self.integrity_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+                # Show details if available
+                if response_data.get("message"):
+                    self.integrity_result_label.setText(response_data["message"])
+                    self.integrity_result_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 10px;")
+                    self.integrity_result_label.setVisible(True)
+            else:
+                self.integrity_status_label.setText(tr("integrity_status_remote_fail", lang=get_lang()))
+                self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+                # Show error message
+                error_msg = response_data.get("message", "Unknown error")
+                self.integrity_result_label.setText(error_msg)
+                self.integrity_result_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 10px;")
+                self.integrity_result_label.setVisible(True)
+
+            self._gui_audit_log(
+                "INTEGRITY_VERIFY_REMOTE",
+                details={"server": server_url, "valid": response_data.get("valid", False)},
+            )
+
+        except urllib.error.URLError as e:
+            _gui_logger.error(f"Remote verification network error: {e}")
+            self.integrity_status_label.setText(tr("integrity_status_remote_fail", lang=get_lang()))
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self.integrity_result_label.setText(f"Network error: {e.reason}")
+            self.integrity_result_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 10px;")
+            self.integrity_result_label.setVisible(True)
+
+        except Exception as e:
+            _gui_logger.error(f"Remote verification failed: {e}")
+            self.integrity_status_label.setText(tr("integrity_status_remote_fail", lang=get_lang()))
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self.integrity_result_label.setText(str(e))
+            self.integrity_result_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 10px;")
+            self.integrity_result_label.setVisible(True)
 
     def _add_recovery_action_section(self, tab_layout: QVBoxLayout):
         """Add the recovery action section to the Recovery tab."""

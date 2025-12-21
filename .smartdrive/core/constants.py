@@ -341,6 +341,9 @@ class ConfigKeys:
     # Signing key configuration
     SIGNING_KEY_FPR = "signing_key_fpr"
 
+    # Remote verification (CHG-20251221-002)
+    INTEGRITY_SERVER_URL = "integrity_server_url"
+
     # GUI configuration
     GUI_LANG = "gui_lang"
     GUI_THEME = "gui_theme"

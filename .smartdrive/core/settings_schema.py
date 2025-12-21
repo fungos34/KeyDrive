@@ -510,6 +510,17 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_integrity_status",
         order=1,
     ),
+    # CHG-20251221-002: Remote verification server URL
+    SettingField(
+        key=ConfigKeys.INTEGRITY_SERVER_URL,
+        label_key="label_integrity_server_url",
+        field_type=FieldType.TEXT,
+        tab="Integrity",
+        group="Remote Verification",
+        default="",
+        tooltip_key="tooltip_integrity_server_url",
+        order=10,
+    ),
     SettingField(
         key=ConfigKeys.SALT_B64,
         label_key="label_salt_b64",

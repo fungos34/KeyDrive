@@ -21,7 +21,7 @@
     "enabled": true,
     "message": "If found, please return to police.\nprovide a plain explanation why you couldn't do so within 24 hours!\npassword: 1234"
   },
-  "gui_lang": "en",
+  "gui_lang": "de",
   "drive_name": "KeyFileSafer",
   "gui_theme": "blue",
   "keyfile": "",
@@ -32,6 +32,9 @@
   "update_url": "",
   "update_local_root": "",
   "verification_overridden": true,
-  "last_updated": "2025-12-21 03:10:29",
-  "seed.gpg": "H:/.smartdrive/keys/seed.gpg"
+  "last_updated": "2025-12-21 03:40:07",
+  "seed.gpg": "H:/.smartdrive/keys/seed.gpg",
+  "integrity_signed": "2025-12-21T02:38:12Z",
+  "signing_key_fpr": "20795EBE7248969E0A5AE9F1183999995BCBDACD",
+  "integrity_server_url": "www.alpwolf.at"
 }

@@ -49,6 +49,9 @@ class Limits:
     # Subprocess default
     SUBPROCESS_DEFAULT_TIMEOUT = 30
 
+    # HTTP requests (remote integrity verification, etc.)
+    HTTP_REQUEST_TIMEOUT = 30
+
     # PowerShell operations (Windows drive management, etc.)
     POWERSHELL_QUICK_TIMEOUT = 10
     POWERSHELL_ASSIGN_LETTER_TIMEOUT = 15

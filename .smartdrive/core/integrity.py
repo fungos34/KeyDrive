@@ -290,7 +290,7 @@ class Integrity:
         return (hash_value, manifest_path)
 
     @classmethod
-    def sign_manifest(cls, launcher_root: Path, key_id: Optional[str] = None) -> bool:
+    def sign_manifest(cls, launcher_root: Path, key_id: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Sign the integrity manifest with GPG.
 
@@ -299,7 +299,8 @@ class Integrity:
             key_id: Optional GPG key ID to use (default: default key)
 
         Returns:
-            True if signing succeeded
+            Tuple of (success: bool, signer_fingerprint: Optional[str])
+            BUG-20251221-006: Returns signer fingerprint for config storage.
         """
         from core.paths import Paths
 
@@ -308,10 +309,10 @@ class Integrity:
         signature_file = integrity_dir / cls.SIGNATURE_FILE
 
         if not manifest_file.exists():
-            return False
+            return (False, None)
 
         if not shutil.which("gpg"):
-            return False
+            return (False, None)
 
         # Remove old signature if exists
         if signature_file.exists():
@@ -325,9 +326,45 @@ class Integrity:
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=Limits.GPG_DECRYPT_TIMEOUT)
-            return result.returncode == 0 and signature_file.exists()
+            if result.returncode == 0 and signature_file.exists():
+                # BUG-20251221-006: Extract signer fingerprint
+                signer_fpr = cls._get_signer_fingerprint(signature_file, manifest_file)
+                return (True, signer_fpr)
+            return (False, None)
         except (subprocess.TimeoutExpired, Exception):
-            return False
+            return (False, None)
+
+    @classmethod
+    def _get_signer_fingerprint(cls, signature_file: Path, manifest_file: Path) -> Optional[str]:
+        """
+        Get the signer's key fingerprint from a GPG signature.
+
+        BUG-20251221-006: Extracts fingerprint for config storage.
+        """
+        try:
+            result = subprocess.run(
+                ["gpg", "--verify", "--status-fd", "1", str(signature_file), str(manifest_file)],
+                capture_output=True,
+                text=True,
+                timeout=Limits.GPG_CARD_STATUS_TIMEOUT,
+            )
+            # Look for VALIDSIG line which contains fingerprint
+            for line in result.stdout.splitlines():
+                if line.startswith("[GNUPG:] VALIDSIG"):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        return parts[2]  # Fingerprint is third element
+            # Fallback: try stderr for fingerprint
+            for line in result.stderr.splitlines():
+                if "using" in line.lower() and "key" in line.lower():
+                    # Extract key ID from lines like "using RSA key ABC123..."
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part.lower() == "key" and i + 1 < len(parts):
+                            return parts[i + 1].rstrip(".")
+            return None
+        except Exception:
+            return None
 
 
 def integrity_gate(launcher_root: Path, bypass_setting: bool = False, on_failure: str = "abort") -> IntegrityResult:
