@@ -4362,7 +4362,7 @@ class SettingsDialog(QDialog):
                 if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
                     gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
                     if gpg_seed_path:
-                        self.config[ConfigKeys.GPG_SEED] = gpg_seed_path
+                        self.config[FileNames.SEED_GPG] = gpg_seed_path
 
                 _gui_logger.info(f"Security mode changed from {old_mode} to {target_mode}")
 
