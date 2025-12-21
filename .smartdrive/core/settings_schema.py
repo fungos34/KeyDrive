@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Any, Callable, List, Optional
 
 from core.constants import ConfigKeys
-from core.modes import SecurityMode, SECURITY_MODE_DISPLAY
+from core.modes import SECURITY_MODE_DISPLAY, SecurityMode
 from core.paths import Paths
 
 # =============================================================================
@@ -332,6 +332,44 @@ SETTINGS_SCHEMA: List[SettingField] = [
         order=3,
     ),
     # =========================================================================
+    # Drive Context Display (CHG-20251221-040)
+    # Shows all 4 drive types: OS, Instantiation, Launcher, VeraCrypt
+    # These are runtime-computed read-only fields for user awareness
+    # BUG-20251224-001 FIX: Use platform-specific keys to avoid duplicate key errors
+    # =========================================================================
+    SettingField(
+        key=ConfigKeys.WINDOWS_OS_DRIVE,
+        label_key="label_os_drive",
+        field_type=FieldType.READONLY,
+        tab="Windows",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_os_drive",
+        order=8,
+    ),
+    SettingField(
+        key=ConfigKeys.WINDOWS_INSTANTIATION_DRIVE,
+        label_key="label_instantiation_drive",
+        field_type=FieldType.READONLY,
+        tab="Windows",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_instantiation_drive",
+        order=9,
+    ),
+    # Launcher Root: Read-only display of current .smartdrive context (CHG-20251221-026)
+    # BUG-20251223-001 FIX: Use WINDOWS_LAUNCHER_ROOT to avoid duplicate key collision
+    SettingField(
+        key=ConfigKeys.WINDOWS_LAUNCHER_ROOT,
+        label_key="label_launcher_root",
+        field_type=FieldType.READONLY,
+        tab="Windows",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_launcher_root",
+        order=10,
+    ),
+    # =========================================================================
     # Unix Tab
     # =========================================================================
     SettingField(
@@ -356,6 +394,43 @@ SETTINGS_SCHEMA: List[SettingField] = [
         placeholder="~/veradrive",
         tooltip_key="tooltip_mount_point",
         order=2,
+    ),
+    # =========================================================================
+    # Drive Context Display (CHG-20251221-040) - Unix
+    # Shows all 4 drive types: OS, Instantiation, Launcher, VeraCrypt
+    # BUG-20251224-001 FIX: Use platform-specific keys to avoid duplicate key errors
+    # =========================================================================
+    SettingField(
+        key=ConfigKeys.UNIX_OS_DRIVE,
+        label_key="label_os_drive",
+        field_type=FieldType.READONLY,
+        tab="Unix",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_os_drive",
+        order=8,
+    ),
+    SettingField(
+        key=ConfigKeys.UNIX_INSTANTIATION_DRIVE,
+        label_key="label_instantiation_drive",
+        field_type=FieldType.READONLY,
+        tab="Unix",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_instantiation_drive",
+        order=9,
+    ),
+    # Launcher Root: Read-only display of current .smartdrive context (CHG-20251221-026)
+    # BUG-20251223-001 FIX: Use UNIX_LAUNCHER_ROOT to avoid duplicate key collision
+    SettingField(
+        key=ConfigKeys.UNIX_LAUNCHER_ROOT,
+        label_key="label_launcher_root",
+        field_type=FieldType.READONLY,
+        tab="Unix",
+        group="drive_context",
+        readonly=True,
+        tooltip_key="tooltip_launcher_root",
+        order=10,
     ),
     # =========================================================================
     # Recovery Tab

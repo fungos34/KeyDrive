@@ -622,6 +622,27 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
     else:
         _log_update("update.static.notfound", source=str(static_src))
 
+    # BUG-20251221-032: Copy tests directory for post-deployment verification
+    # Tests MUST be deployed to target so verification runs against deployed code
+    tests_src = DEV_ROOT / Paths.SMARTDRIVE_DIR_NAME / "tests"
+    if tests_src.exists():
+        tests_dst = target_path / Paths.SMARTDRIVE_DIR_NAME / "tests"
+        try:
+            tests_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(tests_src, tests_dst, dirs_exist_ok=True)
+            # Count test files for logging
+            test_files = list(tests_dst.rglob("*.py"))
+            file_count = len(test_files)
+            print(f"  ✓ Tests folder (.smartdrive/tests/) - {file_count} test files")
+            _log_update("update.tests.copied", path=str(tests_dst), file_count=file_count)
+            success_count += 1
+        except Exception as e:
+            error(f"Failed to copy tests folder: {e}")
+            _log_update("update.tests.error", error=str(e))
+            error_count += 1
+    else:
+        _log_update("update.tests.notfound", source=str(tests_src))
+
     # Copy GUI executable if it exists (to .smartdrive/scripts)
     exe_src = DEV_ROOT / FileNames.DISTRIBUTION_DIR / FileNames.GUI_EXE
     if exe_src.exists():
@@ -660,6 +681,23 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
         print(f"  Errors: {error_count} files")
     print(f"  Target: {target_drive}:\\")
     print(f"  Version: {CURRENT_VERSION}")
+
+    # CHG-20251221-023: Run post-deployment tests after update completes
+    # Only run if not in dry-run mode and update was successful
+    if error_count == 0 and not dry_run:
+        print(f"\n{'─' * 70}")
+        print(f"  POST-UPDATE VERIFICATION")
+        print(f"{'─' * 70}")
+        try:
+            from setup import run_post_deployment_tests
+
+            run_post_deployment_tests(target_path)
+        except ImportError:
+            print("  [!] Post-deployment tests unavailable (setup module not found)")
+            _log_update("update.tests.unavailable", reason="import_error")
+        except Exception as e:
+            print(f"  [!] Post-deployment tests failed: {e}")
+            _log_update("update.tests.error", error=str(e))
 
     return error_count == 0
 

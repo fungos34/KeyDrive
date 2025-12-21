@@ -939,7 +939,8 @@ def render_header_export_gui_guide(
         print("  [i] VeraCrypt GUI already opened (single launch per session).\n")
 
     # Interactive loop with on-demand secret commands
-    print("  Commands: CPW (password), CKF (keyfile), CDP (device path), YES (done), NO (abort)")
+    # CHG-20251221-024: Added CBP command for copying header backup path
+    print("  Commands: CPW (password), CKF (keyfile), CDP (device path), CBP (header path), YES (done), NO (abort)")
     while True:
         response = input("  > ").strip().upper()
 
@@ -952,6 +953,16 @@ def render_header_export_gui_guide(
             continue
         elif response == "CDP":
             secrets_handler.handle_command("CDP")
+            continue
+        # CHG-20251221-024: Handle CBP (Copy Header Backup Path) command
+        elif response == "CBP":
+            if clipboard_available():
+                if copy_to_clipboard(str(output_path)):
+                    print(f"  [OK] Header backup path copied to clipboard: {output_path}")
+                else:
+                    print(f"  [!] Failed to copy to clipboard. Header path: {output_path}")
+            else:
+                print(f"  [!] Clipboard not available. Header path: {output_path}")
             continue
         elif response == (UserInputs.YES if UserInputs is not None else "YES"):
             # Verify the backup file exists

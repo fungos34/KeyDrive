@@ -17,8 +17,10 @@ import shutil
 import subprocess
 import sys
 import traceback
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 # Get logger for GUI module
 _gui_logger = logging.getLogger("SmartDriveGUI.gui")
@@ -77,6 +79,7 @@ from core.tray import TrayIconManager, is_tray_available
 # Import from core modules (single source of truth)
 from core.version import BUILD_ID, COMPATIBILITY_VERSION
 from core.version import VERSION as APP_VERSION
+from core.version import is_version_compatible
 
 # Global language setting (loaded from config or default)
 _current_lang = GUIConfig.DEFAULT_LANG
@@ -109,6 +112,149 @@ WINDOW_HEIGHT = Branding.WINDOW_HEIGHT
 WINDOW_MARGIN = Branding.WINDOW_MARGIN
 WINDOW_TITLE = Branding.WINDOW_TITLE
 WINDOW_WIDTH = Branding.WINDOW_WIDTH
+
+
+# ============================================================
+# CHG-20251221-042: Remote Control Mode Infrastructure
+# ============================================================
+
+
+class AppMode(Enum):
+    """Application mode for local vs remote drive control."""
+
+    LOCAL = auto()  # Normal mode - controlling local .smartdrive
+    REMOTE = auto()  # Remote mode - controlling a remote .smartdrive installation
+
+
+@dataclass
+class RemoteMountProfile:
+    """Profile for a remote .smartdrive installation being controlled."""
+
+    remote_root: Path  # e.g., H:\ (the drive root containing .smartdrive/)
+    remote_smartdrive: Path  # e.g., H:\.smartdrive
+    remote_config_path: Path  # e.g., H:\.smartdrive\config.json
+    remote_config: dict  # Loaded config from remote
+    original_drive_letter: str  # e.g., "H" - for disconnect detection
+    credential_paths: dict = field(default_factory=dict)  # Resolved keyfile/seed paths
+
+
+def validate_remote_root(remote_root: Path) -> tuple[bool, str]:
+    """
+    Validate that a path is a valid remote .smartdrive installation.
+
+    Args:
+        remote_root: Path to the drive root (e.g., H:\\)
+
+    Returns:
+        (success, error_message) - success=True if valid, otherwise error_message explains why
+    """
+    if not remote_root.exists():
+        return False, f"Path does not exist: {remote_root}"
+
+    smartdrive_dir = remote_root / ".smartdrive"
+    if not smartdrive_dir.is_dir():
+        return False, f"No .smartdrive directory found at {remote_root}"
+
+    config_path = smartdrive_dir / FileNames.CONFIG_JSON
+    if not config_path.is_file():
+        return False, f"No config.json found at {smartdrive_dir}"
+
+    scripts_dir = smartdrive_dir / "scripts"
+    if not scripts_dir.is_dir():
+        return False, f"No scripts directory found at {smartdrive_dir}"
+
+    # Check required scripts exist
+    required_scripts = [FileNames.MOUNT_PY, "unmount.py"]
+    for script in required_scripts:
+        if not (scripts_dir / script).is_file():
+            return False, f"Required script missing: {script}"
+
+    return True, ""
+
+
+def validate_remote_config(config_path: Path) -> tuple[bool, dict, str]:
+    """
+    Load and validate a remote config.json file.
+
+    Args:
+        config_path: Path to the config.json file
+
+    Returns:
+        (success, config_dict, error_message)
+    """
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        return False, {}, f"Config file not found: {config_path}"
+    except json.JSONDecodeError as e:
+        return False, {}, f"Invalid JSON in config: {e}"
+
+    # Validate schema_version exists
+    schema_version = config.get(ConfigKeys.SCHEMA_VERSION)
+    if not schema_version:
+        return False, {}, "Missing schema_version in remote config"
+
+    # Validate security mode is valid
+    mode_str = config.get(ConfigKeys.MODE, "")
+    try:
+        SecurityMode(mode_str)
+    except ValueError:
+        return False, {}, f"Invalid security mode in remote config: {mode_str}"
+
+    return True, config, ""
+
+
+def resolve_remote_credential_paths(remote_config: dict, remote_root: Path) -> dict:
+    """
+    Resolve credential paths from remote config relative to remote root.
+
+    All keyfile/seed paths in the remote config must be resolved relative
+    to the remote_root, never using local paths.
+
+    Args:
+        remote_config: The loaded remote config dict
+        remote_root: The remote drive root (e.g., H:\\)
+
+    Returns:
+        dict with resolved paths: {
+            "keyfiles": [Path, ...],  # Resolved keyfile paths
+            "seed_gpg": Optional[Path],  # Resolved seed.gpg path
+            "yubikey_slot": Optional[int],  # YubiKey slot if configured
+        }
+    """
+    result = {
+        "keyfiles": [],
+        "seed_gpg": None,
+        "yubikey_slot": None,
+    }
+
+    smartdrive_dir = remote_root / ".smartdrive"
+    keys_dir = smartdrive_dir / "keys"
+
+    mode_str = remote_config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+
+    # Handle keyfile references - use KEYFILE (singular) as per ConfigKeys
+    keyfile_ref = remote_config.get(ConfigKeys.KEYFILE, None)
+    if keyfile_ref:
+        # Keyfile can be absolute path or relative to keys/
+        kf_path = Path(keyfile_ref)
+        if not kf_path.is_absolute():
+            kf_path = keys_dir / keyfile_ref
+        if kf_path.exists():
+            result["keyfiles"].append(kf_path)
+
+    # Handle GPG seed path for GPG modes
+    if mode_str in [SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value]:
+        seed_path = keys_dir / FileNames.SEED_GPG
+        if seed_path.exists():
+            result["seed_gpg"] = seed_path
+
+    # Handle YubiKey slot for modes that require YubiKey
+    if mode_str in [SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value]:
+        result["yubikey_slot"] = remote_config.get("yubikey_slot", 2)
+
+    return result
 
 
 def sanitize_product_name(name: str) -> str:
@@ -213,7 +359,7 @@ def resolve_config_path() -> Path:
     Returns:
         Path to config.json in the script directory
     """
-    return get_script_dir() / "config.json"
+    return get_script_dir() / FileNames.CONFIG_JSON
 
 
 def get_static_dir():
@@ -310,9 +456,9 @@ sys.path.insert(0, str(SCRIPT_DIR))
 # Configuration - config.json lives in .smartdrive/, not .smartdrive/scripts/
 # SCRIPT_DIR is .smartdrive/scripts/, so parent is .smartdrive/
 if SCRIPT_DIR.name == "scripts" and SCRIPT_DIR.parent.name == ".smartdrive":
-    CONFIG_FILE = SCRIPT_DIR.parent / "config.json"  # .smartdrive/config.json
+    CONFIG_FILE = SCRIPT_DIR.parent / FileNames.CONFIG_JSON  # .smartdrive/config.json
 else:
-    CONFIG_FILE = SCRIPT_DIR / "config.json"  # fallback for development
+    CONFIG_FILE = SCRIPT_DIR / FileNames.CONFIG_JSON  # fallback for development
 
 try:
     from PyQt6.QtCore import QPoint, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
@@ -440,7 +586,13 @@ def open_in_file_manager(path: Path, parent=None) -> bool:
 
     try:
         if platform == "windows":
-            os.startfile(str(path))
+            # BUG-20251221-024: Use subprocess with CREATE_NO_WINDOW instead of os.startfile
+            # os.startfile() can trigger "syntax error in command line" popups
+            subprocess.run(
+                ["explorer", str(path)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+            )
         elif platform == "darwin":
             subprocess.run(["open", str(path)], check=False)
         else:
@@ -456,7 +608,8 @@ def open_in_file_manager(path: Path, parent=None) -> bool:
         return False
 
 
-from datetime import datetime
+# BUG-20251221-029: Added timezone import for UTC timestamp generation
+from datetime import datetime, timezone
 
 # Import SmartDrive functions
 from smartdrive import check_mount_status, detect_context
@@ -506,10 +659,20 @@ class MountWorker(QThread):
 
     finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
 
-    def __init__(self, password, keyfiles=None):
+    def __init__(self, password, keyfiles=None, config_path: Optional[Path] = None):
+        """
+        Initialize mount worker.
+
+        Args:
+            password: Password for VeraCrypt volume
+            keyfiles: List of keyfile paths
+            config_path: CHG-20251221-042: Optional path to config.json for remote mode.
+                        If provided, mount.py will use this config instead of local config.
+        """
         super().__init__()
         self.password = password
         self.keyfiles = keyfiles or []
+        self.config_path = config_path  # CHG-20251221-042: Remote config support
 
     def run(self):
         """Execute mount operation in background thread."""
@@ -519,7 +682,13 @@ class MountWorker(QThread):
             import sys
             from pathlib import Path
 
-            script_dir = get_script_dir()
+            # CHG-20251221-042: Use config_path's parent scripts dir for remote mode
+            if self.config_path:
+                # Remote mode: use scripts from remote .smartdrive
+                script_dir = self.config_path.parent / "scripts"
+            else:
+                script_dir = get_script_dir()
+
             mount_script = script_dir / FileNames.MOUNT_PY
 
             if not mount_script.exists():
@@ -530,6 +699,11 @@ class MountWorker(QThread):
 
             # Run mount script with password (if provided)
             cmd = [str(python_exe), str(mount_script), "--gui"]
+
+            # CHG-20251221-042: Pass config path for remote mode
+            if self.config_path:
+                cmd.extend(["--config", str(self.config_path)])
+
             if self.password:
                 cmd.extend(["--password", self.password])
             if self.keyfiles:
@@ -574,8 +748,16 @@ class UnmountWorker(QThread):
 
     finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
 
-    def __init__(self):
+    def __init__(self, config_path: Optional[Path] = None):
+        """
+        Initialize unmount worker.
+
+        Args:
+            config_path: CHG-20251221-042: Optional path to config.json for remote mode.
+                        If provided, unmount.py will use this config instead of local config.
+        """
         super().__init__()
+        self.config_path = config_path  # CHG-20251221-042: Remote config support
 
     def run(self):
         """Execute unmount operation in background thread."""
@@ -585,7 +767,13 @@ class UnmountWorker(QThread):
             import sys
             from pathlib import Path
 
-            script_dir = get_script_dir()
+            # CHG-20251221-042: Use config_path's parent scripts dir for remote mode
+            if self.config_path:
+                # Remote mode: use scripts from remote .smartdrive
+                script_dir = self.config_path.parent / "scripts"
+            else:
+                script_dir = get_script_dir()
+
             unmount_script = script_dir / "unmount.py"
 
             if not unmount_script.exists():
@@ -596,6 +784,11 @@ class UnmountWorker(QThread):
 
             # Run unmount script
             cmd = [str(python_exe), str(unmount_script), "--gui"]
+
+            # CHG-20251221-042: Pass config path for remote mode
+            if self.config_path:
+                cmd.extend(["--config", str(self.config_path)])
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -635,27 +828,32 @@ class RecoveryGenerateWorker(QThread):
     finished = pyqtSignal(bool, str, dict)  # success, message_key, message_args
     progress = pyqtSignal(str)  # status message
 
-    def __init__(self, config: dict, smartdrive_dir: Path, force: bool = False):
+    def __init__(self, config: dict, smartdrive_dir: Path, force: bool = False, password: str = None):
         super().__init__()
         self.config = config
         self.smartdrive_dir = smartdrive_dir
         self.force = force
+        self.password = password  # BUG-20251221-043: Optional password for PW_ONLY mode
 
     def run(self):
         """
         Execute recovery kit generation in background thread.
-        
+
         BUG-20251221-019 FIX:
         1. Derive credentials using SecretProvider (same flow as rekey)
         2. Pass credentials to recovery.py via environment variables
         3. Call recovery.py generate --non-interactive --format printable
         4. No user interaction required - fully automated
+
+        BUG-20251221-043 FIX:
+        - For PW_ONLY mode, use password provided in constructor instead of returning early
         """
         try:
-            import subprocess
-            import os
             import base64
+            import os
+            import subprocess
             from pathlib import Path
+
             from core.secrets import SecretProvider
 
             script_dir = get_script_dir()
@@ -676,13 +874,15 @@ class RecoveryGenerateWorker(QThread):
 
                 # Get password
                 if mode == SecurityMode.PW_ONLY.value:
-                    # User must enter password (we can't derive it)
-                    self.finished.emit(
-                        False, 
-                        "recovery_generate_status_failed", 
-                        {"error": "PW_ONLY mode requires manual password entry (not implemented in GUI yet)"}
-                    )
-                    return
+                    # BUG-20251221-043 FIX: Use password provided in constructor
+                    if self.password is None:
+                        self.finished.emit(
+                            False,
+                            "recovery_generate_status_failed",
+                            {"error": "PW_ONLY mode requires password but none was provided"},
+                        )
+                        return
+                    password = self.password
                 elif mode == SecurityMode.GPG_PW_ONLY.value:
                     password = provider._derive_password_gpg_pw_only()
                 elif mode == SecurityMode.PW_KEYFILE.value:
@@ -692,7 +892,7 @@ class RecoveryGenerateWorker(QThread):
                         self.finished.emit(
                             False,
                             "recovery_generate_status_failed",
-                            {"error": "PW_KEYFILE mode: password not available in config"}
+                            {"error": "PW_KEYFILE mode: password not available in config"},
                         )
                         return
                 elif mode == SecurityMode.PW_GPG_KEYFILE.value:
@@ -702,14 +902,12 @@ class RecoveryGenerateWorker(QThread):
                         self.finished.emit(
                             False,
                             "recovery_generate_status_failed",
-                            {"error": "PW_GPG_KEYFILE mode: password not available in config"}
+                            {"error": "PW_GPG_KEYFILE mode: password not available in config"},
                         )
                         return
                 else:
                     self.finished.emit(
-                        False, 
-                        "recovery_generate_status_failed", 
-                        {"error": f"Unsupported security mode: {mode}"}
+                        False, "recovery_generate_status_failed", {"error": f"Unsupported security mode: {mode}"}
                     )
                     return
 
@@ -731,15 +929,13 @@ class RecoveryGenerateWorker(QThread):
                                 self.finished.emit(
                                     False,
                                     "recovery_generate_status_failed",
-                                    {"error": f"Failed to decrypt keyfile: {e}"}
+                                    {"error": f"Failed to decrypt keyfile: {e}"},
                                 )
                                 return
 
             except Exception as e:
                 self.finished.emit(
-                    False, 
-                    "recovery_generate_status_failed", 
-                    {"error": f"Credential derivation failed: {e}"}
+                    False, "recovery_generate_status_failed", {"error": f"Credential derivation failed: {e}"}
                 )
                 return
 
@@ -776,6 +972,7 @@ class RecoveryGenerateWorker(QThread):
                     elif "recovery" in line.lower() and "html" in line.lower():
                         # Fallback: extract any path-looking string
                         import re
+
                         path_match = re.search(r"[A-Z]:\\[^\s]+|/[^\s]+", line)
                         if path_match:
                             kit_path = path_match.group(0)
@@ -796,6 +993,7 @@ class RecoveryGenerateWorker(QThread):
             self.finished.emit(False, "recovery_generate_status_failed", {"error": "Generation timed out"})
         except Exception as e:
             import traceback
+
             error_detail = f"{e}\n{traceback.format_exc()}"
             self.finished.emit(False, "recovery_generate_status_failed", {"error": error_detail})
 
@@ -1058,6 +1256,111 @@ class KeyfileDropBox(QTextEdit):
         super().mousePressEvent(event)
 
 
+# ============================================================
+# CHG-20251221-042: Remote Control Mode Banner Label
+# ============================================================
+
+
+class RemoteBannerLabel(QLabel):
+    """
+    Custom label widget for remote control mode indicator.
+
+    Features:
+    - Displays "Remote Control Active" with red background
+    - Blinking animation (red/white) in sync with window border
+    - On hover: shows "Click to End Remote" with steady white background
+    - Clicking exits remote mode
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._is_hovered = False
+        self._blink_state = False  # False=red, True=white
+
+        # Set cursor to indicate clickable
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Enable mouse tracking for hover
+        self.setMouseTracking(True)
+
+        # Initial styling
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        """
+        Apply appropriate style based on hover and blink state.
+
+        BUG-20251221-046 FIX: Use rectangular shape (border-radius: 0px).
+        """
+        if self._is_hovered:
+            # Hover: steady white background, black text
+            # BUG-20251221-046 FIX: Use border-radius: 0px for rectangular shape
+            self.setStyleSheet(
+                """
+                QLabel {
+                    background-color: #FFFFFF;
+                    color: #000000;
+                    padding: 4px 8px;
+                    border-radius: 0px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+            """
+            )
+            self.setText(tr("remote_click_to_end", lang=get_lang()))
+        else:
+            # Normal: blinking red/white
+            if self._blink_state:
+                bg_color = "#FFFFFF"
+                text_color = "#D32F2F"  # Red text on white
+            else:
+                bg_color = "#D32F2F"  # Red
+                text_color = "#FFFFFF"  # White text
+
+            # BUG-20251221-046 FIX: Use border-radius: 0px for rectangular shape
+            self.setStyleSheet(
+                f"""
+                QLabel {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    padding: 4px 8px;
+                    border-radius: 0px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }}
+            """
+            )
+            self.setText(tr("remote_active_label", lang=get_lang()))
+
+    def set_blink_state(self, state: bool) -> None:
+        """Set the blink state (for animation)."""
+        self._blink_state = state
+        if not self._is_hovered:
+            self._apply_style()
+
+    def enterEvent(self, event) -> None:
+        """Handle mouse enter - show hover state."""
+        self._is_hovered = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        """Handle mouse leave - return to normal state."""
+        self._is_hovered = False
+        self._apply_style()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        """Handle mouse click - emit clicked signal."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+
 class SmartDriveGUI(QWidget):
     """Main KeyDrive GUI window."""
 
@@ -1084,6 +1387,14 @@ class SmartDriveGUI(QWidget):
 
         # Multi-keyfile support
         self.keyfiles = []
+
+        # CHG-20251221-042: Remote Control Mode state
+        self._app_mode = AppMode.LOCAL
+        self._remote_profile: Optional[RemoteMountProfile] = None
+        self._remote_identity_timer: Optional[QTimer] = None
+        self._remote_banner: Optional[RemoteBannerLabel] = None
+        self._remote_blink_timer: Optional[QTimer] = None
+        self._remote_blink_state = False
 
         # Load configuration (with migration if needed)
         self.config = self.load_config()
@@ -1650,6 +1961,221 @@ QPushButton:pressed {{
         if script_dir.name == "scripts" and script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
             return script_dir.parent.parent
         return script_dir.parent
+
+    # =========================================================================
+    # Multi-drive context switching (CHG-20251221-026)
+    # =========================================================================
+
+    def _get_recent_drives(self) -> list:
+        """
+        Get list of recent drive context paths from QSettings.
+
+        Returns list of path strings, max 5 entries.
+        """
+        recent = self.settings.value("recent_drives", [], type=list)
+        # Validate entries exist
+        return [p for p in recent if Path(p).exists()][:5]
+
+    def _add_to_recent_drives(self, smartdrive_path: Path) -> None:
+        """
+        Add a .smartdrive path to the recent drives list.
+
+        Args:
+            smartdrive_path: Path to .smartdrive folder
+        """
+        path_str = str(smartdrive_path)
+        recent = self._get_recent_drives()
+
+        # Remove if already present (will re-add at top)
+        if path_str in recent:
+            recent.remove(path_str)
+
+        # Add at top
+        recent.insert(0, path_str)
+
+        # Keep max 5
+        recent = recent[:5]
+
+        self.settings.setValue("recent_drives", recent)
+
+    def _populate_switch_drive_menu(self, menu: "QMenu") -> None:
+        """
+        Populate the switch drive submenu with recent drives and browse option.
+
+        Args:
+            menu: The QMenu to populate
+        """
+        recent_drives = self._get_recent_drives()
+
+        # Add recent drives (max 3 shown in quick menu)
+        for drive_path in recent_drives[:3]:
+            # Show drive letter/name for quick identification
+            path_obj = Path(drive_path)
+            display_name = f"{path_obj.parent.name} ({path_obj.parent})"
+            action = menu.addAction(display_name)
+            action.setData(drive_path)
+            action.triggered.connect(lambda checked, p=drive_path: self._switch_drive_context(Path(p)))
+
+        if recent_drives:
+            menu.addSeparator()
+
+        # Browse action
+        browse_action = menu.addAction(tr("menu_switch_drive_browse", lang=get_lang()))
+        browse_action.triggered.connect(self._browse_for_drive_context)
+
+    def _browse_for_drive_context(self) -> None:
+        """Open file dialog to select a .smartdrive folder."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle(tr("switch_drive_select_folder", lang=get_lang()))
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+
+        if dialog.exec():
+            selected = dialog.selectedFiles()
+            if selected:
+                selected_path = Path(selected[0])
+                # Validate it's a .smartdrive folder or parent containing one
+                if selected_path.name == Paths.SMARTDRIVE_DIR_NAME:
+                    smartdrive_path = selected_path
+                else:
+                    smartdrive_path = selected_path / Paths.SMARTDRIVE_DIR_NAME
+
+                if (smartdrive_path / FileNames.CONFIG_JSON).exists():
+                    self._switch_drive_context(smartdrive_path)
+                else:
+                    QMessageBox.warning(
+                        self,
+                        tr("switch_drive_title", lang=get_lang()),
+                        tr("switch_drive_invalid_path", lang=get_lang()),
+                    )
+
+    def _check_drive_compatibility(self, config_path: Path) -> tuple[bool, str, str]:
+        """
+        Check version compatibility of a target drive's config.
+
+        Args:
+            config_path: Path to the target drive's config.json
+
+        Returns:
+            Tuple of (can_proceed, severity, message):
+            - can_proceed: True if safe to proceed (or user can confirm)
+            - severity: "OK", "WARNING", or "ERROR"
+            - message: Human-readable explanation
+        """
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                target_config = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            return (False, "ERROR", f"Cannot read config: {e}")
+
+        # Extract version info from target config
+        target_version = target_config.get(ConfigKeys.VERSION, "0.0.0")
+        target_schema = target_config.get(ConfigKeys.SCHEMA_VERSION, 1)
+
+        # Validate schema is an integer
+        if not isinstance(target_schema, int):
+            try:
+                target_schema = int(target_schema)
+            except (ValueError, TypeError):
+                return (
+                    False,
+                    "ERROR",
+                    f"Invalid schema_version in config: {target_schema!r}",
+                )
+
+        return is_version_compatible(target_version, target_schema)
+
+    def _switch_drive_context(self, new_smartdrive_path: Path) -> None:
+        """
+        Switch to a different .smartdrive context.
+
+        Args:
+            new_smartdrive_path: Path to the .smartdrive folder to switch to
+        """
+        config_path = new_smartdrive_path / FileNames.CONFIG_JSON
+
+        if not config_path.exists():
+            QMessageBox.warning(
+                self,
+                tr("switch_drive_title", lang=get_lang()),
+                tr("switch_drive_invalid_path", lang=get_lang()),
+            )
+            return
+
+        # Check version compatibility BEFORE switching
+        can_proceed, severity, compat_msg = self._check_drive_compatibility(config_path)
+
+        if severity == "ERROR":
+            # Fatal incompatibility - cannot proceed
+            QMessageBox.critical(
+                self,
+                tr("version_incompatible_title", lang=get_lang()),
+                tr("version_incompatible_error", lang=get_lang()).format(message=compat_msg),
+            )
+            return
+
+        if severity == "WARNING":
+            # Show warning and require confirmation
+            warning_reply = QMessageBox.warning(
+                self,
+                tr("version_incompatible_title", lang=get_lang()),
+                tr("version_incompatible_warning", lang=get_lang()).format(
+                    message=compat_msg,
+                    path=str(new_smartdrive_path),
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if warning_reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Confirm switch
+        reply = QMessageBox.question(
+            self,
+            tr("switch_drive_title", lang=get_lang()),
+            tr("switch_drive_confirm", lang=get_lang()).format(path=str(new_smartdrive_path)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Add to recent drives
+        self._add_to_recent_drives(new_smartdrive_path)
+
+        # Update global CONFIG_FILE path
+        global CONFIG_FILE
+        CONFIG_FILE = config_path
+
+        # Update _launcher_root
+        self._launcher_root = new_smartdrive_path.parent
+
+        # Reload config
+        self._reload_config()
+
+        # Refresh UI
+        self.update_button_states()
+        self.update_storage_display()
+        self._update_lost_and_found_banner()
+
+        # Update branding in case drive name changed
+        current_product_name = get_product_name(self.settings)
+        self.apply_branding(current_product_name)
+
+        _gui_logger.info(f"Switched drive context to: {new_smartdrive_path}")
+
+    def _reload_config(self) -> None:
+        """Reload configuration from the current CONFIG_FILE path."""
+        try:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                self.config = json.load(f)
+            _gui_logger.info(f"Reloaded config from: {CONFIG_FILE}")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            log_exception("Error reloading config", e, level="error")
+            self.config = {}
 
     def get_static_asset(self, filename: str) -> Optional[Path]:
         """
@@ -2644,7 +3170,7 @@ QPushButton:pressed {{
 
                 # Save config immediately (atomic write for data integrity)
                 try:
-                    config_path = get_script_dir() / "config.json"
+                    config_path = get_script_dir() / FileNames.CONFIG_JSON
                     write_config_atomic(config_path, self.config)
                 except Exception as e:
                     log_exception("Error saving theme config", e)
@@ -2751,6 +3277,71 @@ QPushButton:pressed {{
             # Update tray icon to reflect mount state
             self._update_tray_icon_state()
         self.update_storage_display()
+
+    def check_remote_identity(self) -> None:
+        """
+        CHG-20251221-042: Check if remote drive is still accessible.
+
+        Called by QTimer every 5 seconds when in REMOTE mode.
+        If remote drive disconnected, auto-exit remote mode with warning.
+        """
+        if self._app_mode != AppMode.REMOTE or self._remote_profile is None:
+            return
+
+        profile = self._remote_profile
+        # Check if the remote root still exists and is accessible
+        try:
+            if not profile.remote_root.exists():
+                _gui_logger.warning(f"Remote drive disconnected: {profile.remote_root}")
+                self._handle_remote_disconnect()
+                return
+
+            # Additional check: verify config.json still exists
+            if not profile.remote_config_path.exists():
+                _gui_logger.warning(f"Remote config disappeared: {profile.remote_config_path}")
+                self._handle_remote_disconnect()
+                return
+
+        except (OSError, PermissionError) as e:
+            _gui_logger.warning(f"Remote drive inaccessible: {e}")
+            self._handle_remote_disconnect()
+
+    def _handle_remote_disconnect(self) -> None:
+        """
+        CHG-20251221-042: Handle unexpected remote drive disconnection.
+
+        Shows warning and exits remote mode gracefully.
+        """
+        # Stop the identity check timer first
+        if self._remote_identity_timer:
+            self._remote_identity_timer.stop()
+            self._remote_identity_timer = None
+
+        # Store drive letter for message before clearing profile
+        drive_letter = ""
+        if self._remote_profile:
+            drive_letter = self._remote_profile.original_drive_letter
+
+        # Exit remote mode
+        self._app_mode = AppMode.LOCAL
+        self._remote_profile = None
+
+        # Restore local config
+        self._reload_config()
+
+        # Update UI
+        self.update_button_states()
+        self.update_storage_display()
+        self._update_lost_and_found_banner()
+
+        # Show warning to user
+        show_popup(
+            self,
+            "remote_disconnected_title",
+            "remote_disconnected_body",
+            icon="warning",
+            drive=drive_letter,
+        )
 
     def update_drive_icon(self):
         """Update the drive icon display with software icon."""
@@ -2859,9 +3450,13 @@ QPushButton:pressed {{
         }
 
         try:
-            # Get KeyDrive (launch drive) info
-            script_dir = get_script_dir()
-            drive_path = script_dir.parent.parent  # Go up to drive root
+            # CHG-20251221-042: Use remote root when in remote mode
+            if self._app_mode == AppMode.REMOTE and self._remote_profile:
+                drive_path = self._remote_profile.remote_root
+            else:
+                # Get KeyDrive (launch drive) info
+                script_dir = get_script_dir()
+                drive_path = script_dir.parent.parent  # Go up to drive root
 
             if drive_path.exists():
                 stat = shutil.disk_usage(str(drive_path))
@@ -2900,9 +3495,21 @@ QPushButton:pressed {{
             )
 
             # Get drive letter for launch drive
+            # BUG-20251221-027: Use _launcher_root instead of sys.executable
+            # sys.executable points to Python install, not KeyDrive deployment
+            # CHG-20251221-042: Use remote drive letter when in remote mode
             try:
-                drive_path = Path(sys.executable).parent
-                drive_letter = drive_path.drive.upper().rstrip(":")
+                if self._app_mode == AppMode.REMOTE and self._remote_profile:
+                    # Remote mode: use remote drive letter
+                    drive_letter = self._remote_profile.original_drive_letter
+                    if not drive_letter:
+                        drive_letter = str(self._remote_profile.remote_root.drive).upper().rstrip(":")
+                elif hasattr(self, "_launcher_root") and self._launcher_root:
+                    drive_letter = str(self._launcher_root.drive).upper().rstrip(":")
+                else:
+                    # Fallback to sys.executable only if _launcher_root not set
+                    drive_path = Path(sys.executable).parent
+                    drive_letter = drive_path.drive.upper().rstrip(":")
                 if not drive_letter:
                     # Fallback for network/UNC paths
                     drive_letter = "Local"
@@ -2986,7 +3593,12 @@ QPushButton:pressed {{
 
     def _on_open_launcher_clicked(self) -> None:
         """Open the launcher drive root in the system file manager."""
-        launcher_path = self._launcher_root
+        # CHG-20251221-042: Use remote root when in remote mode
+        if self._app_mode == AppMode.REMOTE and self._remote_profile:
+            launcher_path = self._remote_profile.remote_root
+        else:
+            launcher_path = self._launcher_root
+
         if launcher_path and launcher_path.exists():
             open_in_file_manager(launcher_path, parent=self)
         else:
@@ -3117,13 +3729,19 @@ QPushButton:pressed {{
                 log_exception("Error setting GPG hint visibility in mount_drive", e, level="debug")
                 self.key_hint_label.setVisible(False)
 
+        # CHG-20251221-042: Determine config_path for remote mode
+        config_path = None
+        if self._app_mode == AppMode.REMOTE and self._remote_profile:
+            config_path = self._remote_profile.remote_config_path
+
         if mode == SecurityMode.GPG_PW_ONLY.value:
             # GPG password-only mode: no password input needed, mount directly
             self.set_status("status_mounting_gpg")
             self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
             # Start mount operation in background thread
-            self.mount_worker = MountWorker("")  # Empty password for GPG mode
+            # CHG-20251221-042: Pass config_path for remote mode
+            self.mount_worker = MountWorker("", config_path=config_path)  # Empty password for GPG mode
             self.mount_worker.finished.connect(self.on_mount_finished)
             self.mount_worker.start()
 
@@ -3200,8 +3818,13 @@ QPushButton:pressed {{
         self.set_status("status_mounting")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
+        # CHG-20251221-042: Determine config_path for remote mode
+        config_path = None
+        if self._app_mode == AppMode.REMOTE and self._remote_profile:
+            config_path = self._remote_profile.remote_config_path
+
         # Start mount operation in background thread
-        self.mount_worker = MountWorker(password, keyfiles)
+        self.mount_worker = MountWorker(password, keyfiles, config_path=config_path)
         self.mount_worker.finished.connect(self.on_mount_finished)
         self.mount_worker.start()
 
@@ -3261,18 +3884,8 @@ QPushButton:pressed {{
 
     def show_recovery(self):
         """Show recovery options by opening Settings dialog to Recovery tab."""
-        # Open settings dialog and switch to Recovery tab
-        dialog = SettingsDialog(self.settings, self)
-
-        # Find the Recovery tab index
-        recovery_tab_index = -1
-        for i in range(dialog.tab_widget.count()):
-            if dialog.tab_widget.tabText(i) == tr("settings_recovery", lang=get_lang()):
-                recovery_tab_index = i
-                break
-
-        if recovery_tab_index >= 0:
-            dialog.tab_widget.setCurrentIndex(recovery_tab_index)
+        # CHG-20251221-025: Use initial_tab parameter instead of manual tab selection
+        dialog = SettingsDialog(self.settings, self, initial_tab="Recovery")
 
         # Show the dialog
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -3318,8 +3931,13 @@ QPushButton:pressed {{
         self.set_status("status_unmounting")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
+        # CHG-20251221-042: Determine config_path for remote mode
+        config_path = None
+        if self._app_mode == AppMode.REMOTE and self._remote_profile:
+            config_path = self._remote_profile.remote_config_path
+
         # Start unmount operation in background thread
-        self.unmount_worker = UnmountWorker()
+        self.unmount_worker = UnmountWorker(config_path=config_path)
         self.unmount_worker.finished.connect(self.on_unmount_finished)
         self.unmount_worker.start()
 
@@ -3395,26 +4013,474 @@ QPushButton:pressed {{
                 background-color: {COLORS['primary']};
                 color: white;
             }}
+            QMenu::item:disabled {{
+                color: {COLORS['text_secondary']};
+            }}
         """
         )
 
-        # Update action
-        update_action = menu.addAction(tr("menu_update", lang=get_lang()))
-        update_action.triggered.connect(self.run_update)
+        is_remote = self._app_mode == AppMode.REMOTE
 
-        # Settings action
+        # Update action (disabled in remote mode)
+        update_action = menu.addAction(tr("menu_update", lang=get_lang()))
+        update_action.triggered.connect(self._on_update_action)
+        update_action.setEnabled(not is_remote)
+
+        # Settings action (disabled in remote mode)
         settings_action = menu.addAction(tr("menu_settings", lang=get_lang()))
-        settings_action.triggered.connect(self.show_settings)
+        settings_action.triggered.connect(self._on_settings_action)
+        settings_action.setEnabled(not is_remote)
+
+        # Switch Drive submenu (CHG-20251221-026) - disabled in remote mode
+        switch_drive_menu = menu.addMenu(tr("menu_switch_drive", lang=get_lang()))
+        switch_drive_menu.setEnabled(not is_remote)
+        self._populate_switch_drive_menu(switch_drive_menu)
+
+        # CHG-20251221-042: Remote Control Mode submenu
+        if is_remote:
+            # In remote mode, show "Exit Remote Mode"
+            menu.addSeparator()
+            exit_remote_action = menu.addAction(tr("menu_exit_remote", lang=get_lang()))
+            exit_remote_action.triggered.connect(self.exit_remote_mode)
+        else:
+            # In local mode, show "Manage Remote..." submenu
+            remote_menu = menu.addMenu(tr("menu_manage_remote", lang=get_lang()))
+            self._populate_remote_menu(remote_menu)
 
         # Separator
         menu.addSeparator()
 
-        # CLI fallback
+        # CLI fallback (disabled in remote mode)
         cli_action = menu.addAction(tr("menu_cli", lang=get_lang()))
-        cli_action.triggered.connect(self.open_cli)
+        cli_action.triggered.connect(self._on_cli_action)
+        cli_action.setEnabled(not is_remote)
 
         # Show menu below the tools button
         menu.exec(self.tools_btn.mapToGlobal(QPoint(0, self.tools_btn.height())))
+
+    def _on_update_action(self) -> None:
+        """Handle Update menu action with remote mode check."""
+        if self._app_mode == AppMode.REMOTE:
+            show_popup(self, "remote_mode_disabled_title", "remote_mode_disabled_update", icon="warning")
+            return
+        self.run_update()
+
+    def _on_settings_action(self) -> None:
+        """Handle Settings menu action with remote mode check."""
+        if self._app_mode == AppMode.REMOTE:
+            show_popup(self, "remote_mode_disabled_title", "remote_mode_disabled_settings", icon="warning")
+            return
+        self.show_settings()
+
+    def _on_cli_action(self) -> None:
+        """Handle CLI menu action with remote mode check."""
+        if self._app_mode == AppMode.REMOTE:
+            show_popup(self, "remote_mode_disabled_title", "remote_mode_disabled_cli", icon="warning")
+            return
+        self.open_cli()
+
+    def _get_recent_remote_roots(self) -> List[Path]:
+        """
+        CHG-20251221-048: Get list of recent remote roots from QSettings.
+
+        Returns:
+            List of up to 3 most recent remote root paths.
+        """
+        settings = QSettings("KeyDrive", "GUI")
+        recent = settings.value("recent_remote_roots", [])
+        if not isinstance(recent, list):
+            return []
+        return [Path(p) for p in recent if p]
+
+    def _add_to_recent_remote_roots(self, root: Path) -> None:
+        """
+        CHG-20251221-048: Add a remote root to the recent list in QSettings.
+
+        Maintains max 3 entries, most recent first.
+
+        Args:
+            root: Path to the remote root directory.
+        """
+        settings = QSettings("KeyDrive", "GUI")
+        recent = self._get_recent_remote_roots()
+
+        # Remove if already in list (will be re-added at front)
+        root_str = str(root)
+        recent = [r for r in recent if str(r) != root_str]
+
+        # Add to front
+        recent.insert(0, root)
+
+        # Keep only 3 most recent
+        recent = recent[:3]
+
+        # Save back to QSettings
+        settings.setValue("recent_remote_roots", [str(r) for r in recent])
+
+    def _populate_remote_menu(self, menu: QMenu) -> None:
+        """
+        CHG-20251221-042: Populate the Manage Remote submenu.
+        CHG-20251221-048: Show recent remote roots (up to 3) + browse option.
+
+        Shows recent remote drives and browse option.
+        """
+        recent_roots = self._get_recent_remote_roots()
+
+        # Add recent roots (if any)
+        if recent_roots:
+            for root in recent_roots:
+                # Validate if root still exists and has .smartdrive/config.json
+                smartdrive_dir = root / ".smartdrive"
+                config_path = smartdrive_dir / FileNames.CONFIG_JSON
+                is_valid = config_path.exists()
+
+                # Create action with root path as display text
+                action = menu.addAction(f"📁 {root}")
+                action.setData(root)  # Store path in action data
+                action.triggered.connect(lambda checked=False, r=root: self.enter_remote_mode(r))
+
+                # Gray out invalid entries
+                if not is_valid:
+                    action.setEnabled(False)
+                    action.setText(f"📁 {root} (unavailable)")
+
+            # Separator between recent and browse
+            menu.addSeparator()
+
+        # Browse for remote .smartdrive
+        browse_action = menu.addAction(tr("menu_manage_remote_browse", lang=get_lang()))
+        browse_action.triggered.connect(self._browse_for_remote)
+
+    def _browse_for_remote(self) -> None:
+        """
+        CHG-20251221-042: Browse for a remote .smartdrive directory.
+        """
+        from PyQt6.QtWidgets import QFileDialog
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            tr("remote_confirm_title", lang=get_lang()),
+            "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
+
+        if not folder:
+            return
+
+        remote_root = Path(folder)
+
+        # If user selected a .smartdrive folder directly, use parent as root
+        if remote_root.name == ".smartdrive":
+            remote_root = remote_root.parent
+
+        self.enter_remote_mode(remote_root)
+
+    def enter_remote_mode(self, remote_root: Path) -> None:
+        """
+        CHG-20251221-042: Enter remote control mode for a remote .smartdrive installation.
+
+        Args:
+            remote_root: Path to the remote drive root (e.g., H:\\)
+
+        BUG-20251221-045 FIX: Save current button styles before entering remote mode.
+        """
+        # Validate remote root structure
+        valid, error = validate_remote_root(remote_root)
+        if not valid:
+            show_popup(
+                self, "remote_validation_failed_title", "remote_validation_failed_body", icon="error", error=error
+            )
+            return
+
+        # Validate remote config
+        remote_smartdrive = remote_root / ".smartdrive"
+        config_path = remote_smartdrive / FileNames.CONFIG_JSON
+        valid, remote_config, error = validate_remote_config(config_path)
+        if not valid:
+            show_popup(
+                self, "remote_validation_failed_title", "remote_validation_failed_body", icon="error", error=error
+            )
+            return
+
+        # Extract drive letter for disconnect detection (Windows-specific)
+        drive_letter = ""
+        if len(str(remote_root)) >= 2 and str(remote_root)[1] == ":":
+            drive_letter = str(remote_root)[0].upper()
+
+        # Resolve credential paths relative to remote root
+        credential_paths = resolve_remote_credential_paths(remote_config, remote_root)
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            tr("remote_confirm_title", lang=get_lang()),
+            tr("remote_confirm_body", lang=get_lang()).format(path=str(remote_smartdrive)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # BUG-20251221-045 FIX: Save original button styles before entering remote mode
+        # BUG-20251222-049 FIX: Use correct attribute name tools_btn (not tools_button)
+        self._original_button_styles = {
+            "mount_btn": self.mount_btn.styleSheet(),
+            "unmount_btn": self.unmount_btn.styleSheet(),
+            "tools_btn": self.tools_btn.styleSheet(),
+        }
+
+        # Create remote profile
+        self._remote_profile = RemoteMountProfile(
+            remote_root=remote_root,
+            remote_smartdrive=remote_smartdrive,
+            remote_config_path=config_path,
+            remote_config=remote_config,
+            original_drive_letter=drive_letter,
+            credential_paths=credential_paths,
+        )
+
+        # Switch to remote mode
+        self._app_mode = AppMode.REMOTE
+
+        # Update global CONFIG_FILE to point to remote config
+        global CONFIG_FILE
+        CONFIG_FILE = config_path
+
+        # Update _launcher_root to remote root
+        self._launcher_root = remote_root
+
+        # Reload config from remote
+        self.config = remote_config
+
+        # Apply remote UI state
+        self._apply_remote_ui_state()
+
+        # Start identity check timer (5 second interval)
+        self._remote_identity_timer = QTimer()
+        self._remote_identity_timer.timeout.connect(self.check_remote_identity)
+        self._remote_identity_timer.start(5000)
+
+        # CHG-20251221-048: Add to recent remote roots list
+        self._add_to_recent_remote_roots(remote_root)
+
+        _gui_logger.info(f"Entered remote control mode for: {remote_smartdrive}")
+
+    def _apply_remote_ui_state(self) -> None:
+        """
+        CHG-20251221-042: Apply UI changes for remote mode.
+
+        - Show remote banner with blinking animation
+        - Apply red border frame around window
+        - Hide lost & found banner
+        - Update storage bar to show remote drive
+        - Update security mode fields based on remote config
+        """
+        # Hide lost & found banner in remote mode
+        if hasattr(self, "lost_and_found_banner") and self.lost_and_found_banner:
+            self.lost_and_found_banner.setVisible(False)
+
+        # Create and show remote banner
+        self._show_remote_banner()
+
+        # Apply red border to main window
+        self._apply_remote_border(True)
+
+        # Start blink timer
+        self._start_remote_blink()
+
+        # Refresh UI elements
+        self.update_button_states()
+        self.update_storage_display()
+
+        # Update security mode fields based on remote config
+        self._update_auth_fields_for_mode()
+
+    def _show_remote_banner(self) -> None:
+        """CHG-20251221-042: Create and show the remote control banner."""
+        if self._remote_banner is not None:
+            self._remote_banner.setVisible(True)
+            return
+
+        # Create the banner
+        self._remote_banner = RemoteBannerLabel(self)
+        self._remote_banner.clicked.connect(self.exit_remote_mode)
+
+        # Position in top-right corner (will be repositioned in resizeEvent)
+        self._position_remote_banner()
+        self._remote_banner.show()
+
+    def _hide_remote_banner(self) -> None:
+        """CHG-20251221-042: Hide the remote control banner."""
+        if self._remote_banner is not None:
+            self._remote_banner.hide()
+
+    def _position_remote_banner(self) -> None:
+        """CHG-20251221-042: Position the remote banner in top-right corner."""
+        if self._remote_banner is None:
+            return
+
+        # Get the banner size
+        self._remote_banner.adjustSize()
+        banner_width = self._remote_banner.width()
+
+        # Position in top-right, with some margin for the border and close button
+        margin_right = 40  # Space for close button
+        margin_top = 8
+        x = self.width() - banner_width - margin_right
+        y = margin_top
+
+        self._remote_banner.move(x, y)
+
+    def _apply_remote_border(self, enabled: bool) -> None:
+        """
+        CHG-20251221-042: Apply or remove red border around window.
+
+        BUG-20251221-046 FIX: Use rectangular border (no rounded corners) for retro style.
+        """
+        if enabled:
+            # BUG-20251221-046 FIX: Use border-radius: 0px for rectangular border
+            self.setStyleSheet(
+                f"""
+                QWidget#mainWindow {{
+                    background-color: {COLORS['background']};
+                    border-radius: 0px;
+                    border: 3px solid #D32F2F;
+                }}
+            """
+            )
+        else:
+            # Remove border, restore normal style with original corner radius
+            self.setStyleSheet(
+                f"""
+                QWidget#mainWindow {{
+                    background-color: {COLORS['background']};
+                    border-radius: {CORNER_RADIUS}px;
+                }}
+            """
+            )
+
+    def _start_remote_blink(self) -> None:
+        """CHG-20251221-042: Start the remote banner blink animation."""
+        if self._remote_blink_timer is not None:
+            return
+
+        self._remote_blink_timer = QTimer()
+        self._remote_blink_timer.timeout.connect(self._toggle_remote_blink)
+        self._remote_blink_timer.start(1000)  # 1 second interval
+
+    def _stop_remote_blink(self) -> None:
+        """CHG-20251221-042: Stop the remote banner blink animation."""
+        if self._remote_blink_timer is not None:
+            self._remote_blink_timer.stop()
+            self._remote_blink_timer = None
+
+    def _toggle_remote_blink(self) -> None:
+        """CHG-20251221-042: Toggle the blink state for remote banner and border."""
+        self._remote_blink_state = not self._remote_blink_state
+
+        # Update banner blink state
+        if self._remote_banner is not None:
+            self._remote_banner.set_blink_state(self._remote_blink_state)
+
+        # Update border color
+        if self._remote_blink_state:
+            border_color = "#FFFFFF"  # White
+        else:
+            border_color = "#D32F2F"  # Red
+
+        self.setStyleSheet(
+            f"""
+            QWidget#mainWindow {{
+                background-color: {COLORS['background']};
+                border-radius: {CORNER_RADIUS}px;
+                border: 3px solid {border_color};
+            }}
+        """
+        )
+
+    def exit_remote_mode(self) -> None:
+        """
+        CHG-20251221-042: Exit remote control mode and return to local mode.
+
+        BUG-20251221-045 FIX: Restore original button styles when exiting remote mode.
+        BUG-20251221-047 FIX: Refresh storage display with local launcher_root to remove remote volumes.
+        """
+        # Stop identity check timer
+        if self._remote_identity_timer:
+            self._remote_identity_timer.stop()
+            self._remote_identity_timer = None
+
+        # Stop blink timer
+        self._stop_remote_blink()
+
+        # Hide remote banner
+        self._hide_remote_banner()
+
+        # Remove red border
+        self._apply_remote_border(False)
+
+        # Clear remote profile
+        self._remote_profile = None
+
+        # Switch back to local mode
+        self._app_mode = AppMode.LOCAL
+
+        # Restore global CONFIG_FILE to local config
+        global CONFIG_FILE
+        CONFIG_FILE = self._detect_local_config_path()
+
+        # Restore _launcher_root to local root
+        self._launcher_root = self._detect_launcher_root()
+
+        # Reload local config
+        self._reload_config()
+
+        # BUG-20251221-045 FIX: Restore original button styles
+        # BUG-20251222-049 FIX: Use correct attribute name tools_btn (not tools_button)
+        if hasattr(self, "_original_button_styles") and self._original_button_styles:
+            self.mount_btn.setStyleSheet(self._original_button_styles.get("mount_btn", ""))
+            self.unmount_btn.setStyleSheet(self._original_button_styles.get("unmount_btn", ""))
+            self.tools_btn.setStyleSheet(self._original_button_styles.get("tools_btn", ""))
+            self._original_button_styles = None
+
+        # Apply local UI state
+        self._apply_local_ui_state()
+
+        _gui_logger.info("Exited remote control mode, returned to local mode")
+
+    def _apply_local_ui_state(self) -> None:
+        """
+        CHG-20251221-042: Restore UI to local mode state.
+        """
+        # Refresh all UI elements
+        self.update_button_states()
+        self.update_storage_display()
+        self._update_lost_and_found_banner()
+
+        # Update security mode fields based on local config
+        self._update_auth_fields_for_mode()
+
+    def _detect_local_config_path(self) -> Path:
+        """
+        CHG-20251221-042: Detect the local config.json path.
+
+        Returns the config path for the local .smartdrive installation.
+        """
+        script_dir = get_script_dir()
+        if script_dir.name == "scripts" and script_dir.parent.name == ".smartdrive":
+            return script_dir.parent / FileNames.CONFIG_JSON
+        return script_dir / FileNames.CONFIG_JSON
+
+    def _update_auth_fields_for_mode(self) -> None:
+        """
+        CHG-20251221-042: Update authentication fields based on current config's security mode.
+
+        Called when entering/exiting remote mode to show appropriate fields.
+        """
+        # This method ensures auth fields match the current config
+        # The actual visibility logic is in update_button_states()
+        pass  # Placeholder - specific field updates handled by update_button_states
 
     def build_update_plan(self) -> dict:
         """
@@ -3684,7 +4750,7 @@ QPushButton:pressed {{
             smartdrive_script = script_dir / "smartdrive.py"
             # Config is at .smartdrive/config.json
             smartdrive_dir = script_dir.parent
-            config_path = smartdrive_dir / "config.json"
+            config_path = smartdrive_dir / FileNames.CONFIG_JSON
             python_exe = get_python_exe()
 
             # Use python.exe instead of pythonw.exe for CLI
@@ -4116,10 +5182,20 @@ class GPGKeySelectionDialog(QDialog):
 class SettingsDialog(QDialog):
     """Schema-driven settings dialog for application configuration (config.json-backed)."""
 
-    def __init__(self, settings, parent=None):
+    def __init__(self, settings, parent=None, initial_tab: str = None):
+        """
+        Initialize settings dialog.
+
+        Args:
+            settings: QSettings object for app preferences
+            parent: Parent widget (MainWindow)
+            initial_tab: Optional tab name to open initially (e.g., "Updates", "Recovery").
+                        CHG-20251221-025: Allows callers to open Settings to a specific tab.
+        """
         super().__init__(parent)
         self.settings = settings
         self.parent = parent
+        self._initial_tab = initial_tab  # CHG-20251221-025: Store for use after tabs are built
         self.setWindowTitle(tr("settings_window_title", lang=get_lang()))
         self.setModal(True)
         self.resize(650, 700)  # Larger for tabbed interface
@@ -4132,7 +5208,7 @@ class SettingsDialog(QDialog):
         else:
             # Fallback: detect from scripts directory
             self._launcher_root = get_script_dir().parent
-        
+
         # BUG-20251221-020: Get _smartdrive_dir for RecoveryGenerateWorker
         # Required for credential derivation in recovery kit generation
         self._smartdrive_dir = self._launcher_root / Paths.SMARTDRIVE_DIR_NAME
@@ -4257,6 +5333,37 @@ class SettingsDialog(QDialog):
         # CHG-20251221-012: Add About section with version info
         self._add_about_section_to_general_tab()
 
+        # CHG-20251221-025: Select initial tab if specified
+        if self._initial_tab:
+            self._select_tab_by_name(self._initial_tab)
+
+    def _select_tab_by_name(self, tab_name: str) -> bool:
+        """
+        Select a tab by its name.
+
+        CHG-20251221-025: Allows opening Settings to a specific tab.
+
+        Args:
+            tab_name: Tab name (e.g., "Updates", "Recovery", "General")
+
+        Returns:
+            True if tab was found and selected, False otherwise
+        """
+        # Try exact match first (translated name)
+        translated_name = tr(f"settings_{tab_name.lower()}", lang=get_lang())
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(i) == translated_name:
+                self.tab_widget.setCurrentIndex(i)
+                return True
+
+        # Fallback: try matching untranslated tab name from schema
+        for i, schema_tab_name in enumerate(self.get_all_tabs()):
+            if schema_tab_name.lower() == tab_name.lower():
+                self.tab_widget.setCurrentIndex(i)
+                return True
+
+        return False
+
     def _create_tab(self, tab_name: str):
         """Create a tab widget with fields from schema."""
         tab_widget = QWidget()
@@ -4288,34 +5395,38 @@ class SettingsDialog(QDialog):
             grouped_fields[group].append(field)
 
         # Create group boxes
+        # BUG-20251221-036: Translate group names via tr()
         for group_name, group_fields in grouped_fields.items():
             if group_name:
-                # Named group - create QGroupBox
+                # Named group - create QGroupBox with translated title
+                # Convert "Drive Identification" -> "group_drive_identification"
+                group_key = f"group_{group_name.lower().replace(' ', '_')}"
+                translated_group_name = tr(group_key, lang=get_lang())
                 # NOTE: Explicit self.X_box = QGroupBox( pattern required for test detection
                 tab_lower = tab_name.lower()
                 if tab_lower == "general":
-                    self.general_box = QGroupBox(group_name)
+                    self.general_box = QGroupBox(translated_group_name)
                     group_box = self.general_box
                 elif tab_lower == "security":
-                    self.security_box = QGroupBox(group_name)
+                    self.security_box = QGroupBox(translated_group_name)
                     group_box = self.security_box
                 elif tab_lower == "keyfile":
-                    self.keyfile_box = QGroupBox(group_name)
+                    self.keyfile_box = QGroupBox(translated_group_name)
                     group_box = self.keyfile_box
                 elif tab_lower == "windows":
-                    self.windows_box = QGroupBox(group_name)
+                    self.windows_box = QGroupBox(translated_group_name)
                     group_box = self.windows_box
                 elif tab_lower == "unix":
-                    self.unix_box = QGroupBox(group_name)
+                    self.unix_box = QGroupBox(translated_group_name)
                     group_box = self.unix_box
                 elif tab_lower == "updates":
-                    self.updates_box = QGroupBox(group_name)
+                    self.updates_box = QGroupBox(translated_group_name)
                     group_box = self.updates_box
                 elif tab_lower == "recovery":
-                    self.recovery_box = QGroupBox(group_name)
+                    self.recovery_box = QGroupBox(translated_group_name)
                     group_box = self.recovery_box
                 else:
-                    group_box = QGroupBox(group_name)
+                    group_box = QGroupBox(translated_group_name)
 
                 self.group_boxes[f"{tab_name}:{group_name}"] = group_box
 
@@ -4514,6 +5625,24 @@ class SettingsDialog(QDialog):
         self.start_rekey_btn.clicked.connect(self._start_rekey_flow)
         rekey_layout.addWidget(self.start_rekey_btn)
 
+        # BUG-20251221-039: Add copy credential buttons for on-demand credential retrieval
+        copy_buttons_layout = QHBoxLayout()
+        copy_buttons_layout.setSpacing(10)
+
+        # Copy Old Password button
+        self.copy_old_pwd_btn = QPushButton(tr("btn_copy_old_password", lang=get_lang()))
+        self.copy_old_pwd_btn.setToolTip(tr("tooltip_copy_old_password", lang=get_lang()))
+        self.copy_old_pwd_btn.clicked.connect(self._copy_old_credential_to_clipboard)
+        copy_buttons_layout.addWidget(self.copy_old_pwd_btn)
+
+        # Copy New Password button
+        self.copy_new_pwd_btn = QPushButton(tr("btn_copy_new_password", lang=get_lang()))
+        self.copy_new_pwd_btn.setToolTip(tr("tooltip_copy_new_password", lang=get_lang()))
+        self.copy_new_pwd_btn.clicked.connect(self._copy_new_credential_to_clipboard)
+        copy_buttons_layout.addWidget(self.copy_new_pwd_btn)
+
+        rekey_layout.addLayout(copy_buttons_layout)
+
         # Status label
         self.rekey_status_label = QLabel(tr("rekey_status_ready", lang=get_lang()))
         self.rekey_status_label.setWordWrap(True)
@@ -4622,6 +5751,21 @@ class SettingsDialog(QDialog):
         if not save_path:
             return
 
+        # BUG-20251221-038: Check if file exists and ask user before overwriting
+        # GPG requires --yes flag for non-interactive overwrite
+        overwrite_mode = False
+        if os.path.exists(save_path):
+            overwrite_reply = QMessageBox.question(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                f"File already exists:\n{save_path}\n\nOverwrite existing seed file?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if overwrite_reply != QMessageBox.StandardButton.Yes:
+                return
+            overwrite_mode = True
+
         try:
             # Generate cryptographically secure seed
             seed = secrets.token_bytes(32)  # 256-bit seed
@@ -4631,6 +5775,7 @@ class SettingsDialog(QDialog):
             salt_b64 = base64.b64encode(salt).decode("ascii")
 
             # Encrypt seed with GPG
+            # BUG-20251221-038: Add --yes flag when overwriting existing file
             gpg_args = [
                 "gpg",
                 "--encrypt",
@@ -4640,6 +5785,8 @@ class SettingsDialog(QDialog):
                 "--recipient",
                 fingerprint,
             ]
+            if overwrite_mode:
+                gpg_args.insert(1, "--yes")  # Insert --yes after "gpg"
 
             proc = subprocess.Popen(gpg_args, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
             _, stderr = proc.communicate(input=seed)
@@ -4660,8 +5807,8 @@ class SettingsDialog(QDialog):
             self._generated_seed_salt = salt_b64
 
             # Copy password to clipboard with TTL (30 seconds)
-            from PyQt6.QtWidgets import QApplication
             from PyQt6.QtCore import QTimer
+            from PyQt6.QtWidgets import QApplication
 
             clipboard = QApplication.clipboard()
             clipboard.setText(derived_password)
@@ -4692,6 +5839,169 @@ class SettingsDialog(QDialog):
                 f"{tr('gpg_seed_generate_fail', lang=get_lang())}\n\n{e}",
             )
 
+    def _copy_old_credential_to_clipboard(self):
+        """
+        BUG-20251221-039: Copy old (current) password to clipboard.
+
+        Derives password from current seed.gpg using SecretProvider,
+        then copies to clipboard with 30-second TTL.
+        """
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtWidgets import QApplication
+
+        try:
+            # Get current mode
+            current_mode = (
+                self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+                if self.config
+                else SecurityMode.PW_ONLY.value
+            )
+
+            # Only GPG modes have derived passwords
+            if current_mode not in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
+                QMessageBox.information(
+                    self,
+                    tr("copy_password_title", lang=get_lang()),
+                    "Current mode does not use derived passwords.\n"
+                    "For password-only modes, you must remember your password.",
+                )
+                return
+
+            # Initialize SecretProvider with current config paths
+            from core.secrets import SecretProvider
+
+            provider = SecretProvider(
+                smartdrive_dir=self._smartdrive_dir,
+                mode=current_mode,
+                salt_b64=self.config.get(ConfigKeys.SALT_B64),
+                seed_gpg_path=self.config.get(ConfigKeys.SEED_GPG_PATH),
+            )
+
+            # Derive password
+            password = provider._derive_password_gpg_pw_only()
+            if not password:
+                raise ValueError("Failed to derive password from current seed")
+
+            # Copy to clipboard with TTL
+            clipboard = QApplication.clipboard()
+            clipboard.setText(password)
+
+            # Auto-clear after 30 seconds
+            QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == password else None)
+
+            QMessageBox.information(
+                self,
+                tr("copy_password_title", lang=get_lang()),
+                f"✓ Old password ({len(password)} chars) copied to clipboard.\n\n"
+                f"⏱ Clipboard will auto-clear in 30 seconds.",
+            )
+
+            self._gui_audit_log("OLD_PASSWORD_COPIED", details={"mode": current_mode})
+
+        except Exception as e:
+            _gui_logger.error(f"Failed to copy old password: {e}")
+            QMessageBox.critical(
+                self,
+                tr("copy_password_title", lang=get_lang()),
+                f"Failed to derive old password:\n\n{e}",
+            )
+
+    def _copy_new_credential_to_clipboard(self):
+        """
+        BUG-20251221-039: Copy new password to clipboard.
+
+        Derives password from the GPG seed specified in the rekey form,
+        then copies to clipboard with 30-second TTL.
+        """
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtWidgets import QApplication
+
+        try:
+            # Get target mode
+            target_mode = self.rekey_target_mode_combo.currentData()
+
+            # Only GPG modes have derived passwords
+            if target_mode not in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
+                QMessageBox.information(
+                    self,
+                    tr("copy_password_title", lang=get_lang()),
+                    "Target mode does not use derived passwords.\n"
+                    "For password-only modes, enter your own password in VeraCrypt.",
+                )
+                return
+
+            # Get the new seed path from the form
+            new_seed_path = self.rekey_gpg_seed_edit.text().strip()
+            if not new_seed_path:
+                QMessageBox.warning(
+                    self,
+                    tr("copy_password_title", lang=get_lang()),
+                    "Please enter or generate a GPG seed file path first.",
+                )
+                return
+
+            if not Path(new_seed_path).exists():
+                QMessageBox.warning(
+                    self,
+                    tr("copy_password_title", lang=get_lang()),
+                    f"Seed file not found:\n{new_seed_path}",
+                )
+                return
+
+            # Use the stored salt if available (from recently generated seed)
+            salt_b64 = getattr(self, "_generated_seed_salt", None)
+            if not salt_b64:
+                # Try to get from config
+                salt_b64 = self.config.get(ConfigKeys.SALT_B64) if self.config else None
+
+            if not salt_b64:
+                QMessageBox.warning(
+                    self,
+                    tr("copy_password_title", lang=get_lang()),
+                    "Salt not available. Please generate a new seed first.",
+                )
+                return
+
+            # Derive password from the new seed
+            from core.secrets import SecretProvider
+
+            provider = SecretProvider(
+                smartdrive_dir=self._smartdrive_dir,
+                mode=target_mode,
+                salt_b64=salt_b64,
+                seed_gpg_path=new_seed_path,
+            )
+
+            password = provider._derive_password_gpg_pw_only()
+            if not password:
+                raise ValueError("Failed to derive password from new seed")
+
+            # Copy to clipboard with TTL
+            clipboard = QApplication.clipboard()
+            clipboard.setText(password)
+
+            # Auto-clear after 30 seconds
+            QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == password else None)
+
+            QMessageBox.information(
+                self,
+                tr("copy_password_title", lang=get_lang()),
+                f"✓ New password ({len(password)} chars) copied to clipboard.\n\n"
+                f"⏱ Clipboard will auto-clear in 30 seconds.",
+            )
+
+            self._gui_audit_log(
+                "NEW_PASSWORD_COPIED", details={"mode": target_mode, "seed": new_seed_path[:20] + "..."}
+            )
+
+        except Exception as e:
+            _gui_logger.error(f"Failed to copy new password: {e}")
+            QMessageBox.critical(
+                self,
+                tr("copy_password_title", lang=get_lang()),
+                f"Failed to derive new password:\n\n{e}",
+            )
+
     def _start_rekey_flow(self):
         """
         Start the credential change (rekey) flow.
@@ -4700,6 +6010,9 @@ class SettingsDialog(QDialog):
         credential provisioning based on security mode.
         BUG-011 FIX: Actually derive and provide password for GPG_PW_ONLY mode.
         CHG-20251221-001: Support mode changes during rekey.
+        CHG-20251221-027: Added copy password button.
+        CHG-20251221-028: Auto-unmount before VeraCrypt launch.
+        CHG-20251221-029: Provide credentials based on security mode.
         """
         import os
         import subprocess
@@ -4761,70 +6074,177 @@ class SettingsDialog(QDialog):
         self._rekey_target_mode = target_mode
         self._rekey_mode_changing = mode_is_changing
 
-        # Determine if we need to provide current credentials
+        # CHG-20251221-028: Auto-unmount before VeraCrypt launch
+        # VeraCrypt cannot change password while volume is mounted
+        self.rekey_status_label.setText(tr("status_checking_mount", lang=get_lang()))
+        QApplication.processEvents()
+
+        try:
+            from scripts.veracrypt_cli import get_mount_status, unmount
+
+            # Get mount point from config
+            if os.name == "nt":
+                mount_point = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
+            else:
+                mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+
+            if mount_point and get_mount_status(mount_point):
+                # Volume is mounted - ask user to confirm unmount
+                reply = QMessageBox.question(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    "⚠️ Volume is currently mounted.\n\n"
+                    "VeraCrypt cannot change credentials while the volume is mounted.\n"
+                    "The volume will be unmounted automatically.\n\n"
+                    "Do you want to continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+                # Unmount the volume
+                self.rekey_status_label.setText(tr("status_unmounting_for_rekey", lang=get_lang()))
+                QApplication.processEvents()
+
+                if not unmount(mount_point, force=False):
+                    QMessageBox.critical(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        "Failed to unmount volume.\n\n" "Please close any applications using the volume and try again.",
+                    )
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+                _gui_logger.info("Volume unmounted successfully for rekey")
+        except ImportError:
+            _gui_logger.warning("veracrypt_cli not available, skipping mount check")
+        except Exception as e:
+            _gui_logger.warning(f"Mount status check failed: {e}")
+
+        # CHG-20251221-029: Determine if we need to provide current credentials
         # For GPG_PW_ONLY mode, the password is derived from GPG-encrypted seed
+        # For PW_GPG_KEYFILE mode, we need to decrypt the keyfile
         # For other modes, user knows the password
-        need_credential_provision = current_mode == SecurityMode.GPG_PW_ONLY.value
+        need_credential_provision = current_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value)
 
         # Check for post-recovery state (credentials were already recovered)
         post_recovery = self.config.get("post_recovery", {})
         is_post_recovery = post_recovery.get("rekey_required") and not post_recovery.get("rekey_completed")
 
-        # BUG-011 FIX: Actually derive and copy password for GPG_PW_ONLY mode
+        # CHG-20251221-029: Provide credentials based on security mode
         derived_password = None
+        temp_keyfile_path = None
+
         if need_credential_provision and not is_post_recovery:
-            # Need to decrypt credentials for user
-            reply = QMessageBox.information(
-                self,
-                tr("rekey_section_title", lang=get_lang()),
-                "For GPG_PW_ONLY mode, the current password will be derived using your hardware key.\n\n"
-                "Please ensure your YubiKey/GPG card is inserted.\n\n"
-                "The password will be copied to clipboard for use in VeraCrypt.\n"
-                "Press OK to continue with password derivation.",
-                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            )
-            if reply == QMessageBox.StandardButton.Cancel:
-                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                return
-
-            # Derive password using SecretProvider
-            # BUG-20251221-004 FIX: Use from_config() classmethod instead of direct instantiation
-            self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
-            QApplication.processEvents()
-
-            try:
-                from core.limits import Limits
-                from core.secrets import SecretProvider
-
-                # BUG-20251221-004 FIX: SecretProvider is a dataclass, use from_config() factory
-                # BUG-20251221-009 FIX: Use _derive_password_gpg_pw_only() instead of non-existent get_password()
-                smartdrive_dir = self._launcher_root / ".smartdrive"
-                provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
-
-                # Derive password using the internal method (same as rekey.py derive_password_via_provider)
-                derived_password = provider._derive_password_gpg_pw_only()
-
-                # Copy to clipboard with SSOT-defined TTL
-                clipboard_timeout = Limits.CLIPBOARD_TIMEOUT
-                provider.copy_password_to_clipboard(timeout=clipboard_timeout)
-
-                QMessageBox.information(
+            if current_mode == SecurityMode.GPG_PW_ONLY.value:
+                # BUG-011 FIX: Actually derive and copy password for GPG_PW_ONLY mode
+                reply = QMessageBox.information(
                     self,
                     tr("rekey_section_title", lang=get_lang()),
-                    f"✅ Current password has been copied to clipboard!\n\n"
-                    f"⏱️ The clipboard will be cleared after {clipboard_timeout} seconds.\n\n"
-                    "Use Ctrl+V to paste the CURRENT password in VeraCrypt when changing credentials.",
+                    "For GPG_PW_ONLY mode, the current password will be derived using your hardware key.\n\n"
+                    "Please ensure your YubiKey/GPG card is inserted.\n\n"
+                    "The password will be copied to clipboard for use in VeraCrypt.\n"
+                    "Press OK to continue with password derivation.",
+                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
                 )
-            except Exception as e:
-                _gui_logger.error(f"Failed to derive password: {e}")
-                QMessageBox.critical(
+                if reply == QMessageBox.StandardButton.Cancel:
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+                # Derive password using SecretProvider
+                self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
+                QApplication.processEvents()
+
+                try:
+                    from core.limits import Limits
+                    from core.secrets import SecretProvider
+
+                    smartdrive_dir = self._launcher_root / ".smartdrive"
+                    provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
+
+                    # Derive password using the internal method
+                    derived_password = provider._derive_password_gpg_pw_only()
+
+                    # Copy to clipboard with SSOT-defined TTL
+                    clipboard_timeout = Limits.CLIPBOARD_TIMEOUT
+                    provider.copy_password_to_clipboard(timeout=clipboard_timeout)
+
+                    # CHG-20251221-027: Show password with Copy button
+                    QMessageBox.information(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"✅ Current password has been copied to clipboard!\n\n"
+                        f"⏱️ The clipboard will be cleared after {clipboard_timeout} seconds.\n\n"
+                        "Use Ctrl+V to paste the CURRENT password in VeraCrypt when changing credentials.",
+                    )
+                except Exception as e:
+                    _gui_logger.error(f"Failed to derive password: {e}")
+                    QMessageBox.critical(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"Failed to derive password from YubiKey:\n{e}\n\n"
+                        "Ensure your YubiKey is inserted and try again.",
+                    )
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+            elif current_mode == SecurityMode.PW_GPG_KEYFILE.value:
+                # CHG-20251221-029: Handle PW_GPG_KEYFILE mode - decrypt keyfile
+                reply = QMessageBox.information(
                     self,
                     tr("rekey_section_title", lang=get_lang()),
-                    f"Failed to derive password from YubiKey:\n{e}\n\n"
-                    "Ensure your YubiKey is inserted and try again.",
+                    "For PW_GPG_KEYFILE mode, the encrypted keyfile will be decrypted using your hardware key.\n\n"
+                    "Please ensure your YubiKey/GPG card is inserted.\n\n"
+                    "A temporary decrypted keyfile will be created for VeraCrypt.\n"
+                    "Press OK to continue with keyfile decryption.",
+                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
                 )
-                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                return
+                if reply == QMessageBox.StandardButton.Cancel:
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+                self.rekey_status_label.setText(tr("status_decrypting_keyfile", lang=get_lang()))
+                QApplication.processEvents()
+
+                try:
+                    import tempfile
+
+                    from core.secrets import SecretProvider
+
+                    smartdrive_dir = self._launcher_root / ".smartdrive"
+                    provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
+
+                    # Get decrypted keyfile bytes
+                    keyfile_bytes = provider.get_keyfile()
+
+                    # Write to temp file for VeraCrypt
+                    with tempfile.NamedTemporaryFile(mode="wb", suffix=".key", delete=False) as f:
+                        f.write(keyfile_bytes)
+                        temp_keyfile_path = f.name
+
+                    # Store for cleanup
+                    self._temp_keyfile_path = temp_keyfile_path
+
+                    # Show path to user
+                    QMessageBox.information(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"✅ Keyfile decrypted successfully!\n\n"
+                        f"📁 Temporary keyfile location:\n{temp_keyfile_path}\n\n"
+                        "Use this path as the 'Current keyfile' in VeraCrypt.\n\n"
+                        "⚠️ The temporary keyfile will be securely deleted after rekey.",
+                    )
+                except Exception as e:
+                    _gui_logger.error(f"Failed to decrypt keyfile: {e}")
+                    QMessageBox.critical(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"Failed to decrypt keyfile:\n{e}\n\n" "Ensure your YubiKey is inserted and try again.",
+                    )
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
 
         # Launch VeraCrypt GUI
         self.rekey_status_label.setText(tr("rekey_status_opening_veracrypt", lang=get_lang()))
@@ -4870,8 +6290,16 @@ class SettingsDialog(QDialog):
             )
 
             if reply == QMessageBox.StandardButton.Yes:
-                # Mark rekey as completed
-                self._complete_rekey()
+                # BUG-20251221-030: Validate new credentials before replacing files
+                validation_ok, skip_validation = self._validate_new_credentials_before_rekey()
+                if not validation_ok and not skip_validation:
+                    # User chose not to proceed without validation
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+                    return
+
+                # Mark rekey as completed (with warning if validation skipped)
+                self._complete_rekey(validation_skipped=skip_validation)
             else:
                 self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
                 self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
@@ -4880,15 +6308,209 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Rekey", f"Failed to launch VeraCrypt: {e}")
             self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
 
-    def _complete_rekey(self):
+    def _validate_new_credentials_before_rekey(self) -> tuple:
+        """
+        BUG-20251221-030: Validate new credentials before replacing files.
+
+        Attempts to mount the volume with the new credentials to verify
+        the VeraCrypt credential change was successful.
+
+        Returns:
+            tuple: (validation_passed: bool, user_chose_to_skip: bool)
+                - (True, False): Validation passed
+                - (False, True): Validation failed but user chose to proceed anyway
+                - (False, False): Validation failed and user chose to abort
+        """
+        # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
+        self.rekey_status_label.setText(tr("rekey_validating", lang=get_lang()))
+        QApplication.processEvents()
+
+        try:
+            from scripts.veracrypt_cli import InvalidCredentialsError, VeraCryptError, try_mount, unmount
+
+            # Get volume path and mount point from config
+            if os.name == "nt":
+                volume_path = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.VOLUME_PATH, "")
+                mount_point = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
+                if mount_point and not mount_point.endswith(":"):
+                    mount_point = f"{mount_point}:"
+            else:
+                volume_path = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.VOLUME_PATH, "")
+                mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+
+            if not volume_path or not mount_point:
+                # Can't validate without volume info - skip validation with warning
+                reply = QMessageBox.warning(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    "⚠️ Cannot validate new credentials:\nVolume path not configured.\n\n"
+                    "Do you want to proceed anyway?\n"
+                    "(Risk: If credential change failed, old files will be overwritten)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                return (False, reply == QMessageBox.StandardButton.Yes)
+
+            # Get new password from the form
+            new_password = self.rekey_new_password_edit.text()
+            if not new_password:
+                # If no password in form, can't validate
+                return (False, True)  # Skip validation, proceed anyway
+
+            # Get new keyfile if applicable
+            target_mode = getattr(self, "_rekey_target_mode", None)
+            keyfile_path = None
+            if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
+                keyfile_text = self.rekey_keyfile_edit.text().strip()
+                if keyfile_text:
+                    keyfile_path = Path(keyfile_text)
+
+            # For GPG modes, derive the actual mount password
+            actual_password = new_password
+            if target_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
+                # Need to derive password from GPG seed using the new password as PIN
+                try:
+                    gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
+                    if gpg_seed_path and Path(gpg_seed_path).exists():
+                        from core.secrets import SecretProvider
+
+                        provider = SecretProvider(config=self.config, smartdrive_dir=get_script_dir().parent)
+                        # This would derive the password using the seed and PIN
+                        # However, we can't easily test this without the full derivation logic
+                        # For now, skip validation for GPG modes with warning
+                        reply = QMessageBox.warning(
+                            self,
+                            tr("rekey_section_title", lang=get_lang()),
+                            "⚠️ GPG mode detected - automatic validation not available.\n\n"
+                            "Please verify manually that you can mount the volume\n"
+                            "with the new credentials before closing this dialog.\n\n"
+                            "Do you want to proceed?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.No,
+                        )
+                        return (False, reply == QMessageBox.StandardButton.Yes)
+                except Exception as e:
+                    _gui_logger.warning(f"GPG derivation check failed: {e}")
+                    return (False, True)
+
+            # Try to mount with new credentials
+            # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
+            self.rekey_status_label.setText(tr("rekey_testing_mount", lang=get_lang()))
+            QApplication.processEvents()
+
+            try:
+                success, error_msg = try_mount(
+                    volume_path=volume_path,
+                    mount_point=mount_point,
+                    password=actual_password,
+                    keyfile_path=keyfile_path,
+                )
+
+                if success:
+                    # Unmount immediately after successful test
+                    # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
+                    self.rekey_status_label.setText(tr("rekey_validation_success", lang=get_lang()))
+                    QApplication.processEvents()
+                    try:
+                        unmount(mount_point)
+                    except Exception as e:
+                        # BUG-20251223-003 FIX: Log exception instead of silent swallowing
+                        _gui_logger.warning(f"Unmount cleanup after validation failed: {e}")
+                        pass  # Unmount failure is not critical for validation
+
+                    return (True, False)  # Validation passed
+                else:
+                    # Mount failed - warn user
+                    reply = QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"⚠️ VALIDATION FAILED\n\n"
+                        f"Could not mount volume with new credentials.\n"
+                        f"Error: {error_msg or 'Unknown error'}\n\n"
+                        f"This may mean the credential change in VeraCrypt failed.\n\n"
+                        f"⚠️ RISK: If you proceed, old credential files will be\n"
+                        f"replaced and you may be LOCKED OUT of your volume.\n\n"
+                        f"Do you want to proceed anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    return (False, reply == QMessageBox.StandardButton.Yes)
+
+            except InvalidCredentialsError as e:
+                reply = QMessageBox.warning(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    f"⚠️ CREDENTIALS INVALID\n\n"
+                    f"The new credentials were rejected by VeraCrypt.\n"
+                    f"Error: {e}\n\n"
+                    f"This means the credential change may have failed.\n\n"
+                    f"⚠️ RISK: Proceeding will overwrite old credential files!\n\n"
+                    f"Do you want to proceed anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                return (False, reply == QMessageBox.StandardButton.Yes)
+
+            except VeraCryptError as e:
+                # Other VeraCrypt error - might be transient
+                reply = QMessageBox.warning(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    f"⚠️ VALIDATION ERROR\n\n"
+                    f"Could not validate new credentials.\n"
+                    f"Error: {e}\n\n"
+                    f"Do you want to proceed anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                return (False, reply == QMessageBox.StandardButton.Yes)
+
+        except Exception as e:
+            _gui_logger.warning(f"Credential validation error: {e}")
+            # Unexpected error - allow user to decide
+            reply = QMessageBox.warning(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                f"⚠️ VALIDATION ERROR\n\n"
+                f"Unexpected error during validation: {e}\n\n"
+                f"Do you want to proceed anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            return (False, reply == QMessageBox.StandardButton.Yes)
+
+    def _complete_rekey(self, validation_skipped: bool = False):
         """
         Mark rekey as completed and update config.
         CHG-20251221-001: Also handle mode changes during rekey.
         CHG-20251221-003: Save generated GPG seed salt if available.
-        """
-        from datetime import datetime
+        CHG-20251221-029: Clean up temp keyfile if created.
+        BUG-20251221-030: Added validation_skipped parameter for warning.
 
-        timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        Args:
+            validation_skipped: If True, validation was skipped (show warning).
+        """
+        # BUG-20251221-029: Use timezone.utc (module-level import) instead of datetime.UTC
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # CHG-20251221-029: Clean up temp keyfile if it was created during rekey
+        if hasattr(self, "_temp_keyfile_path") and self._temp_keyfile_path:
+            try:
+                import os
+                from pathlib import Path
+
+                temp_path = Path(self._temp_keyfile_path)
+                if temp_path.exists():
+                    # Secure delete: overwrite with zeros before unlink
+                    size = temp_path.stat().st_size
+                    with open(temp_path, "wb") as f:
+                        f.write(b"\x00" * size)
+                    temp_path.unlink()
+                    _gui_logger.info(f"Securely deleted temp keyfile: {temp_path}")
+            except Exception as e:
+                _gui_logger.warning(f"Failed to clean up temp keyfile: {e}")
+            finally:
+                self._temp_keyfile_path = None
 
         # Update post_recovery to mark rekey completed
         if "post_recovery" in self.config:
@@ -4896,31 +6518,34 @@ class SettingsDialog(QDialog):
             self.config["post_recovery"]["rekey_completed_at"] = timestamp
 
         # CHG-20251221-001: Handle mode changes
-        if hasattr(self, "_rekey_mode_changing") and self._rekey_mode_changing:
-            target_mode = getattr(self, "_rekey_target_mode", None)
-            if target_mode:
-                old_mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
-                self.config[ConfigKeys.MODE] = target_mode
+        # BUG-20251221-040: ALWAYS update mode to target_mode to ensure consistency
+        target_mode = getattr(self, "_rekey_target_mode", None)
+        if target_mode:
+            old_mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+            self.config[ConfigKeys.MODE] = target_mode
 
-                # Update keyfile path if changed
-                if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
-                    keyfile_path = self.rekey_keyfile_edit.text().strip()
-                    if keyfile_path:
-                        self.config[ConfigKeys.KEYFILE] = keyfile_path
+            # Update keyfile path if target mode uses keyfiles
+            if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
+                keyfile_path = self.rekey_keyfile_edit.text().strip()
+                if keyfile_path:
+                    self.config[ConfigKeys.KEYFILE] = keyfile_path
 
-                # Update GPG seed path if changed
-                if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
-                    gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
-                    if gpg_seed_path:
-                        # BUG-20251221-007 FIX: Use ConfigKeys.SEED_GPG_PATH (config key) not FileNames.SEED_GPG (filename)
-                        self.config[ConfigKeys.SEED_GPG_PATH] = gpg_seed_path
+            # Update GPG seed path if target mode uses GPG
+            if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
+                gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
+                if gpg_seed_path:
+                    # BUG-20251221-007 FIX: Use ConfigKeys.SEED_GPG_PATH (config key) not FileNames.SEED_GPG (filename)
+                    self.config[ConfigKeys.SEED_GPG_PATH] = gpg_seed_path
 
-                    # CHG-20251221-003: Save generated salt if available
-                    if hasattr(self, "_generated_seed_salt") and self._generated_seed_salt:
-                        self.config[ConfigKeys.SALT] = self._generated_seed_salt
-                        self._generated_seed_salt = None
+                # CHG-20251221-003: Save generated salt if available
+                if hasattr(self, "_generated_seed_salt") and self._generated_seed_salt:
+                    self.config[ConfigKeys.SALT] = self._generated_seed_salt
+                    self._generated_seed_salt = None
 
+            if target_mode != old_mode:
                 _gui_logger.info(f"Security mode changed from {old_mode} to {target_mode}")
+            else:
+                _gui_logger.info(f"Security mode confirmed: {target_mode}")
 
         # Invalidate old recovery kit (must generate new one after rekey)
         if "recovery" in self.config:
@@ -4934,6 +6559,9 @@ class SettingsDialog(QDialog):
         # Save config
         self._save_config_atomic()
 
+        # BUG-20251221-035: Refresh settings UI to reflect changes
+        self.refresh_settings_values()
+
         # Log event
         mode_change_suffix = "_MODE_CHANGED" if getattr(self, "_rekey_mode_changing", False) else ""
         self._gui_audit_log(f"REKEY_COMPLETED_GUI{mode_change_suffix}")
@@ -4946,16 +6574,33 @@ class SettingsDialog(QDialog):
         self.rekey_status_label.setText(tr("rekey_status_success", lang=get_lang()))
         self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
 
-        # Prompt to generate new recovery kit
-        QMessageBox.information(
-            self,
-            tr("rekey_section_title", lang=get_lang()),
-            "✅ Credentials changed successfully!\n\n"
-            "⚠️ IMPORTANT: Your old recovery kit is now INVALID.\n\n"
-            "You should generate a NEW recovery kit using the CLI:\n"
-            "  python recovery.py generate\n\n"
-            "Without a valid recovery kit, you cannot recover access if you forget your credentials.",
-        )
+        # BUG-20251221-030: Show appropriate message based on validation result
+        if validation_skipped:
+            # Prompt with warning about skipped validation
+            QMessageBox.warning(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                "⚠️ Credentials updated (VALIDATION SKIPPED)\n\n"
+                "The credential change was NOT validated with a test mount.\n"
+                "If the change failed in VeraCrypt, you may be locked out.\n\n"
+                "⚠️ VERIFY IMMEDIATELY:\n"
+                "Try mounting the volume to confirm access before doing anything else.\n\n"
+                "⚠️ IMPORTANT: Your old recovery kit is now INVALID.\n"
+                "You should generate a NEW recovery kit using the CLI:\n"
+                "  python recovery.py generate",
+            )
+        else:
+            # Prompt to generate new recovery kit (normal case)
+            QMessageBox.information(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                "✅ Credentials changed successfully!\n\n"
+                "✓ New credentials validated with test mount.\n\n"
+                "⚠️ IMPORTANT: Your old recovery kit is now INVALID.\n\n"
+                "You should generate a NEW recovery kit using the CLI:\n"
+                "  python recovery.py generate\n\n"
+                "Without a valid recovery kit, you cannot recover access if you forget your credentials.",
+            )
 
     def _add_update_hint_section(self, tab_layout: QVBoxLayout):
         """
@@ -5222,7 +6867,8 @@ class SettingsDialog(QDialog):
                 self.integrity_result_label.setVisible(True)
 
                 # BUG-20251221-006 FIX: Update config with signing status and fingerprint
-                self.config[ConfigKeys.INTEGRITY_SIGNED] = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                # BUG-20251221-029: Use timezone.utc instead of datetime.UTC
+                self.config[ConfigKeys.INTEGRITY_SIGNED] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if signer_fpr:
                     self.config[ConfigKeys.SIGNING_KEY_FPR] = signer_fpr
                 self._save_config_atomic()
@@ -5292,9 +6938,10 @@ class SettingsDialog(QDialog):
             scripts_hash = Integrity.calculate_scripts_hash(self._launcher_root)
 
             # Build payload
+            # BUG-20251221-029: Use timezone.utc instead of datetime.UTC
             payload = {
                 "id": self.config.get(ConfigKeys.DRIVE_ID, "unknown"),
-                "datetime": datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "hash": scripts_hash,
                 "version": self.config.get("version", "unknown"),
                 "integrity_signed": self.config.get(ConfigKeys.INTEGRITY_SIGNED, ""),
@@ -5574,11 +7221,15 @@ class SettingsDialog(QDialog):
     def _on_generate_recovery_kit(self):
         """
         Handle recovery kit generation button click (CHG-20251221-001).
-        
+
         BUG-20251221-019 FIX:
         - Use QMessageBox.question() for simple Yes/No confirmation
         - No more "type GENERATE" text input requirement
         - Pass config and smartdrive_dir to worker for credential derivation
+
+        BUG-20251221-043 FIX:
+        - For PW_ONLY mode, prompt for password before starting worker
+        - Pass password to worker via optional parameter
         """
         # Check if recovery kit already exists
         recovery_config = self.config.get("recovery", {})
@@ -5587,25 +7238,49 @@ class SettingsDialog(QDialog):
         # Determine if this is a regeneration
         is_regeneration = recovery_state == "RECOVERY_STATE_ENABLED"
 
-        # Show confirmation dialog (simple Yes/No)
+        # BUG-20251221-044 FIX: Show security warning if kit exists
         if is_regeneration:
-            title = tr("recovery_generate_regen_confirm_title", lang=get_lang())
-            body = tr("recovery_generate_regen_confirm_body", lang=get_lang())
+            # Security warning for regeneration
+            warning_title = tr("recovery_generate_security_warning_title", lang=get_lang())
+            warning_body = tr("recovery_generate_security_warning_body", lang=get_lang())
+            reply = QMessageBox.warning(
+                self,
+                warning_title,
+                warning_body,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,  # Default to No for safety
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         else:
+            # Standard confirmation for first-time generation
             title = tr("recovery_generate_confirm_title", lang=get_lang())
             body = tr("recovery_generate_confirm_body", lang=get_lang())
+            reply = QMessageBox.question(
+                self,
+                title,
+                body,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,  # Default to No for safety
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
-        # Use QMessageBox.question for Yes/No confirmation
-        reply = QMessageBox.question(
-            self,
-            title,
-            body,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No  # Default to No for safety
-        )
+        # BUG-20251221-043 FIX: For PW_ONLY mode, prompt for password
+        mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+        password = None
+        if mode == SecurityMode.PW_ONLY.value:
+            from PyQt6.QtWidgets import QInputDialog
 
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+            password, ok = QInputDialog.getText(
+                self,
+                tr("recovery_generate_password_prompt_title", lang=get_lang()),
+                tr("recovery_generate_password_prompt_body", lang=get_lang()),
+                QLineEdit.EchoMode.Password,
+            )
+            if not ok or not password:
+                # User cancelled or provided empty password
+                return
 
         # Disable button during generation
         self.btn_generate_recovery_kit.setEnabled(False)
@@ -5614,9 +7289,7 @@ class SettingsDialog(QDialog):
 
         # Start worker thread with config and smartdrive_dir for credential derivation
         self._recovery_generate_worker = RecoveryGenerateWorker(
-            config=self.config,
-            smartdrive_dir=self._smartdrive_dir,
-            force=is_regeneration
+            config=self.config, smartdrive_dir=self._smartdrive_dir, force=is_regeneration, password=password
         )
         self._recovery_generate_worker.progress.connect(self._on_recovery_generate_progress)
         self._recovery_generate_worker.finished.connect(self._on_recovery_generate_finished)
@@ -5784,9 +7457,8 @@ class SettingsDialog(QDialog):
             self._secure_delete_file(container_path)
 
             # Phase 3: Transition to "used" state + set rekey requirement
-            from datetime import datetime
-
-            timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # BUG-20251221-029: Use module-level timezone import instead of datetime.UTC
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             self.config["recovery"] = {
                 "enabled": False,
@@ -5800,6 +7472,9 @@ class SettingsDialog(QDialog):
                 "recovery_completed_at": timestamp,
             }
             self._save_config_atomic()
+
+            # BUG-20251221-035: Refresh settings UI to reflect changes
+            self.refresh_settings_values()
 
             # Log success
             self._gui_audit_log("RECOVERY_SUCCESS", "SUCCESS")
@@ -5859,9 +7534,9 @@ class SettingsDialog(QDialog):
         import json
         import os
         import platform
-        from datetime import datetime
 
-        timestamp = datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # BUG-20251221-029: Use module-level timezone import instead of datetime.UTC
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         entry = {
             "timestamp": timestamp,
             "event": event,
@@ -6042,8 +7717,8 @@ class SettingsDialog(QDialog):
             # BUG-014: Check if HTML recovery kit file still exists on device
             html_warning = ""
             try:
-                from core.paths import Paths
-
+                # BUG-20251221-021: Use module-level Paths import (line 73), not local import
+                # Local import here caused UnboundLocalError shadowing in admin mode
                 recovery_dir = Paths.recovery_dir(self._launcher_root)
                 html_file = recovery_dir / f"{Branding.PRODUCT_NAME}{FileNames.RECOVERY_KIT_HTML_SUFFIX}"
                 if html_file.exists():
@@ -6089,7 +7764,7 @@ class SettingsDialog(QDialog):
             h_layout.setSpacing(4)
 
             line_edit = QLineEdit()
-            
+
             # BUG-20251221-020: Pre-fill default paths from Paths SSOT when field is empty
             display_value = current_value
             if not current_value:
@@ -6100,7 +7775,7 @@ class SettingsDialog(QDialog):
                     display_value = str(Paths.keyfile_gpg(self._launcher_root))
                 elif field.key == ConfigKeys.KEYFILE:
                     display_value = str(Paths.keyfile_plain(self._launcher_root))
-            
+
             line_edit.setText(str(display_value) if display_value is not None else "")
             if field.placeholder:
                 line_edit.setPlaceholderText(field.placeholder)
@@ -6170,8 +7845,45 @@ class SettingsDialog(QDialog):
                 widget.setPlaceholderText(field.placeholder)
 
         elif field.field_type == FieldType.READONLY:
-            widget = QLabel(str(current_value) if current_value is not None else "N/A")
-            widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+            # CHG-20251221-026: Special handling for LAUNCHER_ROOT - get from _launcher_root attribute
+            # BUG-20251223-001 FIX: Check for both generic and platform-specific keys
+            if field.key in (ConfigKeys.LAUNCHER_ROOT, ConfigKeys.WINDOWS_LAUNCHER_ROOT, ConfigKeys.UNIX_LAUNCHER_ROOT):
+                launcher_root_value = (
+                    str(self._launcher_root) if self._launcher_root else tr("info_unavailable", lang=get_lang())
+                )
+                widget = QLabel(launcher_root_value)
+                widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+            # CHG-20251221-040: Special handling for OS_DRIVE - runtime detection
+            # BUG-20251224-001 FIX: Check for both generic and platform-specific keys
+            elif field.key in (
+                ConfigKeys.OS_DRIVE,
+                ConfigKeys.WINDOWS_OS_DRIVE,
+                ConfigKeys.UNIX_OS_DRIVE,
+            ):
+                from core.platform import get_os_drive
+
+                os_drive_value = get_os_drive()
+                if not os_drive_value:
+                    os_drive_value = tr("info_unavailable", lang=get_lang())
+                widget = QLabel(os_drive_value)
+                widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+            # CHG-20251221-040: Special handling for INSTANTIATION_DRIVE - runtime detection
+            # BUG-20251224-001 FIX: Check for both generic and platform-specific keys
+            elif field.key in (
+                ConfigKeys.INSTANTIATION_DRIVE,
+                ConfigKeys.WINDOWS_INSTANTIATION_DRIVE,
+                ConfigKeys.UNIX_INSTANTIATION_DRIVE,
+            ):
+                from core.platform import get_instantiation_drive_letter_or_mount
+
+                inst_drive_value = get_instantiation_drive_letter_or_mount()
+                if not inst_drive_value:
+                    inst_drive_value = tr("info_unavailable", lang=get_lang())
+                widget = QLabel(inst_drive_value)
+                widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
+            else:
+                widget = QLabel(str(current_value) if current_value is not None else "N/A")
+                widget.setStyleSheet(f"color: {COLORS['text_secondary']}; font-style: italic;")
 
         else:
             widget = QLabel(f"Unsupported field type: {field.field_type}")
@@ -6487,6 +8199,83 @@ class SettingsDialog(QDialog):
         # Update buttons
         self.save_btn.setText(tr("btn_save", lang=lang_code))
         self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
+
+    def refresh_settings_values(self):
+        """
+        BUG-20251221-035: Reload config from disk and update all field widgets.
+
+        Call this after operations that modify config.json to reflect changes
+        immediately without requiring the user to close and reopen settings.
+        """
+        _gui_logger.info("Refreshing settings values from disk...")
+
+        # Reload config from disk
+        self._reload_config()
+
+        # Also update pending config
+        import copy
+
+        self._pending_config = copy.deepcopy(self.config)
+        self._config_dirty = False
+
+        # Update each field widget with current config value
+        for field_key, widget in self.field_widgets.items():
+            try:
+                # Parse the field key to get config path
+                # Field keys are like "field_general_language" or "field_windows_mount_letter"
+                parts = field_key.split("_")
+                if len(parts) < 3:
+                    continue
+
+                # Find matching field in schema
+                for field in self.schema:
+                    schema_field_key = self._make_field_key(field)
+                    if schema_field_key == field_key:
+                        # Get current config value
+                        current_value = self._get_config_value(field)
+
+                        # Update widget based on type
+                        if field.field_type == self.FieldType.DROPDOWN:
+                            combo = widget
+                            combo.blockSignals(True)
+                            for i in range(combo.count()):
+                                if combo.itemData(i) == current_value:
+                                    combo.setCurrentIndex(i)
+                                    break
+                            combo.blockSignals(False)
+                        elif field.field_type == self.FieldType.BOOL:
+                            checkbox = widget
+                            checkbox.blockSignals(True)
+                            checkbox.setChecked(bool(current_value))
+                            checkbox.blockSignals(False)
+                        elif field.field_type == self.FieldType.TEXT:
+                            line_edit = widget
+                            line_edit.blockSignals(True)
+                            line_edit.setText(str(current_value) if current_value else "")
+                            line_edit.blockSignals(False)
+                        elif field.field_type == self.FieldType.PATH_FILE:
+                            line_edit = widget
+                            line_edit.blockSignals(True)
+                            line_edit.setText(str(current_value) if current_value else "")
+                            line_edit.blockSignals(False)
+                        break
+            except Exception as e:
+                _gui_logger.debug(f"Error refreshing field {field_key}: {e}")
+
+        # Update recovery status label if it exists
+        if hasattr(self, "recovery_status_label"):
+            recovery_cfg = self.config.get("recovery", {})
+            if recovery_cfg.get("enabled") and recovery_cfg.get("state") == "RECOVERY_STATE_ENABLED":
+                self.recovery_status_label.setText(tr("recovery_kit_available", lang=get_lang()))
+                self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']};")
+            elif recovery_cfg.get("used") or recovery_cfg.get("state") == "RECOVERY_STATE_USED":
+                self.recovery_status_label.setText(tr("recovery_kit_used", lang=get_lang()))
+                self.recovery_status_label.setStyleSheet(f"color: {COLORS['warning']};")
+            else:
+                self.recovery_status_label.setText(tr("recovery_kit_not_configured", lang=get_lang()))
+                self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+
+        _gui_logger.info("Settings values refreshed from disk")
 
     def save(self):
         """Save all fields to config.json."""

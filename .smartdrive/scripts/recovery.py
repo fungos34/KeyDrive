@@ -411,6 +411,8 @@ def clear_terminal() -> None:
     the terminal before verification tests.
 
     BUG-20251219-002: Preserve scrollback on Windows for consistency.
+    BUG-20251221-022: Use subprocess instead of os.system() to prevent
+    "syntax error in command line" popups on Windows.
 
     Uses platform-appropriate method:
     - Windows: ANSI escape codes (preserves scrollback in modern terminals)
@@ -433,12 +435,17 @@ def clear_terminal() -> None:
                 return
         except Exception:
             pass
-        # Fallback to cls if ANSI not supported
-        os.system("cls")
+        # BUG-20251221-022/024: Use subprocess with CREATE_NO_WINDOW to prevent popups
+        subprocess.run(
+            ["cmd", "/c", "cls"],
+            shell=False,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
     else:
-        # Try clear command first, fallback to ANSI escape
-        result = os.system("clear")
-        if result != 0:
+        # BUG-20251221-022: Use subprocess instead of os.system() to prevent issues
+        result = subprocess.run(["clear"], shell=False, check=False)
+        if result.returncode != 0:
             # ANSI escape code fallback
             print("\033[2J\033[H", end="")
 
@@ -2283,6 +2290,8 @@ def generate_recovery_html(
     include_qr: bool = True,
     header_backup_path: Optional[Path] = None,
     artifact_qr_chains: Optional[dict] = None,
+    device_info: dict = None,  # BUG-20251221-042: Device details for identification
+    recovery_version: int = 1,  # BUG-20251221-042: Recovery kit version number
 ) -> str:
     """
     Generate a printable HTML recovery kit with optional QR codes.
@@ -2300,6 +2309,8 @@ def generate_recovery_html(
         header_backup_path: Optional path to header backup for QR encoding
         artifact_qr_chains: Optional dict of mode-specific artifact QR chains
             Keys: 'seed_gpg', 'keyfile_gpg', 'config' -> list of ChunkInfo
+        device_info: Dict with device details (name, bus, size_gb, unique_id, etc.)
+        recovery_version: Recovery kit version number (increments on regeneration)
 
     Returns:
         HTML string ready for saving/printing
@@ -2758,9 +2769,9 @@ def generate_recovery_html(
 <body>
     <div class="header">
         <h1>🔐 SMARTDRIVE RECOVERY KIT</h1>
-        <p>Volume: <strong>{volume_name}</strong></p>
+        <p>Volume: <strong>{volume_name or (device_info.get('name', 'Unknown') if device_info else 'Unknown')}</strong>{f" ({device_info.get('bus', '')} {device_info.get('size_gb', '')}GB)" if device_info and device_info.get('bus') else ''}</p>
         <p>Security Mode: <strong>{mode_desc}</strong></p>
-        <p>Generated: {timestamp}</p>
+        <p>Generated: {timestamp} | Version: <strong>v{recovery_version}</strong></p>
     </div>
     
     <div class="warning">
@@ -2908,15 +2919,28 @@ def generate_recovery_html(
             <tr><td><strong>OS</strong></td><td>{env.get('os_family', 'unknown')} {env.get('os_version', '')[:30]}</td></tr>
             <tr><td><strong>VeraCrypt</strong></td><td>{env.get('veracrypt_version', 'unknown')}</td></tr>
             <tr><td><strong>Requirements Hash</strong></td><td><code>{env.get('requirements_hash', 'unknown')}</code></td></tr>
-            <tr><td><strong>Volume Identity</strong></td><td><code>{volume_identity or 'not recorded'}</code></td></tr>
         </table>
-        <p><em>If recovery fails with environment errors, ensure compatible versions are installed.</em></p>
+    </div>
+    
+    <div class="instructions" style="background: #e8f4e8; border-color: #4a7c4a;">
+        <h3>💾 Device Identification</h3>
+        <p>This recovery kit is bound to the following device:</p>
+        <table style="font-size: 12px;">
+            <tr><td><strong>Device Name</strong></td><td>{device_info.get('name', 'Unknown') if device_info else volume_name or 'Unknown'}</td></tr>
+            <tr><td><strong>Bus Type</strong></td><td>{device_info.get('bus', 'N/A') if device_info else 'N/A'}</td></tr>
+            <tr><td><strong>Size</strong></td><td>{f"{device_info.get('size_gb', 'N/A')} GB" if device_info else 'N/A'}</td></tr>
+            <tr><td><strong>Device Serial</strong></td><td><code>{device_info.get('serial_number', 'N/A') if device_info else 'N/A'}</code></td></tr>
+            <tr><td><strong>Unique ID</strong></td><td><code style="word-break: break-all;">{device_info.get('unique_id', 'N/A') if device_info else 'N/A'}</code></td></tr>
+            <tr><td><strong>Launcher Partition</strong></td><td>{device_info.get('launcher_partition', 'N/A') if device_info else 'N/A'}</td></tr>
+            <tr><td><strong>Volume Identity Hash</strong></td><td><code>{volume_identity or 'not computed'}</code></td></tr>
+        </table>
+        <p><em>⚠️ If this does not match your device, you may be using the wrong recovery kit.</em></p>
     </div>
     
     <div class="footer">
         <p>{Branding.PRODUCT_NAME} Recovery System • This document is CONFIDENTIAL</p>
         <p>Keep in a secure location separate from your encrypted drive</p>
-        <p style="font-size: 10px; color: #999;">Generated: {timestamp} | Volume ID: {volume_identity[:16] if volume_identity else 'N/A'}...</p>
+        <p style="font-size: 10px; color: #999;">Generated: {timestamp} | Version: v{recovery_version} | Device: {device_info.get('serial_number', 'N/A')[:16] if device_info and device_info.get('serial_number') else (volume_identity[:16] if volume_identity else 'N/A')}...</p>
     </div>
 </body>
 </html>"""
@@ -3056,6 +3080,10 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
             volume_identity = compute_volume_identity(volume_path)
 
+            # BUG-20251221-042: Get device_info and recovery_version from config
+            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
+
             # Build GPG_PW_ONLY info if applicable
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
@@ -3073,6 +3101,8 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                 volume_identity=volume_identity,
                 security_mode=mode,
                 gpg_pw_only_info=gpg_pw_only_info,
+                device_info=device_info,
+                recovery_version=recovery_version,
             )
 
             # SSOT: Save HTML to recovery directory with standard filename
@@ -3139,11 +3169,8 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                     continue  # Re-display phrases
 
                 # SCRUBBING PHASE (MANDATORY)
-                # Clear terminal (cross-platform)
-                if platform.system() == "Windows":
-                    os.system("cls")
-                else:
-                    os.system("clear")
+                # BUG-20251221-022: Use clear_terminal() instead of os.system() to prevent popups
+                clear_terminal()
 
                 print("\n" + "=" * 70)
                 print("  PHRASE SCRUBBED - NOW VERIFY YOUR WRITTEN COPY")
@@ -3218,6 +3245,20 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
         except RecoveryContainerError as e:
             error(f"Failed to create recovery container: {e}")
             return 1
+
+        # BUG-20251221-025: Auto-unmount volume before header backup
+        # VeraCrypt cannot safely backup header of a mounted volume
+        mount_letter = config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
+        mount_point_check = f"{mount_letter}:" if platform.system().lower() == "windows" else mount_target
+
+        if get_mount_status(mount_point_check):
+            log("Volume is mounted - unmounting for header backup...")
+            try:
+                unmount(mount_point_check)
+                log("Volume unmounted successfully ✓")
+            except VeraCryptError as e:
+                log(f"Warning: Could not unmount volume: {e}")
+                log("Proceeding with header backup anyway (VeraCrypt may handle this)")
 
         # Export header
         log("Exporting VeraCrypt header backup...")
@@ -3298,6 +3339,10 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             log("Generating HTML recovery kit for archival...")
             drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
 
+            # BUG-20251221-042: Get device_info and recovery_version from config
+            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
+
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
                 gpg_pw_only_info = {
@@ -3318,6 +3363,8 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                 security_mode=mode,
                 gpg_pw_only_info=gpg_pw_only_info,
                 artifact_qr_chains=artifact_qr_chains if artifact_qr_chains else None,
+                device_info=device_info,
+                recovery_version=recovery_version,
             )
 
             # SSOT: Use same recovery_dir path (already created earlier)
@@ -3357,20 +3404,20 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
 def cmd_generate_non_interactive(args):
     """
     BUG-20251221-019: Non-interactive recovery kit generation for GUI integration.
-    
+
     Reads pre-derived credentials from environment variables (set by GUI):
       - KEYDRIVE_VOLUME_PASSWORD: Mount password
       - KEYDRIVE_KEYFILE_PATH: Path to keyfile (optional)
       - KEYDRIVE_KEYFILE_B64: Base64-encoded keyfile bytes (optional alternative)
-    
+
     Generates kit in printable (HTML) or terminal mode based on --format flag.
     No user interaction required - suitable for subprocess calls from GUI.
-    
+
     Security notes:
       - Environment variables are process-isolated (safer than CLI args)
       - Credentials are scrubbed from environment after use
       - Keyfile is written to RAM temp dir if needed
-    
+
     Returns:
       Exits with code 0 on success, non-zero on failure.
     """
@@ -3378,29 +3425,29 @@ def cmd_generate_non_interactive(args):
         config = load_config()
         volume_path, mount_target = get_volume_info(config)
         mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
-        
+
         # BUG-20251219-004: Enforce single-shot generation
         recovery_config = config.get(RECOVERY_CONFIG_KEY, {})
         force_regenerate = getattr(args, "force", False)
-        
+
         if recovery_config.get("enabled") and not recovery_config.get("used"):
             if not force_regenerate:
                 error("[BLOCKED] Active recovery kit exists. Use --force to regenerate.")
                 sys.exit(1)
             # Force mode: allow regeneration (already confirmed by GUI)
             log("[FORCE] Regenerating recovery kit...")
-        
+
         # Read credentials from environment variables
         password = os.environ.get("KEYDRIVE_VOLUME_PASSWORD")
         if not password:
             error("[ENV] Missing KEYDRIVE_VOLUME_PASSWORD environment variable")
             sys.exit(1)
-        
+
         # Handle keyfile if present
         keyfile_bytes = None
         keyfile_path_env = os.environ.get("KEYDRIVE_KEYFILE_PATH")
         keyfile_b64_env = os.environ.get("KEYDRIVE_KEYFILE_B64")
-        
+
         if keyfile_path_env:
             keyfile_path = Path(keyfile_path_env)
             if not keyfile_path.exists():
@@ -3413,7 +3460,7 @@ def cmd_generate_non_interactive(args):
             except Exception as e:
                 error(f"[ENV] Failed to decode KEYDRIVE_KEYFILE_B64: {e}")
                 sys.exit(1)
-        
+
         # Build credentials dict
         credentials = {
             "volume_path": volume_path,
@@ -3422,38 +3469,37 @@ def cmd_generate_non_interactive(args):
             "mount_target": mount_target,
             "created_at": utc_timestamp_iso(),
         }
-        
+
         if keyfile_bytes:
             credentials["keyfile_bytes_b64"] = base64.b64encode(keyfile_bytes).decode("ascii")
-        
+
         log("[NON-INTERACTIVE] Using credentials from environment variables")
-        
+
         # Generate BIP39 phrase
         log("[1/5] Generating recovery phrase...")
         phrase = generate_bip39_phrase()
         phrase_hash = hash_phrase(phrase)
         log(f"[1/5] Generated 24-word BIP39 phrase (hash: {phrase_hash[:16]}...)")
-        
+
         # Determine output format
         use_printable_kit = args.format == "printable"
         log(f"[2/5] Format: {'Printable (HTML)' if use_printable_kit else 'Terminal (text)'}")
-        
+
         # Create encrypted recovery container
         log("[3/5] Creating encrypted recovery container...")
         recovery_dir = Paths.recovery_dir(CONFIG_FILE.parent.parent if CONFIG_FILE else Path.cwd())
         recovery_dir.mkdir(parents=True, exist_ok=True)
-        
-        container_path = recovery_dir / FileNames.RECOVERY_CONTAINER
-        create_recovery_container(
-            phrase=phrase,
-            credentials=credentials,
-            output_path=container_path,
-        )
+
+        container_path = recovery_dir / FileNames.RECOVERY_CONTAINER_BIN
+        # BUG-20251221-034: Fixed create_container() call - function returns bytes, not file path
+        # create_container(credentials, phrase) -> bytes; write to file separately
+        container_bytes = create_container(credentials, phrase)
+        container_path.write_bytes(container_bytes)
         log(f"[3/5] Container created: {container_path}")
-        
+
         # Export VeraCrypt header
         log("[4/5] Exporting VeraCrypt header backup...")
-        header_path = recovery_dir / FileNames.RECOVERY_HEADER
+        header_path = recovery_dir / FileNames.RECOVERY_HEADER_HDR
         export_header_backup(
             volume_path=volume_path,
             header_path=header_path,
@@ -3461,7 +3507,7 @@ def cmd_generate_non_interactive(args):
             keyfile_bytes=keyfile_bytes,
         )
         log(f"[4/5] Header exported: {header_path}")
-        
+
         # Update config
         log("[5/5] Updating configuration...")
         recovery_config = {
@@ -3475,12 +3521,16 @@ def cmd_generate_non_interactive(args):
         config[RECOVERY_CONFIG_KEY] = recovery_config
         save_config_atomic(config)
         log("[5/5] Configuration updated")
-        
+
         # Generate printable HTML kit if requested
         if use_printable_kit:
             drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
             volume_identity = compute_volume_identity(volume_path)
-            
+
+            # BUG-20251221-042: Get device_info and recovery_version from config
+            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
+
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
                 gpg_pw_only_info = {
@@ -3488,7 +3538,7 @@ def cmd_generate_non_interactive(args):
                     "salt_b64": config.get("salt_b64", ""),
                     "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
                 }
-            
+
             html = generate_recovery_html(
                 phrase=phrase,
                 chunks=None,
@@ -3498,25 +3548,28 @@ def cmd_generate_non_interactive(args):
                 security_mode=mode,
                 gpg_pw_only_info=gpg_pw_only_info,
                 include_qr=True,
+                device_info=device_info,
+                recovery_version=recovery_version,
             )
-            
+
             html_path = recovery_dir / f"{Branding.PRODUCT_NAME}_Recovery_Kit.html"
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html)
             log(f"[HTML] Recovery kit saved: {html_path}")
-            
+
             # Output kit path for GUI to capture
             print(f"RECOVERY_KIT_PATH:{html_path}")
-        
+
         # Audit log
         audit_log("RECOVERY_GENERATED", details={"mode": "non_interactive", "format": args.format})
-        
+
         log("[SUCCESS] Recovery kit generation complete")
         sys.exit(0)
-        
+
     except Exception as e:
         error(f"[FATAL] Recovery generation failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
     finally:
@@ -3642,6 +3695,10 @@ def cmd_generate(args):
         drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
         mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
 
+        # BUG-20251221-042: Get device_info and recovery_version from config
+        device_info = config.get(ConfigKeys.DEVICE_INFO)
+        recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
+
         # Build GPG_PW_ONLY info if applicable
         preliminary_gpg_info = None
         if mode == SecurityMode.GPG_PW_ONLY.value:
@@ -3660,6 +3717,8 @@ def cmd_generate(args):
             security_mode=mode,
             gpg_pw_only_info=preliminary_gpg_info,
             include_qr=True,
+            device_info=device_info,
+            recovery_version=recovery_version,
         )
 
         # Determine output location (use temp or recovery dir if available)
@@ -3778,6 +3837,8 @@ def cmd_generate(args):
                         security_mode=mode,
                         gpg_pw_only_info=preliminary_gpg_info if "preliminary_gpg_info" in dir() else None,
                         include_qr=True,
+                        device_info=device_info if "device_info" in dir() else None,
+                        recovery_version=recovery_version if "recovery_version" in dir() else 1,
                     )
                     preliminary_kit_path = (
                         CONFIG_FILE.parent / "recovery_kit_PRELIMINARY.html"
@@ -3826,6 +3887,8 @@ def cmd_generate(args):
                         security_mode=mode if "mode" in dir() else None,
                         gpg_pw_only_info=preliminary_gpg_info if "preliminary_gpg_info" in dir() else None,
                         include_qr=True,
+                        device_info=device_info if "device_info" in dir() else None,
+                        recovery_version=recovery_version if "recovery_version" in dir() else 1,
                     )
                     preliminary_kit_path = (
                         CONFIG_FILE.parent / "recovery_kit_PRELIMINARY.html"
@@ -3912,6 +3975,20 @@ def cmd_generate(args):
 
     # Step 5: Export VeraCrypt header
     log("Step 5/7: Exporting VeraCrypt header backup...")
+
+    # BUG-20251221-025: Auto-unmount volume before header backup
+    # VeraCrypt cannot safely backup header of a mounted volume
+    mount_letter = config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
+    mount_point = f"{mount_letter}:" if platform.system().lower() == "windows" else mount_target
+
+    if get_mount_status(mount_point):
+        log("Volume is mounted - unmounting for header backup...")
+        try:
+            unmount(mount_point)
+            log("Volume unmounted successfully ✓")
+        except VeraCryptError as e:
+            log(f"Warning: Could not unmount volume: {e}")
+            log("Proceeding with header backup anyway (VeraCrypt may handle this)")
 
     # TODO 4: Removed obsolete HEADER BACKUP NOTICE
     # The render_header_export_gui_guide() function provides complete,
@@ -4046,6 +4123,8 @@ def cmd_generate(args):
             else None
         ),
         artifact_qr_chains=artifact_qr_chains if artifact_qr_chains else None,
+        device_info=config.get(ConfigKeys.DEVICE_INFO),
+        recovery_version=config.get(ConfigKeys.RECOVERY_VERSION, 1),
     )
 
     # Save HTML

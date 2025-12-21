@@ -66,11 +66,16 @@ class TestFileExplorerTranslationKeys:
 class TestOpenInFileManagerFunction:
     """Tests for open_in_file_manager cross-platform function."""
 
-    def test_windows_uses_startfile(self):
-        """Test that Windows uses os.startfile."""
+    def test_windows_uses_explorer(self):
+        """Test that Windows uses subprocess.run with explorer.
+
+        BUG-20251221-024: Changed from os.startfile to subprocess.run with
+        CREATE_NO_WINDOW flag to prevent popup windows during recovery operations.
+        """
         # Patch at the source module where get_platform is defined
         with patch("core.platform.get_platform", return_value="windows"):
-            with patch("os.startfile") as mock_startfile:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
                 # Create a temp directory that exists
                 import tempfile
 
@@ -80,8 +85,14 @@ class TestOpenInFileManagerFunction:
                     test_path = Path(tmpdir)
                     result = open_in_file_manager(test_path)
 
-                    # On Windows, startfile should have been called
-                    mock_startfile.assert_called_once_with(str(test_path))
+                    # On Windows, subprocess.run should be called with 'explorer'
+                    # and CREATE_NO_WINDOW flag
+                    import subprocess
+
+                    mock_run.assert_called_once()
+                    call_args = mock_run.call_args
+                    assert call_args[0][0] == ["explorer", str(test_path)]
+                    assert call_args[1].get("creationflags") == subprocess.CREATE_NO_WINDOW
                     assert result is True
 
     def test_macos_uses_open_command(self):

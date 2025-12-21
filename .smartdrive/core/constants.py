@@ -311,6 +311,27 @@ class ConfigKeys:
     MOUNT_POINT = "mount_point"
     VERACRYPT_PATH = "veracrypt_path"
 
+    # Multi-drive context (CHG-20251221-026)
+    # BUG-20251223-001 FIX: Separate keys for Windows and Unix launcher_root display fields
+    # These are read-only UI fields that show the current .smartdrive context (not saved to config)
+    # LAUNCHER_ROOT kept for backward compatibility and generic references
+    LAUNCHER_ROOT = "launcher_root"
+    WINDOWS_LAUNCHER_ROOT = "windows.launcher_root"
+    UNIX_LAUNCHER_ROOT = "unix.launcher_root"
+
+    # Drive context display (CHG-20251221-040)
+    # Read-only fields showing all 4 drive types in Settings UI
+    # These are runtime-computed values, not persisted to config.json
+    # Platform-specific keys to avoid duplicate key errors in schema
+    OS_DRIVE = "os_drive"  # Generic reference
+    INSTANTIATION_DRIVE = "instantiation_drive"  # Generic reference
+    WINDOWS_OS_DRIVE = "windows.os_drive"  # Windows tab display
+    UNIX_OS_DRIVE = "unix.os_drive"  # Unix tab display
+    WINDOWS_INSTANTIATION_DRIVE = "windows.instantiation_drive"  # Windows tab display
+    UNIX_INSTANTIATION_DRIVE = "unix.instantiation_drive"  # Unix tab display
+    # Note: LAUNCHER_ROOT shows managed launcher partition
+    # VOLUME_PATH/MOUNT_LETTER show managed VeraCrypt partition
+
     # Keyfile config
     KEYFILE = "keyfile"
     ENCRYPTED_KEYFILE = "encrypted_keyfile"
@@ -350,6 +371,22 @@ class ConfigKeys:
 
     # Volume identity (computed hash stored during setup)
     VOLUME_IDENTITY = "volume_identity"
+
+    # Device information (BUG-20251221-042: store device details during setup)
+    DEVICE_INFO = "device_info"
+    DEVICE_NAME = "device_name"
+    DEVICE_BUS = "device_bus"
+    DEVICE_SIZE_GB = "device_size_gb"
+    DEVICE_UNIQUE_ID = "device_unique_id"
+    DEVICE_SERIAL = "device_serial"
+    DEVICE_PARTITIONS = "device_partitions"
+    LAUNCHER_PARTITION = "launcher_partition"
+
+    # Recovery kit version (BUG-20251221-042: track kit version for multiple prints)
+    RECOVERY_VERSION = "version"
+    RECOVERY_INVALIDATED_AT = "invalidated_at"
+    RECOVERY_INVALIDATION_REASON = "invalidation_reason"
+    RECOVERY_INVALIDATED_BY_VERSION = "invalidated_by_version"
 
     # Legacy alias: SECURITY_MODE -> MODE (TODO 6: migration shim)
     # Some code may reference SECURITY_MODE, but SSOT key is "mode"
@@ -398,6 +435,8 @@ class UserInputs:
 
     # clipboard operations
     COPY_PASSWORD = "CPW"
+    # CHG-20251221-024: Add header backup path clipboard command
+    COPY_HEADER_PATH = "CBP"
     COPY_DEVICE_PATH = "CDP"
     COPY_KEY_FILE = "CKF"
     PRINT_PASSWORD = "PRINTPW"

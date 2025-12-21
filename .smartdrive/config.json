@@ -1,40 +1,41 @@
 {
   "schema_version": 3,
+  "version": "0.0.1",
+  "drive_name": null,
   "mode": "gpg_pw_only",
-  "encrypted_keyfile": "../keys/keyfile.vc.gpg",
-  "seed_gpg_path": "../keys/seed.gpg",
-  "kdf": "scrypt",
-  "salt_b64": "base64_encoded_salt",
-  "hkdf_info": "smartdrive-vc-pw-v1",
-  "pw_encoding": "utf-8",
+  "setup_date": "2025-12-21",
+  "last_password_change": "2025-12-21",
   "windows": {
-    "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_letter": "V",
+    "volume_path": "\\Device\\Harddisk2\\Partition2",
+    "mount_letter": "U",
     "veracrypt_path": ""
   },
   "unix": {
-    "volume_path": "/dev/sdX2",
+    "volume_path": "\\Device\\Harddisk2\\Partition2",
     "mount_point": "~/veradrive"
   },
-  "drive_id": "aea880fe-346e-4c6b-8fc8-108e51dd8404",
-  "lost_and_found": {
-    "enabled": true,
-    "message": "If found, please return to police.\nprovide a plain explanation why you couldn't do so within 24 hours!\npassword: 1234"
-  },
-  "gui_lang": "de",
-  "drive_name": "KeyFileSafer",
-  "gui_theme": "blue",
-  "keyfile": "",
+  "seed_gpg_path": "keys\\seed.gpg",
+  "kdf": "hkdf-sha256",
+  "salt_b64": "KvHNmukbvtXVcbnYLa++5g==",
+  "hkdf_info": "smartdrive-vc-pw-v1",
+  "pw_encoding": "base64url_nopad",
+  "keyfile_fingerprints": [
+    "20795EBE7248969E0A5AE9F1183999995BCBDACD"
+  ],
+  "verification_overridden": false,
   "recovery": {
-    "enabled": false
+    "enabled": true,
+    "used": false,
+    "state": "enabled",
+    "phrase_hash": "79df33ad14e3123d",
+    "container_path": "H:\\.smartdrive\\recovery\\recovery_container.bin",
+    "header_path": "H:\\.smartdrive\\recovery\\header_backup.hdr",
+    "volume_identity": "device-path-skip",
+    "created_at": "2025-12-21T22:07:30.303874Z"
   },
-  "update_source_type": "server",
-  "update_url": "http://server:8000/api/update/download/latest",
-  "update_local_root": "",
-  "verification_overridden": true,
-  "last_updated": "2025-12-21 06:38:47",
-  "seed.gpg": "H:/.smartdrive/keys/seed.gpg",
-  "integrity_signed": "2025-12-21T02:38:12Z",
-  "signing_key_fpr": "20795EBE7248969E0A5AE9F1183999995BCBDACD",
-  "integrity_server_url": "http://127.0.0.1:8000/api/check"
+  "drive_id": "222d82ea-72cc-4fee-bc84-2e1e2b30f25c",
+  "lost_and_found": {
+    "enabled": false,
+    "message": ""
+  }
 }

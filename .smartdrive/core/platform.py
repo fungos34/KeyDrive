@@ -84,6 +84,202 @@ def is_unix() -> bool:
 
 
 # ===========================================================================
+# Drive Context Detection (Per FEATURE_FLOWS.md CHG-20251221-040)
+# ===========================================================================
+
+
+def get_os_drive() -> str:
+    """
+    Get the drive letter or mount point running the operating system.
+
+    This is a SAFETY-CRITICAL function. The OS drive must NEVER be offered
+    for repartitioning in setup.py.
+
+    Windows: Returns the system drive (e.g., "C:" or "D:")
+    Linux/macOS: Returns the root mount point device (e.g., "/dev/sda1")
+
+    Returns:
+        Drive letter with colon (Windows) or device path (Unix).
+        Returns empty string if detection fails.
+    """
+    system = get_platform()
+
+    if system == "windows":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            # GetSystemWindowsDirectory returns "C:\Windows" or similar
+            buf = ctypes.create_unicode_buffer(260)
+            ctypes.windll.kernel32.GetSystemWindowsDirectoryW(buf, 260)
+            win_path = buf.value
+            if win_path and len(win_path) >= 2 and win_path[1] == ":":
+                return win_path[:2].upper()  # "C:"
+        except (AttributeError, OSError):
+            pass
+
+        # Fallback: environment variable
+        systemroot = os.environ.get("SystemRoot", "")
+        if systemroot and len(systemroot) >= 2 and systemroot[1] == ":":
+            return systemroot[:2].upper()
+
+        return ""
+
+    else:
+        # Unix-like: parse /proc/mounts or use df /
+        try:
+            result = subprocess.run(
+                ["df", "-P", "/"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                check=False,
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                if len(lines) >= 2:
+                    # First column of second line is the device
+                    parts = lines[1].split()
+                    if parts:
+                        return parts[0]  # e.g., "/dev/sda1"
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        return ""
+
+
+def get_instantiation_drive() -> str:
+    """
+    Get the drive from which the current .smartdrive instance was launched.
+
+    This is a SAFETY-CRITICAL function. The instantiation drive must NEVER
+    be offered for repartitioning in setup.py.
+
+    The detection uses the actual script path (__file__), walking up to find
+    the .smartdrive folder, then returning its containing drive.
+
+    Windows: Returns drive letter (e.g., "H:")
+    Linux/macOS: Returns the device mounted at the script's location
+
+    Returns:
+        Drive letter with colon (Windows) or device path (Unix).
+        Returns empty string if detection fails.
+    """
+    try:
+        # Walk up from this file to find the drive root
+        current_file = Path(__file__).resolve()
+
+        if is_windows():
+            # On Windows, Path.drive returns "H:" for "H:\\.smartdrive\\core\\platform.py"
+            drive = current_file.drive
+            if drive and len(drive) >= 2 and drive[1] == ":":
+                return drive.upper()
+            return ""
+
+        else:
+            # Unix: find the mount point of the script's location
+            script_path = str(current_file)
+            try:
+                result = subprocess.run(
+                    ["df", "-P", script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split("\n")
+                    if len(lines) >= 2:
+                        parts = lines[1].split()
+                        if parts:
+                            return parts[0]  # e.g., "/dev/sdb1"
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+            return ""
+
+    except Exception:
+        return ""
+
+
+def get_instantiation_drive_letter_or_mount() -> str:
+    """
+    Get user-friendly instantiation drive identifier.
+
+    Windows: Returns just the drive letter with colon (e.g., "H:")
+    Unix: Returns the mount point path (e.g., "/media/user/KEYDRIVE")
+
+    Returns:
+        User-readable drive identifier or empty string if detection fails.
+    """
+    try:
+        current_file = Path(__file__).resolve()
+
+        if is_windows():
+            return get_instantiation_drive()  # Already returns "H:"
+
+        else:
+            # Unix: get mount point, not device
+            script_path = str(current_file)
+            try:
+                result = subprocess.run(
+                    ["df", "-P", script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split("\n")
+                    if len(lines) >= 2:
+                        parts = lines[1].split()
+                        if len(parts) >= 6:
+                            # Last column is mount point
+                            return parts[-1]  # e.g., "/media/user/KEYDRIVE"
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+            return ""
+
+    except Exception:
+        return ""
+
+
+def is_drive_protected(drive: str) -> tuple[bool, str]:
+    """
+    Check if a drive is protected from repartitioning.
+
+    A drive is protected if it is:
+    1. The OS drive (running the operating system)
+    2. The instantiation drive (running the current .smartdrive instance)
+
+    Args:
+        drive: Drive letter (Windows, e.g., "H:") or device path (Unix, e.g., "/dev/sdb1")
+
+    Returns:
+        Tuple of (is_protected, reason).
+        If protected, reason explains why (e.g., "OS drive", "Instantiation drive").
+        If not protected, reason is empty string.
+    """
+    drive_upper = drive.upper() if is_windows() else drive
+
+    os_drive = get_os_drive()
+    if os_drive and drive_upper == os_drive.upper() if is_windows() else drive == os_drive:
+        return True, "os_drive"
+
+    inst_drive = get_instantiation_drive()
+    if inst_drive:
+        if is_windows():
+            if drive_upper == inst_drive.upper():
+                return True, "instantiation_drive"
+        else:
+            if drive == inst_drive:
+                return True, "instantiation_drive"
+
+    return False, ""
+
+
+# ===========================================================================
 # Cross-Platform CLI Support (Per AGENT_ARCHITECTURE.md Section 2.5)
 # ===========================================================================
 

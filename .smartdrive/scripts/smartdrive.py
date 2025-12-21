@@ -219,8 +219,23 @@ def enforce_single_entrypoint():
 
 
 def clear_screen():
-    """Clear terminal screen."""
-    os.system("cls" if os.name == "nt" else "clear")
+    """Clear terminal screen.
+
+    BUG-20251221-024: Use subprocess.run instead of os.system to prevent
+    "syntax error in command line" popup errors on Windows.
+    """
+    import subprocess
+
+    if os.name == "nt":
+        # Windows: use subprocess with CREATE_NO_WINDOW flag
+        subprocess.run(
+            ["cmd", "/c", "cls"],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            check=False,
+        )
+    else:
+        # Unix: use clear command
+        subprocess.run(["clear"], check=False)
 
 
 def get_drive_metadata() -> dict:

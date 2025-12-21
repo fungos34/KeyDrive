@@ -69,7 +69,7 @@ from core.limits import Limits
 from core.modes import _SECRETS_AVAILABLE  # Module-level flag (not Enum attribute)
 from core.modes import SECURITY_MODE_DISPLAY, SecurityMode, VolumeIdentifier, VolumeIdentifierKind
 from core.paths import DEPLOYED_SCRIPTS_DIR, Paths, normalize_mount_letter
-from core.platform import get_platform
+from core.platform import get_instantiation_drive, get_os_drive, get_platform, is_drive_protected
 from core.platform import is_windows as _is_windows
 from core.platform import windows_create_shortcut, windows_refresh_explorer, windows_set_attributes
 from core.safety import (
@@ -343,6 +343,9 @@ def clear_terminal() -> None:
 
     SECURITY NOTE: This is called between sensitive screens to prevent
     shoulder-surfing, but should not disrupt the terminal session.
+
+    BUG-20251221-022 FIX: Replaced os.system() calls with subprocess.run()
+    to prevent "syntax error in command line" popups on Windows.
     """
     if platform.system().lower() == "windows":
         # BUG-20251219-002 FIX: Use ANSI escape codes instead of cls
@@ -364,12 +367,17 @@ def clear_terminal() -> None:
                 return
         except Exception:
             pass
-        # Fallback to cls if ANSI not supported
-        os.system("cls")
+        # BUG-20251221-022/024: Use subprocess with CREATE_NO_WINDOW to prevent popups
+        subprocess.run(
+            ["cmd", "/c", "cls"],
+            shell=False,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
     else:
-        # Try clear command first, fallback to ANSI escape
-        result = os.system("clear")
-        if result != 0:
+        # BUG-20251221-022: Use subprocess instead of os.system() to prevent issues
+        result = subprocess.run(["clear"], shell=False, check=False)
+        if result.returncode != 0:
             # ANSI escape code fallback
             print("\033[2J\033[H", end="")
 
@@ -397,6 +405,9 @@ def detect_recovery_generated(launcher_root: Path) -> bool:
 def open_folder_cli(path: Path) -> bool:
     """Open a directory in the system file manager (CLI-safe; no Qt imports).
 
+    BUG-20251221-022 FIX: Use subprocess with CREATE_NO_WINDOW on Windows
+    instead of os.startfile() to prevent "syntax error in command line" popups.
+
     Returns True on success, False on failure.
     """
     try:
@@ -408,7 +419,13 @@ def open_folder_cli(path: Path) -> bool:
 
         plat = get_platform()
         if plat == "windows":
-            os.startfile(str(path))
+            # BUG-20251221-022: Use explorer.exe via subprocess instead of os.startfile()
+            # os.startfile() can trigger "syntax error in command line" popups
+            subprocess.run(
+                ["explorer", str(path)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+            )
         elif plat == "darwin":
             subprocess.run(["open", str(path)], check=False)
         else:
@@ -634,8 +651,9 @@ def show_setup_success_screen(
     Display comprehensive setup success screen with next actions menu.
 
     CHG-20251218-003: Clean, cohesive final screen with clear action explanations.
+    CHG-20251221-022: Added [S] Sign option for explicit script signing choice.
 
-    Returns: User's menu choice ('M', 'G', 'P', 'R', 'Q')
+    Returns: User's menu choice ('M', 'G', 'P', 'R', 'S', 'Q')
     """
     # Determine security mode
     if use_gpg:
@@ -650,6 +668,9 @@ def show_setup_success_screen(
 
     # Recovery kit status
     recovery_status = "[OK] Generated" if recovery_generated else "[X] Not generated"
+
+    # Signing availability
+    signing_available = fingerprints and len(fingerprints) > 0
 
     # Clear screen for final summary
     clear_terminal()
@@ -724,6 +745,23 @@ def show_setup_success_screen(
     print("        Use this if you want to rotate secrets after initial setup.")
     print()
 
+    # [S] Sign (CHG-20251221-022)
+    if signing_available:
+        print("    [S] SIGN DEPLOYED SCRIPTS")
+        print("        Signs the deployed scripts with your GPG key for integrity verification.")
+        print("        RECOMMENDED for tamper detection on future runs.")
+    else:
+        print("    [S] SIGN DEPLOYED SCRIPTS (UNAVAILABLE)")
+        print("        Script signing requires GPG keys to be configured.")
+        print("        You can sign scripts later from the main CLI menu.")
+    print()
+
+    # [T] Test (CHG-20251221-023)
+    print("    [T] RUN VERIFICATION TESTS")
+    print("        Runs the pytest test suite to verify deployment integrity.")
+    print("        Informational only - failures do not affect deployment.")
+    print()
+
     # [Q] Quit
     print("    [Q] QUIT")
     print("        Exit setup. You can mount later using:")
@@ -735,13 +773,19 @@ def show_setup_success_screen(
 
     print("  " + "-" * 66)
 
-    # Interactive menu
+    # Interactive menu - include S only if signing is available, T always available
+    valid_choices = ["M", "G", "P", "R", "T", "Q"]
+    if signing_available:
+        valid_choices.insert(4, "S")  # Insert S before T
+
     while True:
-        choice = input("  Your choice [M/G/P/R/Q]: ").strip().upper()
-        if choice in ["M", "G", "P", "R", "Q"]:
+        choice = input(f"  Your choice [{'/'.join(valid_choices)}]: ").strip().upper()
+        if choice in valid_choices:
             return choice
+        elif choice == "S" and not signing_available:
+            print("  Script signing is not available (no GPG keys configured).")
         else:
-            print("  Invalid choice. Please enter M, G, P, R, or Q.")
+            print(f"  Invalid choice. Please enter {', '.join(valid_choices[:-1])}, or {valid_choices[-1]}.")
 
 
 def replace_markdown_variables(markdown_content: str) -> str:
@@ -2013,19 +2057,81 @@ def display_drives(drives: list[dict], system: str) -> None:
 
 
 def select_drive(drives: list[dict], system: str) -> dict | None:
-    """Let user select a drive. Returns selected drive or None."""
-    # Filter out system drives for selection
-    safe_drives = [d for d in drives if not d.get("is_system") and not d.get("is_boot")]
+    """Let user select a drive. Returns selected drive or None.
+
+    SAFETY: This function blocks selection of:
+    1. OS drives (is_system/is_boot flag from PowerShell/lsblk)
+    2. The instantiation drive (where this script is running from)
+
+    Per FEATURE_FLOWS.md CHG-20251221-040, this is CRITICAL safety logic.
+    """
+    # Get protected drive identifiers
+    os_drive = get_os_drive()
+    inst_drive = get_instantiation_drive()
+
+    def _is_protected_drive(drive: dict) -> tuple[bool, str]:
+        """Check if drive is protected. Returns (is_protected, reason)."""
+        # Check OS/boot flags (from PowerShell Get-Disk or lsblk)
+        if drive.get("is_system") or drive.get("is_boot"):
+            return True, "system_boot"
+
+        # Check against detected OS drive
+        if os_drive:
+            if "windows" in system.lower():
+                # On Windows, compare drive letters
+                partitions = drive.get("partitions", [])
+                for part in partitions:
+                    part_letter = part.get("DriveLetter", "")
+                    if part_letter and f"{part_letter}:" == os_drive:
+                        return True, "os_drive"
+            else:
+                # On Unix, compare device names
+                if drive.get("name") == os_drive:
+                    return True, "os_drive"
+
+        # Check against instantiation drive (CRITICAL: prevent repartitioning running instance)
+        if inst_drive:
+            if "windows" in system.lower():
+                partitions = drive.get("partitions", [])
+                for part in partitions:
+                    part_letter = part.get("DriveLetter", "")
+                    if part_letter and f"{part_letter}:" == inst_drive:
+                        return True, "instantiation_drive"
+            else:
+                if drive.get("name") == inst_drive:
+                    return True, "instantiation_drive"
+
+        return False, ""
+
+    # Filter out protected drives for selection
+    safe_drives = []
+    protected_drives = []
+
+    for d in drives:
+        is_protected, reason = _is_protected_drive(d)
+        if is_protected:
+            d["_protection_reason"] = reason  # Tag for display
+            protected_drives.append(d)
+        else:
+            safe_drives.append(d)
+
+    # Legacy compatibility: also track system_drives for display
     system_drives = [d for d in drives if d.get("is_system") or d.get("is_boot")]
 
     if not safe_drives:
         error("No external drives detected!")
         print("Please connect an external USB drive and try again.")
+        if inst_drive:
+            print(f"\n[INFO] Detected instantiation drive: {inst_drive}")
+            print("       (Cannot repartition the drive running this script)")
         return None
 
     display_drives(drives, system)
 
-    print("\n[!] WARNING: System drives are shown but CANNOT be selected.")
+    print("\n[!] WARNING: Protected drives are shown but CANNOT be selected:")
+    print("    - System/Boot drives: Running your operating system")
+    if inst_drive:
+        print(f"    - Instantiation drive ({inst_drive}): Running this setup script")
     print("    Only external drives can be configured.\n")
 
     while True:
@@ -2040,10 +2146,16 @@ def select_drive(drives: list[dict], system: str) -> dict | None:
                 if selected:
                     return selected
                 else:
-                    # Check if they tried to select a system drive
-                    system_drive = next((d for d in drives if d["number"] == disk_num), None)
-                    if system_drive:
-                        error("Cannot select system/boot drive! Choose an external drive.")
+                    # Check if they tried to select a protected drive
+                    protected = next((d for d in protected_drives if d["number"] == disk_num), None)
+                    if protected:
+                        reason = protected.get("_protection_reason", "system")
+                        if reason == "instantiation_drive":
+                            error(f"Cannot select instantiation drive! This drive is running the setup script.")
+                        elif reason == "os_drive":
+                            error("Cannot select OS drive! This drive is running your operating system.")
+                        else:
+                            error("Cannot select system/boot drive! Choose an external drive.")
                     else:
                         error(f"Disk {disk_num} not found.")
             except ValueError:
@@ -2057,7 +2169,17 @@ def select_drive(drives: list[dict], system: str) -> dict | None:
             if selected:
                 return selected
             else:
-                error(f"Device {choice} not found or is a system drive.")
+                protected = next((d for d in protected_drives if d["name"] == choice), None)
+                if protected:
+                    reason = protected.get("_protection_reason", "system")
+                    if reason == "instantiation_drive":
+                        error(f"Cannot select {choice}! This drive is running the setup script.")
+                    elif reason == "os_drive":
+                        error(f"Cannot select {choice}! This drive is running your operating system.")
+                    else:
+                        error(f"Cannot select {choice}! This is a system drive.")
+                else:
+                    error(f"Device {choice} not found.")
 
 
 # =============================================================================
@@ -4389,12 +4511,17 @@ def deploy_scripts(launcher_path: Path, payload_device: str, encrypted_keyfile: 
         log("  Copied variables.py")
 
     # Copy static assets to .smartdrive/static/ (deployed structure - same as update.py)
-    static_dir = repo_root / "static"
-    target_static = launcher_path / Paths.SMARTDRIVE_DIR_NAME / "static"
+    # BUG-20251221-041 FIX: static/ is inside .smartdrive/, not at repo root
+    static_dir = smartdrive_root / Paths.STATIC_SUBDIR  # .smartdrive/static/
+    target_static = launcher_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR
     if static_dir.exists():
         target_static.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(static_dir, target_static, dirs_exist_ok=True)
-        log("  Copied static assets to .smartdrive/static/")
+        static_files = list(target_static.rglob("*"))
+        file_count = sum(1 for f in static_files if f.is_file())
+        log(f"  Copied static assets to .smartdrive/static/ ({file_count} files)")
+    else:
+        warn(f"  Static directory not found at {static_dir}")
 
     # Copy GUI executable into scripts directory (NOT drive root)
     gui_exe_candidates = [
@@ -4475,6 +4602,7 @@ def deploy_scripts_extended(
     salt_b64: str = None,
     gpg_fingerprints: list = None,
     verification_overridden: bool = False,  # BUG-013: Track if user skipped verification
+    device_info: dict = None,  # BUG-20251221-042: Store device details for recovery kit
 ) -> bool:
     """
     Copy scripts and create config on KeyDrive partition.
@@ -4584,12 +4712,17 @@ def deploy_scripts_extended(
         log("  Copied variables.py")
 
     # Copy static assets to .smartdrive/static/ (deployed structure - same as update.py)
-    static_dir = repo_root / Paths.STATIC_SUBDIR
+    # BUG-20251221-041 FIX: static/ is inside .smartdrive/, not at repo root
+    static_dir = smartdrive_root / Paths.STATIC_SUBDIR  # .smartdrive/static/
     target_static = launcher_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR
     if static_dir.exists():
         target_static.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(static_dir, target_static, dirs_exist_ok=True)
-        log(f"  Copied static assets to {target_static}")
+        static_files = list(target_static.rglob("*"))
+        file_count = sum(1 for f in static_files if f.is_file())
+        log(f"  Copied static assets to {target_static} ({file_count} files)")
+    else:
+        warn(f"  Static directory not found at {static_dir}")
 
     # Copy GUI executable into .smartdrive/scripts/ (NOT drive root)
     gui_exe_candidates = [
@@ -4692,6 +4825,19 @@ def deploy_scripts_extended(
     # BUG-013: Save verification_overridden flag to config
     config[ConfigKeys.VERIFICATION_OVERRIDDEN] = verification_overridden
 
+    # BUG-20251221-042: Store device info for recovery kit display
+    if device_info:
+        config[ConfigKeys.DEVICE_INFO] = {
+            ConfigKeys.DEVICE_NAME: device_info.get("name", "Unknown Device"),
+            ConfigKeys.DEVICE_BUS: device_info.get("bus", "Unknown"),
+            ConfigKeys.DEVICE_SIZE_GB: device_info.get("size_gb", 0),
+            ConfigKeys.DEVICE_UNIQUE_ID: device_info.get("unique_id", ""),
+            ConfigKeys.DEVICE_SERIAL: device_info.get("serial_number", ""),
+            ConfigKeys.DEVICE_PARTITIONS: device_info.get("partitions", []),
+            ConfigKeys.LAUNCHER_PARTITION: str(launcher_path.drive).rstrip(":\\") if launcher_path.drive else "",
+        }
+        log(f"  Stored device info: {device_info.get('name', 'Unknown')} ({device_info.get('bus', 'Unknown')})")
+
     # Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
     # Atomic write for data integrity
     config_path = target_smartdrive / FileNames.CONFIG_JSON
@@ -4765,6 +4911,86 @@ def sign_deployed_scripts(launcher_path: Path, gpg_fingerprint: str = None) -> b
             return False
     except Exception as e:
         warn(f"Could not sign scripts: {e}")
+        return False
+
+
+def run_post_deployment_tests(launcher_path: Path) -> bool:
+    """
+    Run the pytest test suite after deployment and display results.
+
+    CHG-20251221-023: Post-setup/update test execution capability.
+
+    Args:
+        launcher_path: Path to the deployed KeyDrive partition
+
+    Returns:
+        True if all tests passed, False otherwise (informational only)
+    """
+    import shutil
+
+    print("\n" + "=" * 70)
+    print("  POST-DEPLOYMENT VERIFICATION TESTS")
+    print("=" * 70 + "\n")
+
+    # Check if pytest is available
+    if not shutil.which("pytest") and not _check_pytest_importable():
+        print("  [!] pytest is not installed.")
+        print("      To enable test verification, install with: pip install pytest")
+        print("      Skipping test execution.\n")
+        return False
+
+    # Determine tests directory
+    smartdrive_dir = launcher_path / Paths.SMARTDRIVE_DIR_NAME
+    tests_dir = smartdrive_dir / "tests"
+
+    if not tests_dir.exists():
+        # Fallback to repository tests if running from dev environment
+        repo_tests = Path(__file__).parent.parent / "tests"
+        if repo_tests.exists():
+            tests_dir = repo_tests
+        else:
+            print("  [!] Tests directory not found.")
+            print(f"      Expected: {tests_dir}")
+            print("      Skipping test execution.\n")
+            return False
+
+    print(f"  Running tests from: {tests_dir}")
+    print("  " + "-" * 66 + "\n")
+
+    try:
+        # Run pytest with verbose output, capturing return code
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(tests_dir), "-v", "--tb=short"],
+            cwd=str(smartdrive_dir) if smartdrive_dir.exists() else str(tests_dir.parent),
+            check=False,
+        )
+
+        print("\n  " + "-" * 66)
+        if result.returncode == 0:
+            print("  [OK] All tests passed!")
+            return True
+        elif result.returncode == 1:
+            print("  [!] Some tests failed. Review output above.")
+            return False
+        elif result.returncode == 5:
+            print("  [!] No tests were collected.")
+            return False
+        else:
+            print(f"  [!] pytest exited with code {result.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"  [!] Could not run tests: {e}")
+        return False
+
+
+def _check_pytest_importable() -> bool:
+    """Check if pytest can be imported."""
+    try:
+        import pytest  # noqa: F401
+
+        return True
+    except ImportError:
         return False
 
 
@@ -5275,10 +5501,17 @@ def run_phase_6_veracrypt_creation(state: PagedSetupState) -> tuple:
     print("  ⚠️  This process cannot be interrupted once started.")
     print("  ⚠️  Estimated time: 5-15 minutes depending on drive size.\n")
 
-    print(f"  Press [{UserInputs.CONTINUE}] to begin volume creation, or [{UserInputs.QUIT}] to quit...")
-    choice = input("  Your choice: ").strip().upper()
-    if choice == UserInputs.QUIT:
-        return False, UserInputs.QUIT
+    # BUG-20251221-023: Add proper input validation loop
+    # User must explicitly press C to continue or Q to quit
+    while True:
+        print(f"  Press [{UserInputs.CONTINUE}] to begin volume creation, or [{UserInputs.QUIT}] to quit...")
+        choice = input("  Your choice: ").strip().upper()
+        if choice == UserInputs.CONTINUE:
+            break  # Proceed with volume creation
+        elif choice == UserInputs.QUIT:
+            return False, UserInputs.QUIT
+        else:
+            print(f"  [!] Invalid choice '{choice}'. Please press [{UserInputs.CONTINUE}] or [{UserInputs.QUIT}].\n")
 
     # Extract state variables
     system = state.system
@@ -5555,6 +5788,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
             salt_b64=getattr(state, "session_salt_b64", None),
             gpg_fingerprints=fingerprints if fingerprints else None,
             verification_overridden=state.verification_overridden,  # BUG-013
+            device_info=state.selected_drive,  # BUG-20251221-042: Store device details
         )
 
         if not deploy_success:
@@ -5600,14 +5834,8 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
 
         print("[OK] Deployment verified - all required files present")
 
-        # Sign deployed scripts if GPG is available and keys configured
-        if fingerprints and len(fingerprints) > 0:
-            print("[Deployment] Signing deployed scripts...")
-            sign_result = sign_deployed_scripts(launcher_mount, fingerprints[0])
-            if sign_result:
-                print("[OK] Scripts signed successfully")
-            else:
-                print("[!] Script signing skipped (non-critical)")
+        # CHG-20251221-022: Signing moved to post-deployment menu
+        # Users now have explicit choice whether to sign scripts after setup
 
         setup_flow_trace(
             "DEPLOYMENT_DONE",
@@ -5796,6 +6024,28 @@ def run_phase_8_summary(state: PagedSetupState, *, auto_exit: bool = False) -> i
                 print("  [OK] Rekey completed")
             except Exception as e:
                 print(f"  [!] Rekey failed: {e}")
+            print("\n  Press Enter to return to menu...")
+            input()
+
+        elif choice == "S":
+            # CHG-20251221-022: Sign deployed scripts (separate from deployment)
+            print("\n  [ACTION] Signing deployed scripts...")
+            if state.fingerprints and len(state.fingerprints) > 0:
+                sign_result = sign_deployed_scripts(launcher_mount, state.fingerprints[0])
+                if sign_result:
+                    print("  [OK] Scripts signed successfully")
+                    print("      Integrity verification will now pass on future runs.")
+                else:
+                    print("  [!] Script signing failed")
+                    print("      You can try again later from the main CLI menu.")
+            else:
+                print("  [!] Script signing not available (no GPG keys configured)")
+            print("\n  Press Enter to return to menu...")
+            input()
+
+        elif choice == "T":
+            # CHG-20251221-023: Run verification tests
+            run_post_deployment_tests(launcher_mount)
             print("\n  Press Enter to return to menu...")
             input()
 

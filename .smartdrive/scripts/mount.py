@@ -86,6 +86,47 @@ def get_ram_temp_dir():
     return Path(tempfile.gettempdir())
 
 
+def find_available_mount_letter(preferred_letter: str = "V") -> str:
+    """
+    BUG-20251221-037: Find an available Windows drive letter for mounting.
+
+    Tries the preferred letter first, then iterates through other letters.
+    Avoids system letters (A, B, C) and letters already in use.
+
+    Args:
+        preferred_letter: The preferred mount letter (uppercase)
+
+    Returns:
+        An available uppercase drive letter
+
+    Raises:
+        RuntimeError if no drive letter is available
+    """
+    # System letters to avoid (floppy drives and typical system drive)
+    reserved_letters = {"A", "B", "C"}
+
+    # Letters to try, starting with preferred
+    all_letters = "DEFGHIJKLMNOPQRSTUVWXYZ"
+
+    # Build ordered list: preferred first (if valid), then others
+    letters_to_try = []
+    preferred = preferred_letter.strip().upper()
+    if preferred and preferred not in reserved_letters and preferred in all_letters:
+        letters_to_try.append(preferred)
+
+    # Add remaining letters in order
+    for letter in all_letters:
+        if letter not in letters_to_try and letter not in reserved_letters:
+            letters_to_try.append(letter)
+
+    # Find first available letter
+    for letter in letters_to_try:
+        if not Path(f"{letter}:\\").exists():
+            return letter
+
+    raise RuntimeError("No available drive letters found. All letters D-Z are in use.")
+
+
 def secure_delete(file_path, passes=3):
     """Securely delete a file by overwriting with random data."""
     if not file_path.exists():
@@ -1370,12 +1411,25 @@ def mount_veracrypt_windows(vc_exe: Path, cfg: dict, tmp_keys: list[Path] | None
 
     mount_letter = (cfg_win.get(ConfigKeys.MOUNT_LETTER) or "").strip().upper() or "V"
 
-    # Check if drive letter is already in use
+    # BUG-20251221-037: Auto-find available mount letter if configured one is in use
+    original_letter = mount_letter
     if Path(f"{mount_letter}:\\").exists():
-        raise RuntimeError(
-            f"Drive letter {mount_letter}: is already in use.\n"
-            f"Please choose a different letter in config.json or unmount the existing drive."
-        )
+        log(f"Drive letter {mount_letter}: is in use, finding alternative...")
+        mount_letter = find_available_mount_letter(mount_letter)
+        log(f"Using alternative drive letter: {mount_letter}:")
+
+        # Update config with new mount letter for future mounts
+        try:
+            # Derive config path from script location (script is in .smartdrive/scripts/)
+            config_path = script_path.parent.parent / CONFIG_FILENAME
+            if config_path.exists():
+                cfg_win[ConfigKeys.MOUNT_LETTER] = mount_letter
+                cfg[ConfigKeys.WINDOWS] = cfg_win
+                with config_path.open("w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+                log(f"Updated config.json with new mount letter: {mount_letter}")
+        except Exception as e:
+            log(f"Warning: Could not update config with new mount letter: {e}")
 
     log(f"Mounting VeraCrypt volume on Windows as drive {mount_letter}:")
     log(f"  Volume path: {volume_path}")

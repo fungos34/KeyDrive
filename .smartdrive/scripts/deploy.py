@@ -359,6 +359,22 @@ def deploy_to_drive(target_drive):
         print("  ⚠ static/ directory not found")
         _log_deploy("deploy.static.notfound", source=str(static_src))
 
+    # BUG-20251221-032: Copy tests directory for post-deployment verification
+    # Tests MUST be deployed to target so verification runs against deployed code
+    print("🧪 Copying tests...")
+    tests_src = REPO_SMARTDRIVE / "tests"  # .smartdrive/tests/
+    tests_dst = target_paths.smartdrive_root / "tests"  # target/.smartdrive/tests/
+    if tests_src.exists():
+        shutil.copytree(tests_src, tests_dst, dirs_exist_ok=True)
+        # Count files for logging
+        test_files = list(tests_dst.rglob("*.py"))
+        file_count = len(test_files)
+        print(f"  ✓ tests/ directory copied ({file_count} test files)")
+        _log_deploy("deploy.tests.copied", path=str(tests_dst), file_count=file_count)
+    else:
+        print("  ⚠ tests/ directory not found (tests will not be deployed)")
+        _log_deploy("deploy.tests.notfound", source=str(tests_src))
+
     # Create clean root entrypoints AFTER assets/exe are in place
     print("🔧 Creating root entrypoints...")
 
