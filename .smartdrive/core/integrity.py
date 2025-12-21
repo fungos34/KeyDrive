@@ -52,18 +52,29 @@ class Integrity:
     MANIFEST_FILE = "scripts.sha256"
     SIGNATURE_FILE = "scripts.sha256.sig"
 
-    # Scripts included in integrity hash (deterministic order)
-    # Must match Paths.REQUIRED_SCRIPTS + security-relevant optional scripts
+    # BUG-20251218-002: Scripts included in integrity hash (deterministic order)
+    # Includes:
+    #   - All Paths.REQUIRED_SCRIPTS (core functionality)
+    #   - Security-relevant optional scripts (credential handling, UI, setup)
+    # Excludes:
+    #   - i18n scripts (cli_i18n.py, gui_i18n.py) - no credential logic
+    #   - version.py - metadata only
+    #   - deploy.py - dev-time only, not runtime
+    #   - cli_output.py - formatting only
+    #   - Test/validation scripts (not deployed)
     HASHED_SCRIPTS = [
-        FileNames.CRYPTO_UTILS_PY,
-        FileNames.KEYFILE_PY,
-        FileNames.MOUNT_PY,
-        FileNames.RECOVERY_PY,
-        FileNames.RECOVERY_CONTAINER_PY,
-        FileNames.REKEY_PY,
-        FileNames.KEYDRIVE_PY,
-        FileNames.UNMOUNT_PY,
-        FileNames.VERACRYPT_CLI_PY,
+        FileNames.CRYPTO_UTILS_PY,  # Credential encryption/decryption
+        FileNames.GUI_LAUNCHER_PY,  # GUI entry point
+        FileNames.GUI_PY,  # GUI with credential handling, recovery UI
+        FileNames.KEYFILE_PY,  # Keyfile generation
+        FileNames.MOUNT_PY,  # Volume mounting
+        FileNames.RECOVERY_PY,  # Recovery operations
+        FileNames.RECOVERY_CONTAINER_PY,  # Recovery container management
+        FileNames.REKEY_PY,  # Credential rotation
+        FileNames.SETUP_PY,  # Initial credential setup
+        FileNames.KEYDRIVE_PY,  # Main CLI entrypoint
+        FileNames.UNMOUNT_PY,  # Volume unmounting
+        FileNames.VERACRYPT_CLI_PY,  # VeraCrypt CLI wrapper
     ]
 
     @classmethod

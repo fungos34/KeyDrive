@@ -393,7 +393,6 @@ class UserInputs:
     EXIT = "Q"
     LOGS = "L"
 
-
     # clipboard operations
     COPY_PASSWORD = "CPW"
     COPY_DEVICE_PATH = "CDP"
@@ -597,6 +596,46 @@ class FileNames:
         "recovery_kits",  # Recovery documents
         CONFIG_JSON,  # User configuration (version field updated separately)
     }
+
+    # CHG-20251221-004: Deployment exclusion patterns
+    # Files/directories to NEVER deploy to external drives (development only)
+    DEPLOYMENT_EXCLUDE_PATTERNS = [
+        ".git",  # Git repository metadata
+        ".github",  # GitHub Actions/templates
+        ".gitignore",  # Git ignore rules
+        ".gitattributes",  # Git attributes
+        "__pycache__",  # Python bytecode cache
+        "*.pyc",  # Compiled Python files
+        "*.pyo",  # Optimized Python files
+        "*.pyd",  # Python DLL files
+        ".pytest_cache",  # Pytest cache
+        ".mypy_cache",  # MyPy type checker cache
+        ".ruff_cache",  # Ruff linter cache
+        ".vscode",  # VS Code settings
+        ".idea",  # PyCharm/IntelliJ settings
+        "*.code-workspace",  # VS Code workspace files
+        ".venv",  # Virtual environment
+        "venv",  # Virtual environment (alternate name)
+        ".env",  # Environment variables (may contain secrets)
+        "tests",  # Unit/integration tests
+        "docs/development",  # Developer documentation
+        "*.md",  # Markdown documentation (except README)
+        "!README.md",  # Exception: keep README
+        ".editorconfig",  # Editor configuration
+        ".flake8",  # Flake8 configuration
+        "pyproject.toml",  # Python project metadata
+        "setup.cfg",  # Setup configuration
+        "tox.ini",  # Tox configuration
+        "Makefile",  # Build automation
+        ".coverage",  # Coverage reports
+        "htmlcov",  # Coverage HTML reports
+        "*.egg-info",  # Python package metadata
+        "dist",  # Distribution builds
+        "build",  # Build artifacts
+        ".DS_Store",  # macOS metadata
+        "Thumbs.db",  # Windows thumbnail cache
+        "desktop.ini",  # Windows folder settings
+    ]
 
 
 # =============================================================================
@@ -1028,8 +1067,8 @@ class Branding:
     PRODUCT_NAME_FULL = "KeyDrive Secure Storage"
     PRODUCT_DESCRIPTION = "Secure, Encrypted Portable Storage Solution"
     COMPANY_NAME = "KeyDrive (c) 2021-2024 SecureStorage Inc."
-    AUTHOR_NAME = "Johannes F. Wagner",
-    SUPPORT_EMAIL = "info@alpwolf.at",
+    AUTHOR_NAME = ("Johannes F. Wagner",)
+    SUPPORT_EMAIL = ("info@alpwolf.at",)
     WEBSITE_URL = "https://www.alpwolf.at"
 
     # GUI theme colors

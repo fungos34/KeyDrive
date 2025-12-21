@@ -25,8 +25,7 @@ from typing import Optional, Tuple
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed: .smartdrive/scripts/veracrypt_cli.py
     # DEPLOY_ROOT = .smartdrive/, add to sys.path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -916,16 +915,22 @@ def render_header_export_gui_guide(
 
     # P1: Open VeraCrypt GUI ONCE per session only
     # Use module-level flag to prevent reopening if function is called again
+    # BUG-20251220-004 FIX: Pass volume_path to pre-select device in GUI
     global _veracrypt_gui_opened_this_session
 
     if not _veracrypt_gui_opened_this_session and vc_exe:
         try:
+            # BUG-20251220-004: Pass volume_path to pre-select device in GUI
             # On Windows: CREATE_NO_WINDOW prevents unexpected GUI popups from probes
             if "windows" in platform.system().lower():
-                subprocess.Popen([str(vc_exe)], creationflags=subprocess.CREATE_NO_WINDOW)
+                # Launch with /volume argument to pre-select device
+                cmd = [str(vc_exe), "/volume", volume_path]
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                subprocess.Popen([str(vc_exe)])
-            print("  [OK] VeraCrypt GUI opened.\n")
+                # Launch with --volume argument to pre-select device
+                cmd = [str(vc_exe), "--volume", volume_path]
+                subprocess.Popen(cmd)
+            print("  [OK] VeraCrypt GUI opened with device pre-selected.\n")
             _veracrypt_gui_opened_this_session = True
         except Exception as e:
             print(f"  [!] Could not open VeraCrypt: {e}")
@@ -1009,9 +1014,16 @@ def get_veracrypt_exe() -> Optional[Path]:
     return None
 
 
-def open_veracrypt_gui() -> bool:
+def open_veracrypt_gui(volume_path: Optional[str] = None) -> bool:
     """
     Open VeraCrypt GUI application.
+
+    BUG-20251220-004 FIX: When volume_path is provided, pre-selects the device
+    in VeraCrypt GUI using /volume argument. This eliminates the need for users
+    to manually copy/paste device paths and prevents using stale/cached paths.
+
+    Args:
+        volume_path: Optional path to VeraCrypt volume/device to pre-select in GUI
 
     Returns:
         True if GUI was launched successfully, False otherwise.
@@ -1021,11 +1033,18 @@ def open_veracrypt_gui() -> bool:
         return False
 
     try:
+        # Build command with optional volume argument
+        cmd = [str(vc_exe)]
+        if volume_path:
+            # VeraCrypt accepts /volume on Windows, --volume on Unix
+            prefix = veracrypt_flag_prefix()
+            cmd.extend([f"{prefix}volume", volume_path])
+
         # On Windows: use CREATE_NO_WINDOW to prevent extra window
         if platform.system().lower() == "windows":
-            subprocess.Popen([str(vc_exe)], creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
         else:
-            subprocess.Popen([str(vc_exe)])
+            subprocess.Popen(cmd)
         return True
     except Exception as e:
         print(f"  [!] Could not open VeraCrypt: {e}")

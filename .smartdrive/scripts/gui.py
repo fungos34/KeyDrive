@@ -49,8 +49,7 @@ def log_exception(context: str, exc: Exception = None, level: str = "warning") -
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/gui.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -94,7 +93,7 @@ def set_lang(lang: str) -> None:
 
 
 # Import all constants from variables.py (which now also imports from core)
-from core.constants import Branding 
+from core.constants import Branding
 
 APP_NAME = Branding.APP_NAME
 BANNER_TITLE = Branding.BANNER_TITLE
@@ -109,7 +108,6 @@ WINDOW_HEIGHT = Branding.WINDOW_HEIGHT
 WINDOW_MARGIN = Branding.WINDOW_MARGIN
 WINDOW_TITLE = Branding.WINDOW_TITLE
 WINDOW_WIDTH = Branding.WINDOW_WIDTH
-
 
 
 def sanitize_product_name(name: str) -> str:
@@ -1117,11 +1115,11 @@ QPushButton:pressed {{
                 _gui_logger.info("System tray not available, skipping tray setup")
                 return
 
-            # Get drive_id from config
+            # Get drive_id from config (optional - tooltip will work without it)
             drive_id = get_drive_id(self.config)
             if not drive_id:
-                _gui_logger.warning("No drive_id in config, skipping tray setup")
-                return
+                _gui_logger.info("No drive_id in config, using empty ID for tray tooltip")
+                drive_id = ""  # Continue with empty ID instead of aborting
 
             # Get drive name for tooltip
             drive_name = self.config.get(ConfigKeys.DRIVE_NAME) or PRODUCT_NAME
@@ -1252,8 +1250,11 @@ QPushButton:pressed {{
             log_exception("Error updating tray icon state", e, level="debug")
 
     def closeEvent(self, event):
-        """Handle window close - hide to tray if enabled, otherwise quit."""
-        if self._close_to_tray and self._tray_manager and self._tray_manager.is_visible:
+        """Handle window close - hide to tray if enabled, otherwise ask user."""
+        # Check if tray is available and working
+        tray_available = self._tray_manager and self._tray_manager.is_visible
+
+        if self._close_to_tray and tray_available:
             # Hide to tray instead of closing
             _gui_logger.info("ui.exit_clicked -> hiding window (tray continues)")
             _gui_logger.info("ui.window.hide")
@@ -1269,6 +1270,27 @@ QPushButton:pressed {{
                 icon_type="information",
                 duration_ms=3000,
             )
+        elif self._close_to_tray and not tray_available:
+            # Tray unavailable but close-to-tray enabled - ask user what to do
+            from PyQt6.QtWidgets import QMessageBox
+
+            msg = QMessageBox(self)
+            msg.setWindowTitle(PRODUCT_NAME)
+            msg.setText(tr("tray_unavailable_message", lang=get_lang()))
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.setDefaultButton(QMessageBox.StandardButton.No)
+
+            if msg.exec() == QMessageBox.StandardButton.Yes:
+                # User wants to quit
+                if hasattr(self, "status_timer") and self.status_timer:
+                    self.status_timer.stop()
+                event.accept()
+            else:
+                # User wants to keep running - just minimize
+                _gui_logger.info("ui.exit_clicked -> minimizing (no tray)")
+                event.ignore()
+                self.showMinimized()
         else:
             # Actually close - clean up
             if hasattr(self, "status_timer") and self.status_timer:
@@ -1594,10 +1616,26 @@ QPushButton:pressed {{
             window_title = PRODUCT_NAME
         self.setWindowTitle(window_title)
 
+        # BUG-20251220-009 FIX: Set window icon with comprehensive fallback
         # Set window icon deterministically from static assets
         icon_path = self.get_static_asset("LOGO_main.ico") or self.get_static_asset("LOGO_main.png")
         if icon_path:
+            _gui_logger.info(f"Window icon set from: {icon_path}")
             self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            # Fallback 1: Try application icon
+            app = QApplication.instance()
+            if app and not app.windowIcon().isNull():
+                _gui_logger.info("Window icon set from application icon")
+                self.setWindowIcon(app.windowIcon())
+            else:
+                # Fallback 2: Qt built-in icon
+                _gui_logger.warning("No custom icon found, using Qt built-in icon")
+                from PyQt6.QtWidgets import QStyle
+
+                style = self.style()
+                if style:
+                    self.setWindowIcon(style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon))
 
         self.setMinimumSize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)  # Ensure initial size
@@ -2389,13 +2427,15 @@ QPushButton:pressed {{
         if hasattr(self, "keyfiles"):
             self.render_keyfiles()
 
-    def apply_theme(self, theme_id: str) -> None:
+    def apply_theme(self, theme_id: str, persist: bool = True) -> None:
         """
         Apply a color theme to the application immediately.
         Updates global COLORS dict and re-applies all styles.
 
         Args:
             theme_id: Theme identifier ("green", "blue", "dark", "light")
+            persist: Whether to save to config.json. Set False for live preview.
+                     BUG-20251220-015: SettingsDialog passes persist=False for preview.
         """
         try:
             from core.constants import THEME_PALETTES, ConfigKeys
@@ -2418,17 +2458,18 @@ QPushButton:pressed {{
 
                 traceback.print_exc()
 
-            # Persist theme selection to config
-            if not hasattr(self, "config"):
-                self.config = self.load_config()
-            self.config[ConfigKeys.GUI_THEME] = theme_id
+            # Persist theme selection to config (skip during live preview)
+            if persist:
+                if not hasattr(self, "config"):
+                    self.config = self.load_config()
+                self.config[ConfigKeys.GUI_THEME] = theme_id
 
-            # Save config immediately (atomic write for data integrity)
-            try:
-                config_path = get_script_dir() / "config.json"
-                write_config_atomic(config_path, self.config)
-            except Exception as e:
-                log_exception("Error saving theme config", e)
+                # Save config immediately (atomic write for data integrity)
+                try:
+                    config_path = get_script_dir() / "config.json"
+                    write_config_atomic(config_path, self.config)
+                except Exception as e:
+                    log_exception("Error saving theme config", e)
 
             # Force repaint of all widgets
             try:
@@ -2838,8 +2879,55 @@ QPushButton:pressed {{
         if hasattr(self, "btn_open_vc"):
             self.btn_open_vc.setEnabled(vc_enabled)
 
+    def _check_post_recovery_rekey_required(self) -> bool:
+        """
+        Check if post-recovery rekey is required before mounting.
+
+        BUG-20251220-007 FIX: Enforces rekey after recovery in GUI mount flow.
+
+        Returns:
+            True if mount can proceed, False if blocked
+        """
+        if not self.config:
+            return True
+
+        post_recovery = self.config.get("post_recovery", {})
+        if not post_recovery.get("rekey_required") or post_recovery.get("rekey_completed"):
+            return True  # No rekey needed or already completed
+
+        recovery_time = post_recovery.get("recovery_completed_at", "unknown")
+        policy = self.config.get("post_recovery_policy", "mandatory_rekey")
+
+        if policy == "mandatory_rekey":
+            # Block mount entirely
+            QMessageBox.critical(
+                self,
+                tr("mount_blocked_rekey_required_title", lang=get_lang()),
+                tr("mount_blocked_rekey_required_body", lang=get_lang()).format(recovery_time=recovery_time),
+            )
+            return False
+        elif policy == "warn_grace":
+            # Allow with warning and confirmation
+            from PyQt6.QtWidgets import QInputDialog
+
+            text, ok = QInputDialog.getText(
+                self,
+                tr("mount_warn_rekey_title", lang=get_lang()),
+                tr("mount_warn_rekey_body", lang=get_lang()).format(recovery_time=recovery_time),
+            )
+            if not ok or text != "INSECURE":
+                return False
+            # User confirmed insecure mount
+            return True
+
+        return True  # Default: allow mount
+
     def mount_drive(self):
         """Handle mount button click - show inline authentication area or mount directly."""
+        # BUG-20251220-007: Check for post-recovery rekey requirement
+        if not self._check_post_recovery_rekey_required():
+            return
+
         mode = (
             self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
         )
@@ -3631,12 +3719,15 @@ class SettingsDialog(QDialog):
 
         # Load current JSON config - use global CONFIG_FILE (correct path)
         self.config_path = CONFIG_FILE
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self.config = json.load(f)
-        except Exception as e:
-            log_exception("Error loading config in SettingsDialog", e, level="debug")
-            self.config = {}
+        self._reload_config()
+
+        # BUG-20251220-015: In-memory shadow for uncommitted changes
+        # Holds settings changes until user clicks Save. Cancel discards these.
+        # Security-critical operations (recovery, rekey) bypass this and write directly.
+        import copy
+
+        self._pending_config = copy.deepcopy(self.config)
+        self._config_dirty = False  # Track if pending changes exist
 
         # Track initial language for change detection
         self.initial_lang = self.config.get(ConfigKeys.GUI_LANG, GUIConfig.DEFAULT_LANG)
@@ -3661,6 +3752,19 @@ class SettingsDialog(QDialog):
         _ = tr("settings_language", lang=get_lang())  # Used by language field
 
         self._build_ui()
+
+    def _reload_config(self):
+        """
+        Reload config from disk.
+
+        BUG-20251220-015: Called on dialog open and on Cancel to discard changes.
+        """
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self.config = json.load(f)
+        except Exception as e:
+            log_exception("Error loading config in SettingsDialog", e, level="debug")
+            self.config = {}
 
     def _build_ui(self):
         """Build the UI dynamically from schema."""
@@ -3694,6 +3798,8 @@ class SettingsDialog(QDialog):
                 translated_tab_name = tr("settings_lost_and_found", lang=get_lang())
             elif tab_name == "Advanced":
                 translated_tab_name = tr("settings_advanced", lang=get_lang())
+            elif tab_name == "Integrity":
+                translated_tab_name = tr("settings_integrity", lang=get_lang())
             else:
                 tab_key = f"settings_{tab_name.lower()}"
                 translated_tab_name = tr(tab_key, lang=get_lang())
@@ -3808,9 +3914,506 @@ class SettingsDialog(QDialog):
         if tab_name == "Recovery":
             self._add_recovery_action_section(tab_layout)
 
+        # CHG-20251220-001: Add rekey section to Security tab
+        if tab_name == "Security":
+            self._add_rekey_section(tab_layout)
+
+        # CHG-20251221-005: Add informational hint to Updates tab
+        if tab_name == "Updates":
+            self._add_update_hint_section(tab_layout)
+
+        # CHG-20251220-002: Add integrity verification section to Integrity tab
+        if tab_name == "Integrity":
+            self._add_integrity_section(tab_layout)
+
         tab_layout.addStretch()
         tab_widget.setLayout(tab_layout)
         return tab_widget
+
+    def _add_rekey_section(self, tab_layout: QVBoxLayout):
+        """
+        Add the rekey (change password) section to the Security tab.
+
+        CHG-20251220-001: Provides GUI-based credential change functionality.
+        """
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        tab_layout.addWidget(separator)
+
+        # Rekey section group box
+        self.rekey_section_box = QGroupBox(tr("rekey_section_title", lang=get_lang()))
+        rekey_layout = QVBoxLayout()
+        rekey_layout.setSpacing(10)
+
+        # Check for post-recovery rekey requirement
+        post_recovery = self.config.get("post_recovery", {})
+        if post_recovery.get("rekey_required") and not post_recovery.get("rekey_completed"):
+            # Show critical warning
+            warning_label = QLabel(tr("rekey_post_recovery_notice", lang=get_lang()))
+            warning_label.setWordWrap(True)
+            warning_label.setStyleSheet(
+                f"color: {COLORS['error']}; font-weight: bold; padding: 8px; background-color: #ffeeee; border-radius: 4px;"
+            )
+            rekey_layout.addWidget(warning_label)
+            self.field_labels["rekey_post_recovery_notice"] = (warning_label, "rekey_post_recovery_notice")
+
+        # Instructions
+        instructions = QLabel(tr("rekey_instructions", lang=get_lang()))
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        rekey_layout.addWidget(instructions)
+        self.field_labels["rekey_instructions"] = (instructions, "rekey_instructions")
+
+        # Start rekey button
+        self.start_rekey_btn = QPushButton(tr("btn_start_rekey", lang=get_lang()))
+        self.start_rekey_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.start_rekey_btn.clicked.connect(self._start_rekey_flow)
+        rekey_layout.addWidget(self.start_rekey_btn)
+
+        # Status label
+        self.rekey_status_label = QLabel(tr("rekey_status_ready", lang=get_lang()))
+        self.rekey_status_label.setWordWrap(True)
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        rekey_layout.addWidget(self.rekey_status_label)
+        self.field_labels["rekey_status_label"] = (self.rekey_status_label, "rekey_status_ready")
+
+        self.rekey_section_box.setLayout(rekey_layout)
+        tab_layout.addWidget(self.rekey_section_box)
+
+    def _start_rekey_flow(self):
+        """
+        Start the credential change (rekey) flow.
+
+        CHG-20251220-001: Opens VeraCrypt GUI for credential change with appropriate
+        credential provisioning based on security mode.
+        BUG-011 FIX: Actually derive and provide password for GPG_PW_ONLY mode.
+        """
+        import os
+        import subprocess
+
+        self.rekey_status_label.setText(tr("rekey_status_preparing", lang=get_lang()))
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        # Get security mode
+        mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+
+        # Determine if we need to provide current credentials
+        # For GPG_PW_ONLY mode, the password is derived from GPG-encrypted seed
+        # For other modes, user knows the password
+        need_credential_provision = mode == SecurityMode.GPG_PW_ONLY.value
+
+        # Check for post-recovery state (credentials were already recovered)
+        post_recovery = self.config.get("post_recovery", {})
+        is_post_recovery = post_recovery.get("rekey_required") and not post_recovery.get("rekey_completed")
+
+        # BUG-011 FIX: Actually derive and copy password for GPG_PW_ONLY mode
+        derived_password = None
+        if need_credential_provision and not is_post_recovery:
+            # Need to decrypt credentials for user
+            reply = QMessageBox.information(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                "For GPG_PW_ONLY mode, the current password will be derived using your hardware key.\n\n"
+                "Please ensure your YubiKey/GPG card is inserted.\n\n"
+                "The password will be copied to clipboard for use in VeraCrypt.\n"
+                "Press OK to continue with password derivation.",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                return
+
+            # Derive password using SecretProvider
+            self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
+            QApplication.processEvents()
+
+            try:
+                from core.limits import Limits
+                from core.secrets import SecretProvider
+
+                provider = SecretProvider(
+                    config_path=self.config_path,
+                    config=self.config,
+                    launcher_root=self._launcher_root,
+                )
+                derived_password = provider.get_password()
+
+                # Copy to clipboard with SSOT-defined TTL
+                clipboard_timeout = Limits.CLIPBOARD_TIMEOUT
+                provider.copy_password_to_clipboard(timeout=clipboard_timeout)
+
+                QMessageBox.information(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    f"✅ Current password has been copied to clipboard!\n\n"
+                    f"⏱️ The clipboard will be cleared after {clipboard_timeout} seconds.\n\n"
+                    "Use Ctrl+V to paste the CURRENT password in VeraCrypt when changing credentials.",
+                )
+            except Exception as e:
+                _gui_logger.error(f"Failed to derive password: {e}")
+                QMessageBox.critical(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    f"Failed to derive password from YubiKey:\n{e}\n\n"
+                    "Ensure your YubiKey is inserted and try again.",
+                )
+                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                return
+
+        # Launch VeraCrypt GUI
+        self.rekey_status_label.setText(tr("rekey_status_opening_veracrypt", lang=get_lang()))
+        QApplication.processEvents()
+
+        try:
+            from core.paths import Paths
+
+            vc_exe = Paths.veracrypt_exe()
+
+            if not vc_exe or not vc_exe.exists():
+                QMessageBox.warning(self, "Rekey", "VeraCrypt not found. Please install VeraCrypt first.")
+                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                return
+
+            # Launch VeraCrypt GUI (user will use Tools > Change Volume Password)
+            subprocess.Popen([str(vc_exe)], creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+
+            self.rekey_status_label.setText(tr("rekey_status_awaiting_confirmation", lang=get_lang()))
+            self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+
+            # Show instructions
+            QMessageBox.information(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                "VeraCrypt GUI has been opened.\n\n"
+                "To change your credentials:\n"
+                "1. Go to 'Tools' → 'Change Volume Password'\n"
+                "2. Select your volume (use 'Select Device' if needed)\n"
+                "3. Enter current credentials\n"
+                "4. Enter and confirm new password/keyfile\n"
+                "5. Click 'OK' to apply changes\n\n"
+                "After completing in VeraCrypt, click 'Yes' to confirm the change was successful.",
+            )
+
+            # Ask user to confirm rekey was successful
+            reply = QMessageBox.question(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                "Did you successfully change your credentials in VeraCrypt?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # Mark rekey as completed
+                self._complete_rekey()
+            else:
+                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+
+        except Exception as e:
+            QMessageBox.warning(self, "Rekey", f"Failed to launch VeraCrypt: {e}")
+            self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+
+    def _complete_rekey(self):
+        """Mark rekey as completed and update config."""
+        from datetime import datetime
+
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Update post_recovery to mark rekey completed
+        if "post_recovery" in self.config:
+            self.config["post_recovery"]["rekey_completed"] = True
+            self.config["post_recovery"]["rekey_completed_at"] = timestamp
+
+        # Invalidate old recovery kit (must generate new one after rekey)
+        if "recovery" in self.config:
+            recovery_cfg = self.config["recovery"]
+            if recovery_cfg.get("enabled"):
+                recovery_cfg["enabled"] = False
+                recovery_cfg["invalidated_at"] = timestamp
+                recovery_cfg["invalidation_reason"] = "rekey_completed"
+                self.config["recovery"] = recovery_cfg
+
+        # Save config
+        self._save_config_atomic()
+
+        # Log event
+        self._gui_audit_log("REKEY_COMPLETED_GUI")
+
+        # Update status
+        self.rekey_status_label.setText(tr("rekey_status_success", lang=get_lang()))
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+        # Prompt to generate new recovery kit
+        QMessageBox.information(
+            self,
+            tr("rekey_section_title", lang=get_lang()),
+            "✅ Credentials changed successfully!\n\n"
+            "⚠️ IMPORTANT: Your old recovery kit is now INVALID.\n\n"
+            "You should generate a NEW recovery kit using the CLI:\n"
+            "  python recovery.py generate\n\n"
+            "Without a valid recovery kit, you cannot recover access if you forget your credentials.",
+        )
+
+    def _add_update_hint_section(self, tab_layout: QVBoxLayout):
+        """
+        Add informational hint about local updates to the Updates tab.
+
+        CHG-20251221-005: Provides guidance on selecting local update directory.
+        """
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        tab_layout.addWidget(separator)
+
+        # Hint group box
+        self.update_hint_box = QGroupBox(tr("hint_update_local_title", lang=get_lang()))
+        hint_layout = QVBoxLayout()
+        hint_layout.setSpacing(8)
+
+        # Hint text label
+        hint_label = QLabel(tr("hint_update_local_body", lang=get_lang()))
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px; padding: 8px; "
+            f"background-color: {COLORS.get('background_secondary', COLORS['surface'])}; border-radius: 4px;"
+        )
+        hint_layout.addWidget(hint_label)
+
+        self.update_hint_box.setLayout(hint_layout)
+        tab_layout.addWidget(self.update_hint_box)
+
+        # Store reference for language updates
+        self.update_hint_label = hint_label
+
+    def _add_integrity_section(self, tab_layout: QVBoxLayout):
+        """
+        Add integrity verification section to the Integrity tab.
+
+        CHG-20251220-002: Provides GUI access to script integrity verification and signing.
+        """
+        # Instructions
+        instructions = QLabel(tr("integrity_instructions", lang=get_lang()))
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px; margin-bottom: 10px;")
+        tab_layout.addWidget(instructions)
+        self.field_labels["integrity_instructions"] = (instructions, "integrity_instructions")
+
+        # Verification group box
+        self.integrity_verify_box = QGroupBox(tr("integrity_section_title", lang=get_lang()))
+        verify_layout = QVBoxLayout()
+        verify_layout.setSpacing(10)
+
+        # Button row for local verification and signing
+        btn_layout = QHBoxLayout()
+
+        # Verify Local button
+        self.verify_local_btn = QPushButton(tr("btn_verify_local", lang=get_lang()))
+        self.verify_local_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 15px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.verify_local_btn.clicked.connect(self._verify_integrity_local)
+        btn_layout.addWidget(self.verify_local_btn)
+
+        # Sign Scripts button
+        self.sign_scripts_btn = QPushButton(tr("btn_sign_scripts", lang=get_lang()))
+        self.sign_scripts_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS.get('warning', '#FFA500')};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 15px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS.get('warning_hover', '#E69500')};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.sign_scripts_btn.clicked.connect(self._sign_scripts)
+        btn_layout.addWidget(self.sign_scripts_btn)
+
+        btn_layout.addStretch()
+        verify_layout.addLayout(btn_layout)
+
+        # Status label
+        self.integrity_status_label = QLabel(tr("integrity_status_ready", lang=get_lang()))
+        self.integrity_status_label.setWordWrap(True)
+        self.integrity_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        verify_layout.addWidget(self.integrity_status_label)
+        self.field_labels["integrity_status_label"] = (self.integrity_status_label, "integrity_status_ready")
+
+        # Result details (initially hidden)
+        self.integrity_result_label = QLabel("")
+        self.integrity_result_label.setWordWrap(True)
+        self.integrity_result_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 10px;")
+        self.integrity_result_label.setVisible(False)
+        verify_layout.addWidget(self.integrity_result_label)
+
+        self.integrity_verify_box.setLayout(verify_layout)
+        tab_layout.addWidget(self.integrity_verify_box)
+
+    def _verify_integrity_local(self):
+        """
+        Verify script integrity locally.
+
+        CHG-20251220-002: Uses core.integrity.Integrity.validate_integrity()
+        to check scripts against signed manifest.
+        """
+        from core.integrity import Integrity
+
+        self.integrity_status_label.setText(tr("integrity_status_checking", lang=get_lang()))
+        self.integrity_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            result = Integrity.validate_integrity(self._launcher_root, bypass_enabled=False, verify_signature=True)
+
+            if result.valid:
+                self.integrity_status_label.setText(tr("integrity_status_pass", lang=get_lang()))
+                self.integrity_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+                # Show details
+                details = []
+                if result.actual_hash:
+                    details.append(
+                        tr("integrity_result_hash", lang=get_lang()).format(hash=result.actual_hash[:16] + "...")
+                    )
+                if result.signer_info:
+                    details.append(tr("integrity_result_signer", lang=get_lang()).format(signer=result.signer_info))
+                if details:
+                    self.integrity_result_label.setText("\n".join(details))
+                    self.integrity_result_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 10px;")
+                    self.integrity_result_label.setVisible(True)
+            else:
+                if result.expected_hash is None:
+                    self.integrity_status_label.setText(tr("integrity_status_no_manifest", lang=get_lang()))
+                    self.integrity_status_label.setStyleSheet(
+                        f"color: {COLORS.get('warning', '#FFA500')}; font-size: 11px;"
+                    )
+                else:
+                    self.integrity_status_label.setText(tr("integrity_status_fail", lang=get_lang()))
+                    self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+                # Show failure details
+                self.integrity_result_label.setText(result.message)
+                self.integrity_result_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 10px;")
+                self.integrity_result_label.setVisible(True)
+
+            self._gui_audit_log("INTEGRITY_VERIFY_GUI", details={"valid": result.valid})
+
+        except Exception as e:
+            _gui_logger.error(f"Integrity verification failed: {e}")
+            self.integrity_status_label.setText(f"Error: {e}")
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+    def _sign_scripts(self):
+        """
+        Sign scripts with hardware key (GPG).
+
+        CHG-20251220-002: Creates integrity manifest and signs with GPG.
+        Requires YubiKey/GPG card.
+        """
+        import shutil
+
+        from core.integrity import Integrity
+
+        # Check for GPG
+        if not shutil.which("gpg"):
+            QMessageBox.warning(
+                self,
+                tr("integrity_section_title", lang=get_lang()),
+                "GPG not found. Please install GPG to sign scripts.",
+            )
+            return
+
+        # Confirm signing
+        reply = QMessageBox.question(
+            self,
+            tr("integrity_section_title", lang=get_lang()),
+            "This will create a new integrity manifest and sign it with your GPG key.\n\n"
+            "Please ensure your YubiKey/GPG card is inserted.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.integrity_status_label.setText(tr("integrity_status_signing", lang=get_lang()))
+        self.integrity_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            # Create manifest
+            hash_value, manifest_path = Integrity.create_manifest(self._launcher_root)
+
+            # Sign manifest
+            if Integrity.sign_manifest(self._launcher_root):
+                self.integrity_status_label.setText(tr("integrity_status_sign_success", lang=get_lang()))
+                self.integrity_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+
+                # Show hash
+                self.integrity_result_label.setText(f"Hash: {hash_value}")
+                self.integrity_result_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 10px;")
+                self.integrity_result_label.setVisible(True)
+
+                self._gui_audit_log("INTEGRITY_SIGN_GUI", details={"hash": hash_value[:16]})
+            else:
+                self.integrity_status_label.setText(tr("integrity_status_sign_fail", lang=get_lang()))
+                self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+        except Exception as e:
+            _gui_logger.error(f"Signing failed: {e}")
+            self.integrity_status_label.setText(f"Error: {e}")
+            self.integrity_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
 
     def _add_recovery_action_section(self, tab_layout: QVBoxLayout):
         """Add the recovery action section to the Recovery tab."""
@@ -4022,7 +4625,22 @@ class SettingsDialog(QDialog):
             self.recovery_container_path.setText(file_path)
 
     def _perform_recovery(self):
-        """Perform recovery using the entered phrase."""
+        """
+        Perform recovery using the entered phrase.
+
+        BUG-20251220-005 FIX: This now integrates with CLI recovery state machine:
+        - Checks recovery.state at entry (blocks if already used)
+        - Performs two-phase commit (consuming -> delete -> used)
+        - Sets post_recovery.rekey_required flag
+        - Logs to audit trail
+        - Prompts user to rekey immediately
+
+        INVARIANTS:
+        - Recovery kit is ONE-TIME USE ONLY
+        - Failed decryption does NOT burn the kit
+        - Successful credential extraction DOES burn the kit
+        - Post-recovery rekey is mandatory
+        """
         phrase = self.recovery_phrase_edit.toPlainText().strip()
 
         # Validate phrase has 24 words
@@ -4036,15 +4654,26 @@ class SettingsDialog(QDialog):
         self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         QApplication.processEvents()
 
+        # ═══════════════════════════════════════════════════════════════════
+        # SECURITY CHECK: Is recovery kit already used?
+        # ═══════════════════════════════════════════════════════════════════
+        recovery_config = self.config.get("recovery", {})
+        state = recovery_config.get("state", "enabled")
+        if state == "used" or recovery_config.get("used"):
+            self.recovery_status_label.setText(tr("recovery_already_used", lang=get_lang()))
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+            self._gui_audit_log("RECOVERY_BLOCKED", "already_used")
+            return
+
         try:
             # Try to find container path
-            container_path = self.recovery_container_path.text().strip()
-            if not container_path:
-                # Try default location from config
-                recovery_config = self.config.get("recovery", {})
-                container_path = recovery_config.get("container_path", "")
+            container_path_str = self.recovery_container_path.text().strip()
+            if not container_path_str:
+                container_path_str = recovery_config.get("container_path", "")
 
-            if not container_path or not Path(container_path).exists():
+            container_path = Path(container_path_str) if container_path_str else None
+
+            if not container_path or not container_path.exists():
                 self.recovery_status_label.setText(tr("recovery_container_not_found", lang=get_lang()))
                 self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                 return
@@ -4052,15 +4681,56 @@ class SettingsDialog(QDialog):
             self.recovery_status_label.setText(tr("recovery_status_decrypting", lang=get_lang()))
             QApplication.processEvents()
 
+            # Log attempt start
+            self._gui_audit_log("RECOVERY_ATTEMPT_START")
+
             # Import recovery container module
             from recovery_container import RecoveryContainerError, decrypt_container, load_container
 
             # Load and decrypt container
-            container_bytes = load_container(Path(container_path))
+            container_bytes = load_container(container_path)
             credentials = decrypt_container(container_bytes, phrase)
 
-            # Success - display credentials
-            self.recovery_status_label.setText(tr("recovery_status_success", lang=get_lang()))
+            # ═══════════════════════════════════════════════════════════════════
+            # SUCCESS: Now perform TWO-PHASE COMMIT (one-time use enforcement)
+            # ═══════════════════════════════════════════════════════════════════
+            self.recovery_status_label.setText(tr("recovery_status_invalidating", lang=get_lang()))
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+            QApplication.processEvents()
+
+            # Phase 1: Transition to "consuming" state
+            recovery_config["state"] = "consuming"
+            self.config["recovery"] = recovery_config
+            self._save_config_atomic()
+
+            # Phase 2: Securely delete the container
+            self._secure_delete_file(container_path)
+
+            # Phase 3: Transition to "used" state + set rekey requirement
+            from datetime import datetime
+
+            timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            self.config["recovery"] = {
+                "enabled": False,
+                "used": True,
+                "state": "used",
+                "invalidated_at": timestamp,
+            }
+            self.config["post_recovery"] = {
+                "rekey_required": True,
+                "rekey_completed": False,
+                "recovery_completed_at": timestamp,
+            }
+            self._save_config_atomic()
+
+            # Log success
+            self._gui_audit_log("RECOVERY_SUCCESS", "SUCCESS")
+
+            # ═══════════════════════════════════════════════════════════════════
+            # SUCCESS EPILOGUE: Show results
+            # ═══════════════════════════════════════════════════════════════════
+            self.recovery_status_label.setText(tr("recovery_status_complete", lang=get_lang()))
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
 
             # Show results
@@ -4083,16 +4753,154 @@ class SettingsDialog(QDialog):
 
             self.recovery_results_frame.setVisible(True)
 
+            # ═══════════════════════════════════════════════════════════════════
+            # MANDATORY REKEY PROMPT
+            # ═══════════════════════════════════════════════════════════════════
+            QApplication.processEvents()
+            self._prompt_mandatory_rekey()
+
         except RecoveryContainerError as e:
+            # Decryption failed - kit is NOT burned (transient failure)
             error_msg = tr("recovery_status_failed", lang=get_lang()).format(error=str(e))
             self.recovery_status_label.setText(error_msg)
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
             self.recovery_results_frame.setVisible(False)
+            self._gui_audit_log("RECOVERY_FAILED", "TRANSIENT_FAILURE", {"error": str(e)})
         except Exception as e:
             error_msg = tr("recovery_status_failed", lang=get_lang()).format(error=str(e))
             self.recovery_status_label.setText(error_msg)
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
             self.recovery_results_frame.setVisible(False)
+            self._gui_audit_log("RECOVERY_FAILED", "TRANSIENT_FAILURE", {"error": str(e)})
+
+    def _gui_audit_log(self, event: str, outcome: str = None, details: dict = None):
+        """
+        Append entry to recovery audit log (GUI operations).
+
+        SECURITY: Never logs secrets (passwords, keyfiles, phrases).
+        """
+        import json
+        import os
+        import platform
+        from datetime import datetime
+
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry = {
+            "timestamp": timestamp,
+            "event": event,
+            "outcome": outcome,
+            "source": "GUI",
+            "platform": {
+                "os": platform.system(),
+                "python": platform.python_version(),
+            },
+        }
+        if details:
+            safe_details = {
+                k: v for k, v in details.items() if k not in ("password", "phrase", "keyfile", "credentials")
+            }
+            entry["details"] = safe_details
+
+        try:
+            script_dir = get_script_dir()
+            log_file = script_dir / "recovery.log"
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            # Logging failures shouldn't break recovery - file system may be unavailable
+            log_exception("Recovery audit log write failed")
+
+    def _secure_delete_file(self, file_path: Path, passes: int = 3):
+        """Securely delete a file by overwriting with random data."""
+        import os
+
+        if not file_path.exists():
+            return
+        try:
+            file_size = file_path.stat().st_size
+            with open(file_path, "rb+") as f:
+                for _ in range(passes):
+                    f.seek(0)
+                    f.write(os.urandom(file_size))
+                    f.flush()
+                    os.fsync(f.fileno())
+            file_path.unlink()
+        except OSError as e:
+            # Fallback to regular delete if secure overwrite fails
+            log_exception(f"Secure delete failed for {file_path}: {e}")
+            try:
+                file_path.unlink()
+            except OSError:
+                log_exception(f"Regular delete also failed for {file_path}")
+
+    def _save_config_atomic(self):
+        """Atomically save config to disk."""
+        import json
+        import os
+
+        tmp_path = (
+            self.config_path.with_suffix(".json.tmp")
+            if hasattr(self.config_path, "with_suffix")
+            else Path(str(self.config_path) + ".tmp")
+        )
+        config_path = Path(self.config_path) if not isinstance(self.config_path, Path) else self.config_path
+
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(config_path)
+        except Exception as e:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+
+    def _prompt_mandatory_rekey(self):
+        """Prompt user to rekey immediately after recovery."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(tr("recovery_rekey_required_title", lang=get_lang()))
+        msg_box.setText(tr("recovery_rekey_required_body", lang=get_lang()))
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+
+        rekey_btn = msg_box.addButton(tr("recovery_rekey_now", lang=get_lang()), QMessageBox.ButtonRole.AcceptRole)
+        later_btn = msg_box.addButton(tr("recovery_rekey_later", lang=get_lang()), QMessageBox.ButtonRole.RejectRole)
+
+        msg_box.exec()
+
+        if msg_box.clickedButton() == rekey_btn:
+            # Launch rekey process
+            self._launch_rekey()
+        else:
+            # User skipped - show warning
+            QMessageBox.warning(
+                self,
+                tr("recovery_rekey_required_title", lang=get_lang()),
+                tr("recovery_rekey_skipped_warning", lang=get_lang()),
+            )
+            self._gui_audit_log("REKEY_SKIPPED")
+
+    def _launch_rekey(self):
+        """Launch the rekey script."""
+        import subprocess
+
+        try:
+            script_dir = get_script_dir()
+            rekey_script = script_dir / "rekey.py"
+            if rekey_script.exists():
+                python_exe = get_python_exe()
+                subprocess.Popen(
+                    [str(python_exe), str(rekey_script)],
+                    cwd=str(script_dir),
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+                )
+                self._gui_audit_log("REKEY_LAUNCHED")
+            else:
+                QMessageBox.warning(self, "Rekey", f"Rekey script not found: {rekey_script}")
+        except Exception as e:
+            QMessageBox.warning(self, "Rekey", f"Failed to launch rekey: {e}")
 
     def _copy_recovered_password(self):
         """Copy recovered password to clipboard."""
@@ -4132,6 +4940,62 @@ class SettingsDialog(QDialog):
 
         # Get current value from config
         current_value = self._get_config_value(field)
+
+        # BUG-20251220-006: Special handling for recovery status display
+        # BUG-010: Handle both new (with state) and legacy (without state) configs
+        if field.key == ConfigKeys.RECOVERY_ENABLED and field.field_type == FieldType.READONLY:
+            recovery_cfg = self.config.get("recovery", {})
+            state = recovery_cfg.get("state", "")
+            used = recovery_cfg.get("used", False)
+            enabled = recovery_cfg.get("enabled", False)
+
+            # Priority 1: Explicitly marked as used
+            if used or state == "used":
+                status_text = tr("recovery_kit_used", lang=get_lang())
+                status_color = COLORS.get("warning", "#FFA500")
+            # Priority 2: Enabled (state "enabled" or missing state for legacy)
+            # For backwards compatibility: enabled=True without state field means "enabled"
+            elif enabled and (state == "enabled" or state == ""):
+                status_text = tr("recovery_kit_available", lang=get_lang())
+                status_color = COLORS.get("success", "#28a745")
+            else:
+                status_text = tr("recovery_kit_not_configured", lang=get_lang())
+                status_color = COLORS.get("error", "#dc3545")
+
+            # BUG-014: Check if HTML recovery kit file still exists on device
+            html_warning = ""
+            try:
+                from core.paths import Paths
+
+                recovery_dir = Paths.recovery_dir(self._launcher_root)
+                html_file = recovery_dir / f"{Branding.PRODUCT_NAME}{FileNames.RECOVERY_KIT_HTML_SUFFIX}"
+                if html_file.exists():
+                    html_warning = tr("recovery_html_warning", lang=get_lang())
+            except Exception as e:
+                _gui_logger.debug(f"Error checking for HTML recovery file: {e}")
+
+            # Create status widget, optionally with warning
+            if html_warning:
+                widget = QLabel(f"{status_text}\n⚠️ {html_warning}")
+                widget.setWordWrap(True)
+                widget.setStyleSheet(
+                    f"color: {status_color}; font-weight: bold; "
+                    f"background-color: #fff3cd; padding: 4px; border-radius: 4px;"
+                )
+            else:
+                widget = QLabel(status_text)
+                widget.setStyleSheet(f"color: {status_color}; font-weight: bold;")
+
+            field_key = self._make_field_key(field)
+            self.field_widgets[field_key] = widget
+            label = QLabel(tr(field.label_key, lang=get_lang()))
+            self.field_labels[field_key] = label
+            if field.tooltip_key:
+                tooltip = tr(field.tooltip_key, lang=get_lang())
+                widget.setToolTip(tooltip)
+                label.setToolTip(tooltip)
+            layout.addRow(label, widget)
+            return
 
         # Create widget based on field type
         if field.field_type == FieldType.TEXT:
@@ -4316,19 +5180,15 @@ class SettingsDialog(QDialog):
             return
         selected_lang = widget.itemData(index)
         if selected_lang and selected_lang != get_lang():
-            # Update global language
+            # Update global language for live preview
             set_lang(selected_lang)
 
-            # Update config in memory (will be persisted on save)
-            self.config[ConfigKeys.GUI_LANG] = selected_lang
+            # BUG-20251220-015: Update pending config (not committed config)
+            # Changes will be persisted only when user clicks Save
+            self._pending_config[ConfigKeys.GUI_LANG] = selected_lang
+            self._config_dirty = True
 
-            # Persist immediately for live preview (atomic write for data integrity)
-            try:
-                write_config_atomic(self.config_path, self.config)
-            except Exception as e:
-                log_exception("Error persisting language to config", e)
-
-            # Apply language to main window immediately
+            # Apply language to main window immediately (live preview only)
             if self.parent and hasattr(self.parent, "apply_language"):
                 try:
                     self.parent.apply_language(selected_lang)
@@ -4366,13 +5226,16 @@ class SettingsDialog(QDialog):
             return
         selected_theme = widget.itemData(index)
         if selected_theme:
-            # Update config in memory (will be persisted on save)
-            self.config[ConfigKeys.GUI_THEME] = selected_theme
+            # BUG-20251220-015: Update pending config (not committed config)
+            # Changes will be persisted only when user clicks Save
+            self._pending_config[ConfigKeys.GUI_THEME] = selected_theme
+            self._config_dirty = True
 
-            # Apply theme to main window immediately
+            # Apply theme to main window immediately (live preview only, no persist)
+            # BUG-20251220-015: persist=False for transactional settings
             if self.parent and hasattr(self.parent, "apply_theme"):
                 try:
-                    self.parent.apply_theme(selected_theme)
+                    self.parent.apply_theme(selected_theme, persist=False)
                 except Exception as e:
                     log_exception(f"Error applying theme '{selected_theme}'", e, level="error")
                     try:
@@ -4457,6 +5320,12 @@ class SettingsDialog(QDialog):
                     self.theme_combo.blockSignals(False)
                 log_exception("Error refreshing theme combo translations", e)
 
+        # CHG-20251221-005: Update hint label in Updates tab
+        if hasattr(self, "update_hint_box"):
+            self.update_hint_box.setTitle(tr("hint_update_local_title", lang=lang_code))
+        if hasattr(self, "update_hint_label"):
+            self.update_hint_label.setText(tr("hint_update_local_body", lang=lang_code))
+
         # Update buttons
         self.save_btn.setText(tr("btn_save", lang=lang_code))
         self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
@@ -4473,9 +5342,19 @@ class SettingsDialog(QDialog):
                 self.settings.remove("product_name")
             self.settings.sync()
 
-        # Preserve unknown/unmanaged config keys (SSOT preservation)
-        # Start with existing config to keep unknown keys
-        new_config = self.config.copy()
+        # BUG-20251220-015: Merge pending config with current config
+        # _pending_config holds live-preview changes (language, theme) that weren't committed yet
+        # Start with current config (may have security-critical updates from recovery/rekey)
+        # then merge pending changes on top
+        import copy
+
+        new_config = copy.deepcopy(self.config)
+
+        # Merge pending config changes (language, theme, etc.)
+        if hasattr(self, "_pending_config"):
+            for key in [ConfigKeys.GUI_LANG, ConfigKeys.GUI_THEME]:
+                if key in self._pending_config:
+                    new_config[key] = self._pending_config[key]
 
         for field in self.schema:
             field_key = self._make_field_key(field)
@@ -4560,6 +5439,41 @@ class SettingsDialog(QDialog):
         """
         self._clear_recovered_credentials()
         super().done(result)
+
+    def reject(self):
+        """
+        Override reject() to revert live preview changes when Cancel is clicked.
+
+        BUG-20251220-015: Discards uncommitted changes and reverts UI to saved state.
+        """
+        # Revert language if changed
+        if hasattr(self, "_config_dirty") and self._config_dirty:
+            original_lang = self.config.get(ConfigKeys.GUI_LANG, GUIConfig.DEFAULT_LANG)
+            original_theme = self.config.get(ConfigKeys.GUI_THEME, GUIConfig.DEFAULT_THEME)
+
+            # Revert language
+            if get_lang() != original_lang:
+                set_lang(original_lang)
+                if self.parent and hasattr(self.parent, "apply_language"):
+                    try:
+                        self.parent.apply_language(original_lang)
+                    except Exception as e:
+                        log_exception("Error reverting language on cancel", e)
+
+            # Revert theme
+            current_theme = self._pending_config.get(ConfigKeys.GUI_THEME)
+            if current_theme and current_theme != original_theme:
+                if self.parent and hasattr(self.parent, "apply_theme"):
+                    try:
+                        self.parent.apply_theme(original_theme)
+                    except Exception as e:
+                        log_exception("Error reverting theme on cancel", e)
+
+        # Discard pending config
+        self._pending_config = None
+        self._config_dirty = False
+
+        super().reject()
 
     def _clear_recovered_credentials(self):
         """
@@ -4724,7 +5638,36 @@ def main():
     app.setOrganizationName(ORGANIZATION_NAME)
     app.setStyle("Fusion")
 
-    # Set application-wide icon for taskbar (must be set before window creation)
+    # BUG-20251219-007 FIX: Set explicit palette for cross-platform text readability
+    # On Linux, Qt may inherit incomplete/conflicting system palettes causing
+    # white text on white backgrounds in dialogs. This enforces deterministic colors.
+    import platform
+
+    if platform.system() == "Linux":
+        from PyQt6.QtGui import QColor, QPalette
+
+        palette = QPalette()
+        # Base colors - light theme for readability
+        palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(0, 0, 0))
+        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(245, 245, 245))
+        palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
+        palette.setColor(QPalette.ColorRole.Button, QColor(240, 240, 240))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(0, 0, 0))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 220))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(0, 0, 0))
+        # Disabled state
+        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(128, 128, 128))
+        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(128, 128, 128))
+        palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
+        app.setPalette(palette)
+        _gui_logger.info("Set explicit QPalette for Linux text readability")
+
+    # BUG-20251220-009 FIX: Set application-wide icon for taskbar with comprehensive fallback
     # Try multiple locations: deployed (.smartdrive/static), repo (static), dev (static)
     icon_locations = [
         Path(__file__).parent.parent / "static" / "LOGO_main.ico",  # .smartdrive/static/
@@ -4732,11 +5675,22 @@ def main():
         Path(__file__).parent.parent / "static" / "LOGO_main.png",  # .smartdrive/static/ (png fallback)
         Path(__file__).parent.parent.parent / "static" / "LOGO_main.png",  # repo/static/ (png fallback)
     ]
+    icon_set = False
     for icon_loc in icon_locations:
         if icon_loc.exists():
             app.setWindowIcon(QIcon(str(icon_loc)))
             _gui_logger.info(f"Set application icon from: {icon_loc}")
+            icon_set = True
             break
+
+    if not icon_set:
+        # Fallback to Qt built-in icon
+        _gui_logger.warning("No custom application icon found, using Qt built-in icon")
+        from PyQt6.QtWidgets import QStyle
+
+        style = app.style()
+        if style:
+            app.setWindowIcon(style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon))
 
     # CRITICAL: Do not quit when window is hidden - tray keeps running
     app.setQuitOnLastWindowClosed(False)

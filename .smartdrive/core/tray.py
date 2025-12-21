@@ -140,6 +140,23 @@ class TrayIconManager:
                     else:
                         _tray_logger.warning("Application window icon is also null")
 
+            # BUG-20251220-008 FIX: Ultimate fallback to Qt built-in icon
+            # Windows requires a valid icon for system tray to display
+            if icon is None or icon.isNull():
+                _tray_logger.info("Falling back to Qt built-in icon (SP_DriveHDIcon)")
+                try:
+                    from PyQt6.QtWidgets import QStyle
+
+                    app = QApplication.instance()
+                    if app:
+                        style = app.style()
+                        if style:
+                            icon = style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
+                            icon_source = "QStyle.SP_DriveHDIcon"
+                            _tray_logger.info("Using Qt built-in SP_DriveHDIcon")
+                except Exception as e:
+                    _tray_logger.warning(f"Failed to get built-in icon: {e}")
+
             # Log final icon state
             if icon:
                 is_null = icon.isNull()
@@ -148,11 +165,13 @@ class TrayIconManager:
 
                 if is_null:
                     _tray_logger.error("CRITICAL: Tray icon is NULL - tray will fail to display")
-                    # Continue anyway but log the error clearly
+                    # BUG-20251220-008: Return False to indicate failure rather than continuing with NULL icon
+                    return False
 
                 self._tray_icon.setIcon(icon)
             else:
-                _tray_logger.error("CRITICAL: No icon available for tray - setVisible will warn")
+                _tray_logger.error("CRITICAL: No icon available for tray - cannot display")
+                return False
 
             # Set tooltip
             self._tray_icon.setToolTip(self.tooltip)

@@ -28,8 +28,7 @@ from pathlib import Path
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/smartdrive.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -707,7 +706,12 @@ def check_mount_status() -> bool:
 def run_script(script_name: str, args: list = None):
     """Run a Python script from the scripts directory.
 
-    Always passes --config explicitly to avoid cwd-based path guessing.
+    Always passes --config explicitly to avoid cwd-based path guessing,
+    EXCEPT for scripts that use subcommands (keyfile.py) where --config
+    would interfere with argparse subparser ordering.
+
+    BUG-20251218-001 FIX: keyfile.py uses subparsers and doesn't accept --config.
+    Put args BEFORE --config for scripts that have subcommands.
     """
     style = ConsoleStyle.detect()
     success = style.symbol("SUCCESS")
@@ -723,10 +727,18 @@ def run_script(script_name: str, args: list = None):
         return False
 
     cmd = [sys.executable, str(script_path)]
-    # Always pass --config for consistent path resolution
-    cmd.extend(["--config", str(CONFIG_FILE)])
-    if args:
-        cmd.extend(args)
+
+    # Scripts with subcommands need args FIRST (no --config support)
+    scripts_no_config = {"keyfile.py"}
+    if script_name in scripts_no_config:
+        # These scripts don't accept --config
+        if args:
+            cmd.extend(args)
+    else:
+        # Standard scripts: pass --config for consistent path resolution
+        cmd.extend(["--config", str(CONFIG_FILE)])
+        if args:
+            cmd.extend(args)
 
     print(f"\n{divider * 70}")
     print(f"Running: {script_name}")

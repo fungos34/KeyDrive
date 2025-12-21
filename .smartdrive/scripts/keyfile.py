@@ -39,8 +39,7 @@ from pathlib import Path
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/keyfile.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent

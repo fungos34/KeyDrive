@@ -31,12 +31,8 @@ from typing import List, Set
 # =============================================================================
 _script_dir = Path(__file__).resolve().parent
 
-# Import FileNames and Paths first (needed for path detection)
-from core.constants import FileNames
-from core.paths import Paths
-
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/update.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -99,6 +95,97 @@ FILES_TO_UPDATE = FileNames.FILES_TO_UPDATE
 # Files/folders to NEVER overwrite (user data)
 # Note: config.json user data is protected, but version metadata is updated
 PROTECTED = FileNames.FILES_PROTECTED_FROM_UPDATE
+
+
+# =============================================================================
+# CHG-20251221-004: Deployment filtering
+# =============================================================================
+def should_exclude_from_deployment(path: Path, base_path: Path) -> bool:
+    """
+    Check if a path should be excluded from deployment.
+
+    Args:
+        path: Full path to check
+        base_path: Base directory (for relative path calculation)
+
+    Returns:
+        True if path should be excluded, False if should be included
+    """
+    try:
+        rel_path = path.relative_to(base_path)
+    except ValueError:
+        # Path not relative to base, include it
+        return False
+
+    rel_str = rel_path.as_posix()
+    name = path.name
+
+    # Check patterns from SSOT
+    patterns = FileNames.DEPLOYMENT_EXCLUDE_PATTERNS
+
+    # First pass: check if explicitly kept by negation pattern
+    for pattern in patterns:
+        if pattern.startswith("!"):
+            keep_pattern = pattern[1:]
+            import fnmatch
+
+            if fnmatch.fnmatch(name, keep_pattern):
+                return False  # Explicitly keep this file
+
+    # Second pass: check exclusion patterns
+    for pattern in patterns:
+        # Skip negation patterns (already processed)
+        if pattern.startswith("!"):
+            continue
+
+        # Exact directory name match (anywhere in path)
+        if pattern in rel_str.split("/"):
+            return True
+
+        # Wildcard pattern matching
+        if "*" in pattern:
+            import fnmatch
+
+            if fnmatch.fnmatch(name, pattern):
+                return True
+            if fnmatch.fnmatch(rel_str, pattern):
+                return True
+
+        # Exact name match
+        if pattern == name:
+            return True
+
+        # Path starts with pattern (for directories)
+        if rel_str.startswith(pattern + "/") or rel_str.startswith(pattern):
+            return True
+
+    return False
+
+
+def create_deployment_ignore_function(base_path: Path):
+    """
+    Create an ignore function for shutil.copytree that filters development files.
+
+    Args:
+        base_path: Base source directory
+
+    Returns:
+        Function compatible with shutil.copytree ignore parameter
+    """
+
+    def ignore_deployment_files(directory, names):
+        """Ignore function for shutil.copytree."""
+        ignored = []
+        dir_path = Path(directory)
+
+        for name in names:
+            full_path = dir_path / name
+            if should_exclude_from_deployment(full_path, base_path):
+                ignored.append(name)
+
+        return ignored
+
+    return ignore_deployment_files
 
 
 def set_drive_icon(target_path: Path, drive_letter: str) -> None:
@@ -501,10 +588,13 @@ def perform_update(target_drive: str, dry_run: bool = False, yes: bool = False) 
 
     # Copy static folder to .smartdrive/static/ (deployed structure)
     # MANDATORY: Icons must be present for tray/window functionality
-    static_src = DEV_ROOT / FileNames.STATIC_DIR
+
+    # BUG-INSTANT: Fix FileNames.STATIC_DIR reference error
+    # Use canonical Paths.STATIC_SUBDIR ("static") for both source and destination
+    static_src = DEV_ROOT / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR
     if static_src.exists():
         # Primary destination: .smartdrive/static/
-        static_dst = target_path / FileNames.MAIN_DIR / FileNames.STATIC_DIR
+        static_dst = target_path / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR
         try:
             static_dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(static_src, static_dst, dirs_exist_ok=True)
@@ -629,74 +719,133 @@ if __name__ == "__main__":
                 error("Update aborted: Invalid deployment layout")
                 sys.exit(3)
 
+            # BUG-20251221-001 FIX: Cleanup strategy
+            # 1. Clean up ANY lingering _update_tmp directories from previous runs
+            # 2. Create fresh temp directory
+            # 3. Use try/finally to ensure cleanup even on error
             temp_dir = scripts_root / "_update_tmp"
+
+            # Cleanup old temp directories (best effort)
+            if temp_dir.exists():
+                try:
+                    shutil.rmtree(temp_dir)
+                    _log_update("update.cleanup.old_temp", path=str(temp_dir))
+                except Exception as e:
+                    warn(f"Could not remove old _update_tmp: {e}")
+
+            # Create fresh temp directory
             temp_dir.mkdir(parents=True, exist_ok=True)
 
-            payload_dir = temp_dir / "payload"
-            if payload_dir.exists():
-                shutil.rmtree(payload_dir, ignore_errors=True)
-            payload_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                # Download/prepare payload
+                payload_dir = temp_dir / "payload"
+                payload_dir.mkdir(parents=True, exist_ok=True)
 
-            if args.source == "server" and args.url:
-                # Download archive from server URL
-                import urllib.request
+                if args.source == "server" and args.url:
+                    # Download archive from server URL
+                    import urllib.request
 
-                archive_path = temp_dir / "update.zip"
-                urllib.request.urlretrieve(args.url, archive_path)
-                # Extract zip
-                import zipfile
+                    archive_path = temp_dir / "update.zip"
+                    _log_update("update.download.start", url=args.url)
+                    urllib.request.urlretrieve(args.url, archive_path)
+                    # Extract zip
+                    import zipfile
 
-                with zipfile.ZipFile(archive_path, "r") as zf:
-                    zf.extractall(payload_dir)
-            elif args.source == "local" and args.root:
-                # Copy from local directory
-                src_root = Path(args.root)
-                if not src_root.exists():
-                    error(f"Local update root not found: {src_root}")
-                    sys.exit(2)
-                shutil.copytree(src_root, payload_dir, dirs_exist_ok=True)
-            else:
-                error("Invalid update source or missing parameters")
-                sys.exit(2)
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        zf.extractall(payload_dir)
+                    _log_update("update.download.complete", archive=str(archive_path))
 
-            # Overlay copy into DEPLOY_ROOT (.smartdrive/), NOT drive root
-            # This ensures code stays under .smartdrive/ and doesn't pollute drive root
-            staging_dir = temp_dir / "staging"
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-            shutil.copytree(deploy_root, staging_dir, dirs_exist_ok=True)
-            shutil.copytree(payload_dir, staging_dir, dirs_exist_ok=True)
+                    # CHG-20251221-004: Filter extracted files
+                    excluded_count = 0
+                    for item in list(payload_dir.rglob("*")):
+                        if item.is_file() and should_exclude_from_deployment(item, payload_dir):
+                            item.unlink()
+                            excluded_count += 1
+                        elif item.is_dir() and should_exclude_from_deployment(item, payload_dir):
+                            shutil.rmtree(item, ignore_errors=True)
+                            excluded_count += 1
 
-            # Move staged back to deploy_root (best effort)
-            for item in staging_dir.iterdir():
-                dst = deploy_root / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dst, dirs_exist_ok=True)
+                    copied_files = sum(1 for _ in payload_dir.rglob("*") if _.is_file())
+                    _log_update("update.server.filtered", copied=copied_files, excluded=excluded_count)
+                elif args.source == "local" and args.root:
+                    # Copy from local directory
+                    src_root = Path(args.root)
+                    if not src_root.exists():
+                        error(f"Local update root not found: {src_root}")
+                        sys.exit(2)
+                    _log_update("update.local.start", source=str(src_root))
+
+                    # CHG-20251221-004: Apply deployment filtering
+                    ignore_func = create_deployment_ignore_function(src_root)
+                    shutil.copytree(src_root, payload_dir, dirs_exist_ok=True, ignore=ignore_func)
+
+                    # Count excluded files for logging
+                    total_files = sum(1 for _ in src_root.rglob("*") if _.is_file())
+                    copied_files = sum(1 for _ in payload_dir.rglob("*") if _.is_file())
+                    excluded_count = total_files - copied_files
+                    _log_update("update.local.complete", copied=copied_files, excluded=excluded_count)
                 else:
-                    shutil.copy2(item, dst)
+                    error("Invalid update source or missing parameters")
+                    sys.exit(2)
 
-            # Update version in config.json
-            cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
-            if cfg_path.exists():
-                try:
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        cfg = json.load(f)
-                    cfg[ConfigKeys.LAST_UPDATED] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    # Use atomic write if available
-                    if write_config_atomic:
-                        write_config_atomic(cfg_path, cfg)
-                    else:
-                        with open(cfg_path, "w", encoding="utf-8") as f:
-                            json.dump(cfg, f, indent=2)
-                except Exception as e:
-                    warn(f"Could not update last_updated: {e}")
+                # BUG-20251221-001 FIX: Direct copy WITHOUT staging intermediate
+                # Old approach: deploy_root → staging → overlay payload → copy back
+                # New approach: payload → deploy_root (direct, atomic per file)
+                # This eliminates redundant full directory tree copies
+                _log_update("update.overlay.start", target=str(deploy_root))
 
-            # Cleanup
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            print("Update overlay complete.")
+                # Copy payload directly to deploy_root
+                # dirs_exist_ok=True allows overlay without removing existing files
+                for item in payload_dir.rglob("*"):
+                    if item.is_file():
+                        # Compute relative path from payload root
+                        rel_path = item.relative_to(payload_dir)
+                        dst = deploy_root / rel_path
+
+                        # Ensure parent directory exists
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+
+                        # Copy file (overwrites if exists)
+                        shutil.copy2(item, dst)
+
+                _log_update("update.overlay.complete")
+
+                # Update version in config.json
+                cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
+                if cfg_path.exists():
+                    try:
+                        with open(cfg_path, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                        cfg[ConfigKeys.LAST_UPDATED] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        # Use atomic write if available
+                        if write_config_atomic:
+                            write_config_atomic(cfg_path, cfg)
+                        else:
+                            with open(cfg_path, "w", encoding="utf-8") as f:
+                                json.dump(cfg, f, indent=2)
+                        _log_update("update.config.updated", timestamp=cfg[ConfigKeys.LAST_UPDATED])
+                    except Exception as e:
+                        warn(f"Could not update last_updated: {e}")
+                        _log_update("update.config.error", error=str(e))
+
+                print("Update overlay complete.")
+                _log_update("update.external_drive.success")
+
+            finally:
+                # BUG-20251221-001 FIX: ALWAYS cleanup temp directory
+                # This runs even if update fails or is interrupted
+                if temp_dir.exists():
+                    try:
+                        shutil.rmtree(temp_dir)
+                        _log_update("update.cleanup.success", path=str(temp_dir))
+                    except Exception as e:
+                        warn(f"Could not cleanup temp directory: {e}")
+                        _log_update("update.cleanup.error", error=str(e))
+
             sys.exit(0)
         except Exception as e:
             error(str(e))
+            _log_update("update.external_drive.failed", error=str(e))
             sys.exit(1)
 
     # Default interactive/drive mode

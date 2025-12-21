@@ -22,8 +22,7 @@ from pathlib import Path
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/gui_launcher.py
     _deploy_root = _script_dir.parent
     _project_root = _deploy_root.parent

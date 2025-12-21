@@ -953,8 +953,7 @@ All deployed scripts use a standardized path computation pattern:
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
    # Deployed context OR repo's .smartdrive/scripts/
    # DEPLOY_ROOT = .smartdrive/, add to sys.path for 'from core.x import y'
    smartdrive_root = _script_dir.parent     # .smartdrive/

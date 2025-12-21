@@ -32,8 +32,8 @@ _script_dir = Path(__file__).resolve().parent
 # Since both have .smartdrive structure, we check for repo markers to distinguish
 _potential_repo_root = _script_dir.parent.parent  # parent of .smartdrive
 
-# Check if we're in the development repo (has AGENT_ARCHITECTURE.md at root)
-_is_repo = (_potential_repo_root / "AGENT_ARCHITECTURE.md").exists()
+# Check if we're in the development repo (has .git directory at root)
+_is_repo = (_potential_repo_root / ".git").exists()
 
 if _is_repo:
     # Development context: repo/.smartdrive/scripts/deploy.py
@@ -344,8 +344,9 @@ def deploy_to_drive(target_drive):
 
     # Copy static assets (MANDATORY - icons, images per AGENT_ARCHITECTURE.md)
     # Use PathResolver canonical static path (SSOT)
+    # After restructure: static/ is inside .smartdrive/, not at repo root
     print("🎨 Copying static assets...")
-    static_src = REPO_ROOT / "static"
+    static_src = REPO_SMARTDRIVE / "static"  # .smartdrive/static/
     static_dst = target_paths.static_dir  # SSOT from PathResolver
     if static_src.exists():
         shutil.copytree(static_src, static_dst, dirs_exist_ok=True)

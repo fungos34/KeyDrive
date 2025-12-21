@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "mode": "pw_only",
+  "mode": "gpg_pw_only",
   "encrypted_keyfile": "../keys/keyfile.vc.gpg",
   "seed_gpg_path": "../keys/seed.gpg",
   "kdf": "scrypt",
@@ -21,7 +21,7 @@
     "enabled": false,
     "message": "If found, please return to police.\nprovide a plain explanation why you couldn't do so within 24 hours!\npassword: 1234"
   },
-  "gui_lang": "de",
+  "gui_lang": "en",
   "drive_name": "KeyFileSafer",
   "gui_theme": "blue",
   "keyfile": "",
@@ -32,5 +32,5 @@
   "update_url": "",
   "update_local_root": "",
   "verification_overridden": false,
-  "last_updated": "2025-12-20 17:16:40"
+  "last_updated": "2025-12-21 02:28:40"
 }

@@ -46,16 +46,13 @@ from getpass import getpass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.constants import Branding, FileNames
-from core.paths import Paths
-
 # ===========================================================================
 # Core module imports (single source of truth)
 # ===========================================================================
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/rekey.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -70,7 +67,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from core.config import write_config_atomic
-from core.constants import ConfigKeys, CryptoParams, FileNames, UserInputs
+from core.constants import ConfigKeys, CryptoParams, FileNames, UserInputs, Branding
 from core.limits import Limits
 from core.modes import SECURITY_MODE_DISPLAY, SecurityMode
 from core.paths import Paths
@@ -323,17 +320,17 @@ def load_config() -> dict:
         # Build helpful error message
         script_dir = Path(__file__).resolve().parent
         searched_paths = []
-        if script_dir.parent.name == FileNames.MAIN_DIR:
+        if script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
             searched_paths.append(str(script_dir.parent / FileNames.CONFIG_JSON))
         else:
-            searched_paths.append(str(script_dir.parent / FileNames.MAIN_DIR / FileNames.CONFIG_JSON))
+            searched_paths.append(str(script_dir.parent / Paths.SMARTDRIVE_DIR_NAME / FileNames.CONFIG_JSON))
             searched_paths.append(str(Path.cwd() / FileNames.CONFIG_JSON))
 
         raise RuntimeError(
             f"{FileNames.CONFIG_JSON} not found.\n"
             f"  Searched locations:\n" + "\n".join(f"    - {p}" for p in searched_paths) + "\n"
             f"  Solution: Run this script from the drive root, or place it under\n"
-            f"           {FileNames.MAIN_DIR}/{FileNames.SCRIPTS_DIR}/ on the drive."
+            f"           {Paths.SMARTDRIVE_DIR_NAME}/{Paths.SCRIPTS_SUBDIR}/ on the drive."
         )
 
     try:

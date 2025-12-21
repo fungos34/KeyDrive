@@ -38,7 +38,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import webbrowser
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -51,8 +50,8 @@ _project_root = _script_dir.parent
 # Handle deployed vs development paths:
 # Development: scripts/ is at project_root/scripts/, core is at project_root/core/
 # Deployed: scripts is at .smartdrive/scripts/, core is at .smartdrive/core/
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive - core is sibling to scripts under .smartdrive/
     _smartdrive_dir = _script_dir.parent
     _project_root = _smartdrive_dir.parent
@@ -73,7 +72,7 @@ if str(_project_root) not in sys.path:
 # If import fails, script MUST abort with clear error message.
 
 try:
-    from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, UserInputs, FileNames
+    from core.constants import Branding, ConfigKeys, CryptoParams, Defaults, FileNames, UserInputs
     from core.limits import Limits
     from core.modes import RecoveryOutcome, SecurityMode
     from core.paths import Paths
@@ -442,6 +441,62 @@ def clear_terminal() -> None:
         if result != 0:
             # ANSI escape code fallback
             print("\033[2J\033[H", end="")
+
+
+def open_html_in_browser(html_path: Path) -> bool:
+    """
+    Open an HTML file in the default browser using platform-appropriate method.
+
+    BUG-20251221-001 FIX: Replaces webbrowser.open() to prevent Windows
+    "syntax error in command line" popups.
+
+    On Windows, webbrowser.open() internally uses os.startfile() or subprocess
+    calls that may trigger command-line parsing errors. This function uses
+    explicit subprocess calls with CREATE_NO_WINDOW flag on Windows to prevent
+    popups and ensure silent execution.
+
+    Args:
+        html_path: Path to HTML file to open
+
+    Returns:
+        True if browser opened successfully, False on error
+
+    Platform-specific behavior:
+        - Windows: Uses 'cmd /c start ""' with CREATE_NO_WINDOW flag
+        - macOS: Uses 'open' command
+        - Linux: Uses 'xdg-open' command
+    """
+    try:
+        system = platform.system().lower()
+
+        if system == "windows":
+            # Use 'cmd /c start ""' with CREATE_NO_WINDOW to prevent popup
+            # Empty string "" is required as window title for start command
+            subprocess.run(
+                ["cmd", "/c", "start", "", str(html_path)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+                timeout=5,
+            )
+        elif system == "darwin":  # macOS
+            subprocess.run(
+                ["open", str(html_path)],
+                check=False,
+                timeout=5,
+            )
+        else:  # Linux and other Unix-like systems
+            subprocess.run(
+                ["xdg-open", str(html_path)],
+                check=False,
+                timeout=5,
+            )
+
+        log(f"Opened HTML in browser: {html_path}")
+        return True
+
+    except Exception as e:
+        warn(f"Could not open browser: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3033,11 +3088,9 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
 
             # Open HTML in browser immediately
             print("\n  Opening recovery kit in browser...")
-            try:
-                webbrowser.open(html_path.as_uri())
+            if open_html_in_browser(html_path):
                 log("Browser opened with recovery kit")
-            except Exception as e:
-                warn(f"Could not open browser: {e}")
+            else:
                 print(f"  ⚠️  Could not open browser automatically.")
                 print(f"  Please open manually: {html_path}")
 
@@ -3130,14 +3183,9 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                     print("\n  ✗ Verification failed.")
                     retry_choice = input("  Re-open HTML in browser? [yes/no]: ").strip().lower()
                     if retry_choice == "yes" and html_path:
-                        try:
-                            webbrowser.open(html_path.as_uri())
-                        except Exception:
+                        if not open_html_in_browser(html_path):
                             print(f"  Could not open browser. Path: {html_path}")
                     input("  Press ENTER to retry verification...")
-
-        log("Phrase verification successful ✓")
-        print("  ✓ All words verified correctly!")
 
         log("Phrase verification successful ✓")
         print("  ✓ All words verified correctly!")
@@ -3149,9 +3197,19 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
         launcher_mount = config_path.parent.parent  # Launcher root (H:\)
         recovery_dir = Paths.recovery_dir(launcher_mount)
         recovery_dir.mkdir(parents=True, exist_ok=True)  # Ensure folder exists
+        smartdrive_dir = config_path.parent  # .smartdrive directory
 
         container_path = recovery_dir / "recovery_container.bin"
         header_path = recovery_dir / "header_backup.hdr"
+
+        # BUG-20251219-001c FIX: Add volume identity and environment snapshot to credentials
+        # This ensures parity with cmd_generate() - credentials stored in container
+        # must include binding info for recovery verification
+        volume_identity = compute_volume_identity(volume_path)
+        env_snapshot = get_environment_snapshot()
+        credentials["volume_id"] = volume_identity
+        credentials["environment"] = env_snapshot
+        log(f"Volume identity: {volume_identity[:16]}...")
 
         try:
             container_bytes = create_container(credentials, phrase)
@@ -3193,25 +3251,52 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                 secure_delete(temp_keyfile)
 
         # Update config
+        # BUG-20251220-010 + BUG-20251220-012 FIX: Include ALL required fields for recovery state
+        # Must match cmd_generate() config structure for GUI to correctly display status
         log("Updating configuration...")
+        # Note: volume_identity already computed earlier (BUG-20251219-001c fix)
+
         config[RECOVERY_CONFIG_KEY] = {
             "enabled": True,
             "used": False,
+            "state": RECOVERY_STATE_ENABLED,  # BUG-20251220-012: Required for GUI status display
             "phrase_hash": phrase_hash,
+            "container_path": str(container_path),  # BUG-20251220-010: Required for recovery lookup
+            "header_path": str(header_path),
+            "volume_identity": volume_identity,
             "created_at": utc_timestamp_iso(),
         }
 
-        temp_config = config_path.with_suffix(".json.tmp")
-        with open(temp_config, "w") as f:
-            json.dump(config, f, indent=2)
-        temp_config.replace(config_path)
-        log("Configuration updated ✓")
+        # BUG-20251219-001c FIX: Use atomic config save for safety
+        try:
+            save_config_atomic(config)
+            log("Configuration updated ✓")
+        except Exception as e:
+            error(f"Failed to update config: {e}")
+            return 1
+
+        # BUG-20251219-001c FIX: Collect and copy mode-specific artifacts
+        # This ensures parity with cmd_generate() - artifacts like seed.gpg, keyfile.vc.gpg
+        # are copied to recovery directory for offline recovery
+        log("Collecting mode-appropriate artifacts...")
+        artifacts, artifact_qr_chains = collect_mode_artifacts(config, smartdrive_dir)
+        if artifacts:
+            log(f"Saving {len(artifacts)} artifacts to recovery directory...")
+            copy_artifacts_to_recovery_dir(artifacts, recovery_dir)
+
+        # BUG-20251219-001c FIX: Add audit logging for consistency with cmd_generate
+        audit_log(
+            "GENERATE_KIT_FROM_SETUP",
+            details={
+                "volume_identity": volume_identity[:16],
+                "mode": mode,
+            },
+        )
 
         # For terminal mode, HTML was not generated yet - generate it now for record
         if not is_printable_mode and not html_path:
             log("Generating HTML recovery kit for archival...")
             drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
-            volume_identity = compute_volume_identity(volume_path)
 
             gpg_pw_only_info = None
             if mode == SecurityMode.GPG_PW_ONLY.value:
@@ -3221,14 +3306,18 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
                     "hkdf_info": config.get("hkdf_info", CryptoParams.HKDF_INFO_DEFAULT),
                 }
 
+            # BUG-20251219-001c FIX: Include environment snapshot and artifact QR chains
+            # for parity with cmd_generate()
             html = generate_recovery_html(
                 phrase=phrase,
                 chunks=None,
                 header_chunks=None,
                 volume_name=drive_name,
                 volume_identity=volume_identity,
+                environment=env_snapshot,
                 security_mode=mode,
                 gpg_pw_only_info=gpg_pw_only_info,
+                artifact_qr_chains=artifact_qr_chains if artifact_qr_chains else None,
             )
 
             # SSOT: Use same recovery_dir path (already created earlier)
@@ -3245,6 +3334,9 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
         print(f"    - {header_path}")
         if html_path:
             print(f"    - {html_path}")
+        if artifacts:
+            for artifact_name in artifacts:
+                print(f"    - {recovery_dir / artifact_name}")
         print("\n  IMPORTANT: Store your 24-word phrase securely!")
         if is_printable_mode:
             print("             Print or save the HTML file to a secure location.")
@@ -3414,12 +3506,7 @@ def cmd_generate(args):
         # Open in browser for user to view/print
         print(f"\n  Opening recovery kit in your browser...")
         print(f"  File: {preliminary_kit_path}")
-        try:
-            import webbrowser
-
-            webbrowser.open(preliminary_kit_path.as_uri())
-        except Exception as e:
-            warn(f"Could not open browser automatically: {e}")
+        if not open_html_in_browser(preliminary_kit_path):
             print(f"\n  Please manually open this file in your browser:")
             print(f"  {preliminary_kit_path}")
 
@@ -3527,11 +3614,7 @@ def cmd_generate(args):
                     )
                     with open(preliminary_kit_path, "w", encoding="utf-8") as f:
                         f.write(preliminary_html)
-                    try:
-                        import webbrowser
-
-                        webbrowser.open(preliminary_kit_path.as_uri())
-                    except:
+                    if not open_html_in_browser(preliminary_kit_path):
                         print(f"\n  Please open: {preliminary_kit_path}")
                     input("\n  Press Enter when ready to retry verification...")
                 else:
@@ -3579,11 +3662,7 @@ def cmd_generate(args):
                     )
                     with open(preliminary_kit_path, "w", encoding="utf-8") as f:
                         f.write(preliminary_html)
-                    try:
-                        import webbrowser
-
-                        webbrowser.open(preliminary_kit_path.as_uri())
-                    except:
+                    if not open_html_in_browser(preliminary_kit_path):
                         print(f"\n  Please open: {preliminary_kit_path}")
                     input("\n  Press Enter when you have printed/saved your recovery phrase...")
                     phrase_displayed_in_terminal = False
@@ -3803,10 +3882,11 @@ def cmd_generate(args):
     log(f"Recovery kit saved: {kit_path}")
 
     # Open in browser
-    # BUG-20251219-011 FIX: Use .as_uri() for proper Windows path escaping
-    # f"file://{kit_path}" breaks on Windows due to backslashes
+    # BUG-20251219-011 + BUG-20251221-001 FIX:
+    # Use open_html_in_browser() with CREATE_NO_WINDOW on Windows to prevent
+    # "syntax error in command line" popups
     log("Opening recovery kit in browser...")
-    webbrowser.open(kit_path.as_uri())
+    open_html_in_browser(kit_path)
 
     # Final instructions
     print("\n" + "=" * 70)

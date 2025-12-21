@@ -359,16 +359,19 @@ SETTINGS_SCHEMA: List[SettingField] = [
     ),
     # =========================================================================
     # Recovery Tab
+    # BUG-20251220-006 FIX: Changed from editable checkbox to read-only status
+    # The recovery.enabled flag should reflect actual kit existence, not user toggle
     # =========================================================================
     SettingField(
         key=ConfigKeys.RECOVERY_ENABLED,
-        label_key="label_recovery_enabled",
-        field_type=FieldType.BOOLEAN,
+        label_key="label_recovery_status",
+        field_type=FieldType.READONLY,  # BUG-20251220-006: Display as status text
         tab="Recovery",
         group="Emergency Recovery Kit",
         nested_path=[ConfigKeys.RECOVERY, ConfigKeys.RECOVERY_ENABLED],
         default=False,
-        tooltip_key="tooltip_recovery_enabled",
+        tooltip_key="tooltip_recovery_status",
+        readonly=True,
         order=1,
     ),
     SettingField(
@@ -492,6 +495,20 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         tooltip_key="tooltip_signing_key_fpr",
         order=3,
+    ),
+    # =========================================================================
+    # Integrity Tab (CHG-20251220-002)
+    # Provides GUI access to integrity verification and signing operations
+    # =========================================================================
+    SettingField(
+        key="integrity_placeholder",
+        label_key="label_integrity_status",
+        field_type=FieldType.READONLY,
+        tab="Integrity",
+        group="Software Integrity",
+        readonly=True,
+        tooltip_key="tooltip_integrity_status",
+        order=1,
     ),
     SettingField(
         key=ConfigKeys.SALT_B64,

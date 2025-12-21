@@ -762,7 +762,7 @@ class SecretProvider:
                     pass
             self._password_copied = False
         else:
-            log("[CLEANUP] No clipboard clear needed (_password_copied=False)")
+            log(f"[CLEANUP] No clipboard clear needed (_password_copied={self._password_copied})")
 
         # Clean up temp keyfile
         log("[CLEANUP] Attempting temp keyfile cleanup")

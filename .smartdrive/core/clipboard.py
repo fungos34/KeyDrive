@@ -63,8 +63,12 @@ class ClipboardMarker:
 _current_marker: Optional[ClipboardMarker] = None
 _marker_lock = threading.Lock()
 
-# Active TTL timer
+# Active TTL timer (separate lock to prevent deadlock)
 _ttl_timer: Optional[threading.Timer] = None
+_ttl_timer_lock = threading.Lock()
+
+# Flag to prevent TTL callback from running during manual clear
+_ttl_callback_cancelled = False
 
 
 # =============================================================================
@@ -423,18 +427,22 @@ def set_text(text: str, *, ttl_seconds: Optional[int] = None, label: str = "data
 
 def _track_copy(text: str, label: str, ttl_seconds: Optional[int]) -> None:
     """Track the copy operation and set up TTL if requested."""
-    global _current_marker, _ttl_timer
+    global _current_marker, _ttl_timer, _ttl_callback_cancelled
 
-    with _marker_lock:
-        # Cancel any existing timer
+    # Cancel any existing timer first (separate lock to prevent deadlock)
+    with _ttl_timer_lock:
+        _ttl_callback_cancelled = True  # Signal any running callback to abort
         if _ttl_timer is not None:
             _ttl_timer.cancel()
             _ttl_timer = None
 
+    with _marker_lock:
         # Create marker (stores hash, not plaintext)
         _current_marker = ClipboardMarker.from_content(text, label)
 
-        # Set up TTL timer if requested
+    # Set up TTL timer if requested (separate lock)
+    with _ttl_timer_lock:
+        _ttl_callback_cancelled = False  # Reset flag for new timer
         if ttl_seconds is not None and ttl_seconds > 0:
             _ttl_timer = threading.Timer(ttl_seconds, _ttl_clear_callback)
             _ttl_timer.daemon = True
@@ -442,28 +450,49 @@ def _track_copy(text: str, label: str, ttl_seconds: Optional[int]) -> None:
 
 
 def _ttl_clear_callback() -> None:
-    """Called when TTL expires - clears clipboard only if unchanged."""
-    global _current_marker, _ttl_timer
+    """Called when TTL expires - clears clipboard only if unchanged.
 
-    with _marker_lock:
-        _ttl_timer = None
-        if _current_marker is None:
-            return
+    Thread-safe: Checks cancellation flag and handles exceptions gracefully.
+    """
+    global _current_marker, _ttl_timer, _ttl_callback_cancelled
 
-        # Get current clipboard content
+    try:
+        # Check if callback was cancelled (e.g., by manual clear or new copy)
+        with _ttl_timer_lock:
+            if _ttl_callback_cancelled:
+                _ttl_timer = None
+                return
+            _ttl_timer = None
+
+        # Get marker under lock, but read clipboard outside lock to prevent deadlock
+        with _marker_lock:
+            if _current_marker is None:
+                return
+            marker_hash = _current_marker.content_hash
+
+        # Read clipboard OUTSIDE lock (subprocess call can block)
         current = get_text()
         if current is None:
-            # Can't read clipboard, don't clear
-            _current_marker = None
+            # Can't read clipboard, don't clear - just reset marker
+            with _marker_lock:
+                _current_marker = None
             return
 
         # Check if clipboard still contains what we put there
         current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
-        if current_hash == _current_marker.content_hash:
-            # Still our content - safe to clear
-            clear_best_effort()
 
-        _current_marker = None
+        with _marker_lock:
+            # Double-check marker still exists and matches
+            if _current_marker is not None and current_hash == marker_hash:
+                # Still our content - safe to clear
+                _clear_clipboard_internal()
+            _current_marker = None
+
+    except Exception:
+        # Silently handle any errors in TTL callback to prevent crashes
+        # Worst case: clipboard is not cleared, which is safe
+        with _marker_lock:
+            _current_marker = None
 
 
 def get_text() -> Optional[str]:
@@ -487,21 +516,35 @@ def clear_if_ours() -> bool:
     Clear clipboard only if it still contains what we copied.
 
     Returns True if cleared, False if clipboard was modified by user.
+    Thread-safe: Cancels any pending TTL timer to prevent race conditions.
     """
-    global _current_marker
+    global _current_marker, _ttl_callback_cancelled
 
+    # CRITICAL: Cancel TTL timer FIRST to prevent race condition
+    # where timer callback runs concurrently with this function
+    with _ttl_timer_lock:
+        _ttl_callback_cancelled = True
+        if _ttl_timer is not None:
+            _ttl_timer.cancel()
+            # Note: Don't set _ttl_timer = None here, let callback handle it
+
+    # Get marker under lock, but read clipboard outside to prevent deadlock
     with _marker_lock:
         if _current_marker is None:
             return False
+        marker_hash = _current_marker.content_hash
 
-        current = get_text()
+    # Read clipboard OUTSIDE lock (subprocess call can block)
+    current = get_text()
+
+    with _marker_lock:
         if current is None:
             _current_marker = None
             return False
 
         current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
-        if current_hash == _current_marker.content_hash:
-            clear_best_effort()
+        if current_hash == marker_hash:
+            _clear_clipboard_internal()
             _current_marker = None
             return True
         else:
@@ -510,15 +553,12 @@ def clear_if_ours() -> bool:
             return False
 
 
-def clear_best_effort() -> bool:
+def _clear_clipboard_internal() -> bool:
     """
-    Clear clipboard without checking content.
+    Internal clipboard clear - does NOT touch _current_marker.
 
-    Use clear_if_ours() when possible to avoid clearing user content.
-    Returns True on success, False on failure.
+    Use this from within locked contexts to avoid deadlock.
     """
-    global _current_marker
-
     plat = _get_platform()
 
     try:
@@ -533,16 +573,41 @@ def clear_best_effort() -> bool:
             return success
     except Exception:
         return False
-    finally:
-        with _marker_lock:
-            _current_marker = None
+
+
+def clear_best_effort() -> bool:
+    """
+    Clear clipboard without checking content.
+
+    Use clear_if_ours() when possible to avoid clearing user content.
+    Returns True on success, False on failure.
+
+    Note: Also cancels any pending TTL timer and clears marker.
+    """
+    global _current_marker, _ttl_callback_cancelled
+
+    # Cancel any pending TTL timer
+    with _ttl_timer_lock:
+        _ttl_callback_cancelled = True
+        if _ttl_timer is not None:
+            _ttl_timer.cancel()
+
+    # Clear clipboard
+    success = _clear_clipboard_internal()
+
+    # Reset marker
+    with _marker_lock:
+        _current_marker = None
+
+    return success
 
 
 def cancel_ttl() -> None:
     """Cancel any pending TTL clear operation."""
-    global _ttl_timer
+    global _ttl_timer, _ttl_callback_cancelled
 
-    with _marker_lock:
+    with _ttl_timer_lock:
+        _ttl_callback_cancelled = True
         if _ttl_timer is not None:
             _ttl_timer.cancel()
             _ttl_timer = None

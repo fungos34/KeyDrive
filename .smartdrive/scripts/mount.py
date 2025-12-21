@@ -41,8 +41,7 @@ _mount_logger = logging.getLogger("smartdrive.mount")
 _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/mount.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -106,6 +105,136 @@ def secure_delete(file_path, passes=3):
         except:
             pass
         log(f"Warning: Could not securely delete {file_path}: {e}")
+
+
+# =============================================================================
+# BUG-20251219-008 FIX: Platform-specific GPG guidance
+# =============================================================================
+
+
+def _get_gpg_guidance(error_type: str) -> str:
+    """
+    Generate platform-appropriate GPG troubleshooting guidance.
+
+    BUG-20251219-008: Linux users were seeing Windows-centric guidance
+    mentioning Kleopatra and Start Menu.
+
+    Args:
+        error_type: One of "pinentry", "card", "secret_key", "general"
+
+    Returns:
+        Platform-appropriate guidance string
+    """
+    is_win = platform.system() == "Windows"
+    is_linux = platform.system() == "Linux"
+
+    if error_type == "pinentry":
+        if is_win:
+            return (
+                "GPG cannot prompt for your YubiKey PIN.\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Start Kleopatra (GPG GUI):\n"
+                "   - Launch from Start Menu\n"
+                "   - This starts the GPG agent with PIN entry\n\n"
+                "2. Or restart GPG agent:\n"
+                "   gpg-connect-agent /bye\n\n"
+                "3. Or restart your computer"
+            )
+        else:
+            return (
+                "GPG cannot prompt for your YubiKey PIN.\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Start GPG agent with pinentry:\n"
+                "   gpg-connect-agent /bye\n\n"
+                "2. Check pinentry is installed:\n"
+                f"   {'apt install pinentry-curses' if is_linux else 'Install pinentry'}\n\n"
+                "3. Restart GPG agent:\n"
+                "   gpgconf --kill gpg-agent\n"
+                "   gpg-connect-agent /bye\n\n"
+                "4. Check GNUPGHOME is set correctly"
+            )
+
+    elif error_type == "card":
+        if is_win:
+            return (
+                "YubiKey not detected during decryption.\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Insert your YubiKey if not already inserted\n\n"
+                "2. Restart Kleopatra:\n"
+                "   - Close Kleopatra completely\n"
+                "   - Re-insert YubiKey\n"
+                "   - Re-open Kleopatra\n\n"
+                "3. Check YubiKey:\n"
+                "   gpg --card-status"
+            )
+        else:
+            return (
+                "YubiKey not detected during decryption.\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Insert your YubiKey if not already inserted\n\n"
+                "2. Check pcscd is running:\n"
+                f"   {'sudo systemctl status pcscd' if is_linux else 'Check smart card service'}\n"
+                f"   {'sudo systemctl start pcscd' if is_linux else ''}\n\n"
+                "3. Restart GPG agent:\n"
+                "   gpgconf --kill gpg-agent\n"
+                "   gpg-connect-agent /bye\n\n"
+                "4. Check YubiKey:\n"
+                "   gpg --card-status"
+            )
+
+    elif error_type == "secret_key":
+        if is_win:
+            return (
+                "GPG cannot find the required secret key.\n\n"
+                "POSSIBLE CAUSES:\n"
+                "1. YubiKey with the required key is not inserted\n"
+                "2. Key stubs not present in GPG keyring\n"
+                "3. Wrong GNUPGHOME directory\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Ensure the correct YubiKey is inserted\n"
+                "2. Check key availability:\n"
+                "   gpg --list-secret-keys\n"
+                "3. Re-import key stubs if needed:\n"
+                "   gpg --card-status"
+            )
+        else:
+            return (
+                "GPG cannot find the required secret key.\n\n"
+                "POSSIBLE CAUSES:\n"
+                "1. YubiKey with the required key is not inserted\n"
+                "2. Key stubs not present in GPG keyring\n"
+                "3. Wrong GNUPGHOME directory\n"
+                "4. pcscd/scdaemon not running (Linux)\n\n"
+                "SOLUTIONS:\n\n"
+                "1. Ensure the correct YubiKey is inserted\n"
+                "2. Check key availability:\n"
+                "   gpg --list-secret-keys\n"
+                "3. Check GNUPGHOME:\n"
+                "   echo $GNUPGHOME\n"
+                "4. Re-import key stubs:\n"
+                "   gpg --card-status\n"
+                "5. Ensure pcscd is running:\n"
+                f"   {'sudo systemctl start pcscd' if is_linux else 'Check smart card service'}"
+            )
+
+    else:  # general
+        if is_win:
+            return (
+                "GPG decryption failed.\n\n"
+                "SOLUTIONS:\n"
+                "1. Ensure YubiKey is inserted\n"
+                "2. Start Kleopatra from Start Menu\n"
+                "3. Run: gpg --card-status"
+            )
+        else:
+            return (
+                "GPG decryption failed.\n\n"
+                "SOLUTIONS:\n"
+                "1. Ensure YubiKey is inserted\n"
+                "2. Check pcscd service is running\n"
+                "3. Run: gpg --card-status\n"
+                "4. Restart GPG agent: gpgconf --kill gpg-agent"
+            )
 
 
 CONFIG_TEMPLATE = {
@@ -480,86 +609,31 @@ def load_keyfile(keyfile_path: Path) -> bytes:
             stderr_text = e.stderr.decode("utf-8", errors="replace") if e.stderr else "Unknown error"
             stderr_lower = stderr_text.lower()
 
+            # BUG-20251219-008 FIX: Use platform-specific GPG guidance
             # Provide user-friendly error messages based on common GPG errors
             if "no pinentry" in stderr_lower or "pinentry" in stderr_lower:
+                guidance = _get_gpg_guidance("pinentry")
                 if _GUI_MODE:
-                    error_msg = (
-                        "GPG PIN ENTRY MISSING\n\n"
-                        "GPG cannot prompt for your YubiKey PIN.\n"
-                        "This usually means the GPG agent is not running properly.\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Start Kleopatra (GUI for GPG):\n"
-                        "   - Launch Kleopatra from Start Menu\n"
-                        "   - This will start the GPG agent with PIN entry\n\n"
-                        "2. Or restart GPG agent:\n"
-                        "   gpg-connect-agent /bye\n\n"
-                        "3. Or restart your computer\n"
-                        "   (GPG agent should start on login)\n\n"
-                        "After starting the agent, try mounting again."
-                    )
+                    error_msg = f"GPG PIN ENTRY MISSING\n\n{guidance}\n\nAfter fixing, try mounting again."
                 else:
-                    error_msg = (
-                        "\n" + "=" * 70 + "\n"
-                        "GPG PIN ENTRY MISSING\n" + "=" * 70 + "\n\n"
-                        "GPG cannot prompt for your YubiKey PIN.\n"
-                        "This usually means the GPG agent is not running properly.\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Start Kleopatra (GUI for GPG):\n"
-                        "   - Launch Kleopatra from Start Menu\n"
-                        "   - This will start the GPG agent with PIN entry\n\n"
-                        "2. Or restart GPG agent:\n"
-                        "   gpg-connect-agent /bye\n\n"
-                        "3. Or restart your computer\n"
-                        "   (GPG agent should start on login)\n\n"
-                        "After starting the agent, try mounting again.\n" + "=" * 70
-                    )
+                    error_msg = f"\n{'=' * 70}\nGPG PIN ENTRY MISSING\n{'=' * 70}\n\n{guidance}\n\nAfter fixing, try mounting again.\n{'=' * 70}"
             elif (
                 "card not present" in stderr_lower
                 or "no reader found" in stderr_lower
                 or "card removed" in stderr_lower
             ):
+                guidance = _get_gpg_guidance("card")
                 if _GUI_MODE:
-                    error_msg = (
-                        "YUBIKEY NOT DETECTED\n\n"
-                        "Your YubiKey is not detected during decryption.\n"
-                        "This could be because:\n\n"
-                        "1. YubiKey is not inserted\n"
-                        "2. YubiKey was removed after starting GPG agent\n"
-                        "3. YubiKey driver issues\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Insert your YubiKey if not already inserted\n\n"
-                        "2. Restart Kleopatra or GPG agent:\n"
-                        "   - Close Kleopatra completely\n"
-                        "   - Re-insert YubiKey\n"
-                        "   - Re-open Kleopatra\n\n"
-                        "3. Or restart GPG agent:\n"
-                        "   gpg-connect-agent killagent /bye\n"
-                        "   gpg-connect-agent /bye\n\n"
-                        "4. Check YubiKey with GPG directly:\n"
-                        "   gpg --card-status\n\n"
-                        "After fixing the issue, try mounting again."
-                    )
+                    error_msg = f"YUBIKEY NOT DETECTED\n\n{guidance}\n\nAfter fixing, try mounting again."
+                else:
+                    error_msg = f"\n{'=' * 70}\nYUBIKEY NOT DETECTED\n{'=' * 70}\n\n{guidance}\n\nAfter fixing, try mounting again.\n{'=' * 70}"
+            elif "decryption failed" in stderr_lower or "no secret key" in stderr_lower:
+                guidance = _get_gpg_guidance("secret_key")
+                if _GUI_MODE:
+                    error_msg = f"GPG DECRYPTION FAILED - NO SECRET KEY\n\n{guidance}"
                 else:
                     error_msg = (
-                        "\n" + "=" * 70 + "\n"
-                        "YUBIKEY NOT DETECTED\n" + "=" * 70 + "\n\n"
-                        "Your YubiKey is not detected during decryption.\n"
-                        "This could be because:\n\n"
-                        "1. YubiKey is not inserted\n"
-                        "2. YubiKey was removed after starting GPG agent\n"
-                        "3. YubiKey driver issues\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Insert your YubiKey if not already inserted\n\n"
-                        "2. Restart Kleopatra or GPG agent:\n"
-                        "   - Close Kleopatra completely\n"
-                        "   - Re-insert YubiKey\n"
-                        "   - Re-open Kleopatra\n\n"
-                        "3. Or restart GPG agent:\n"
-                        "   gpg-connect-agent killagent /bye\n"
-                        "   gpg-connect-agent /bye\n\n"
-                        "4. Check YubiKey with GPG directly:\n"
-                        "   gpg --card-status\n\n"
-                        "After fixing the issue, try mounting again.\n" + "=" * 70
+                        f"\n{'=' * 70}\nGPG DECRYPTION FAILED - NO SECRET KEY\n{'=' * 70}\n\n{guidance}\n{'=' * 70}"
                     )
             elif "bad signature" in stderr_lower or "signature verification failed" in stderr_lower:
                 if _GUI_MODE:
@@ -589,76 +663,25 @@ def load_keyfile(keyfile_path: Path) -> bytes:
                         f"   gpg --verify {FileNames.KEYFILE_GPG}\n\n"
                         "If the problem persists, the keyfile may be corrupted.\n" + "=" * 70
                     )
-            elif "decryption failed" in stderr_lower or "no secret key" in stderr_lower:
-                if _GUI_MODE:
-                    error_msg = (
-                        "GPG DECRYPTION FAILED\n\n"
-                        "GPG could not decrypt the keyfile.\n"
-                        "This usually means:\n\n"
-                        "1. Wrong YubiKey (different key than used for encryption)\n"
-                        "2. YubiKey PIN changed or forgotten\n"
-                        "3. GPG keyring corrupted\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Ensure you're using the same YubiKey used to encrypt the file\n\n"
-                        "2. Try a different YubiKey if you have multiple\n\n"
-                        "3. Reset YubiKey PIN if forgotten (CAUTION: this may lock the key)\n\n"
-                        "4. Re-encrypt the keyfile with current YubiKey:\n"
-                        "   python rekey.py\n\n"
-                        "If you cannot decrypt, you may need to recreate the volume."
-                    )
-                else:
-                    error_msg = (
-                        "\n" + "=" * 70 + "\n"
-                        "GPG DECRYPTION FAILED\n" + "=" * 70 + "\n\n"
-                        "GPG could not decrypt the keyfile.\n"
-                        "This usually means:\n\n"
-                        "1. Wrong YubiKey (different key than used for encryption)\n"
-                        "2. YubiKey PIN changed or forgotten\n"
-                        "3. GPG keyring corrupted\n\n"
-                        "SOLUTIONS:\n\n"
-                        "1. Ensure you're using the same YubiKey used to encrypt the file\n\n"
-                        "2. Try a different YubiKey if you have multiple\n\n"
-                        "3. Reset YubiKey PIN if forgotten (CAUTION: this may lock the key)\n\n"
-                        "4. Re-encrypt the keyfile with current YubiKey:\n"
-                        "   python rekey.py\n\n"
-                        "If you cannot decrypt, you may need to recreate the volume.\n" + "=" * 70
-                    )
             else:
-                # Generic GPG error
+                # Generic GPG error - use platform-specific guidance
+                guidance = _get_gpg_guidance("general")
                 if _GUI_MODE:
                     error_msg = (
                         "GPG DECRYPTION ERROR\n\n"
-                        f"GPG failed to decrypt the keyfile with an unexpected error:\n"
+                        f"GPG failed with an unexpected error:\n"
                         f"{stderr_text}\n\n"
-                        "COMMON CAUSES:\n\n"
-                        "1. GPG agent not running - Start Kleopatra\n"
-                        "2. YubiKey not inserted or not detected\n"
-                        "3. YubiKey PIN required but not prompted\n"
-                        "4. Wrong YubiKey or corrupted keyfile\n\n"
-                        "TROUBLESHOOTING:\n\n"
-                        "1. Start Kleopatra and ensure YubiKey is detected\n"
-                        "2. Run: gpg --card-status\n"
-                        "3. Try: gpg-connect-agent /bye\n"
-                        "4. If issues persist, run rekey.py to re-encrypt\n\n"
+                        f"{guidance}\n\n"
                         "After fixing the issue, try mounting again."
                     )
                 else:
                     error_msg = (
-                        "\n" + "=" * 70 + "\n"
-                        "GPG DECRYPTION ERROR\n" + "=" * 70 + "\n\n"
-                        f"GPG failed to decrypt the keyfile with an unexpected error:\n"
+                        f"\n{'=' * 70}\n"
+                        f"GPG DECRYPTION ERROR\n{'=' * 70}\n\n"
+                        f"GPG failed with an unexpected error:\n"
                         f"{stderr_text}\n\n"
-                        "COMMON CAUSES:\n\n"
-                        "1. GPG agent not running - Start Kleopatra\n"
-                        "2. YubiKey not inserted or not detected\n"
-                        "3. YubiKey PIN required but not prompted\n"
-                        "4. Wrong YubiKey or corrupted keyfile\n\n"
-                        "TROUBLESHOOTING:\n\n"
-                        "1. Start Kleopatra and ensure YubiKey is detected\n"
-                        "2. Run: gpg --card-status\n"
-                        "3. Try: gpg-connect-agent /bye\n"
-                        "4. If issues persist, run rekey.py to re-encrypt\n\n"
-                        "After fixing the issue, try mounting again.\n" + "=" * 70
+                        f"{guidance}\n\n"
+                        f"After fixing the issue, try mounting again.\n{'=' * 70}"
                     )
 
             raise RuntimeError(error_msg)

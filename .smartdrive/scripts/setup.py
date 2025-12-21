@@ -46,8 +46,7 @@ _script_dir = Path(__file__).resolve().parent
 
 # Determine execution context (deployed vs development)
 # Note: ".smartdrive" literal used here because FileNames not yet imported
-from core.paths import Paths
-if _script_dir.parent.name == Paths.SMARTDRIVE_DIR_NAME:
+if _script_dir.parent.name == ".smartdrive":
     # Deployed on drive: .smartdrive/scripts/setup.py
     # DEPLOY_ROOT = .smartdrive/, add to path for 'from core.x import y'
     _deploy_root = _script_dir.parent
@@ -279,6 +278,7 @@ class PagedSetupState:
 
         # Phase 4: YubiKey Verification
         self.yubikeys_verified = False
+        self.verification_overridden = False  # BUG-013: Track if user skipped verification
 
         # Phase 5: Review (no persistent state, just confirmation)
         self.confirmed = False
@@ -2004,7 +2004,9 @@ def display_drives(drives: list[dict], system: str) -> None:
 
         for d in sorted_drives:
             status = "[X] SYSTEM" if d.get("is_system") else "[OK] External" if d.get("bus") == "usb" else ""
-            model = d.get("model", d.get("name", "?"))[:25]
+            # BUG-20251219-009 FIX: Handle None model value (key exists but value is None)
+            # d.get("model", fallback) returns None if key exists with None value
+            model = (d.get("model") or d.get("name") or "?")[:25]
             print(f"[{d['name']:<13}] {model:<25} {d.get('size', '?'):<10} {d.get('bus', '?'):<8} {status}")
 
     print("=" * 70)
@@ -4472,6 +4474,7 @@ def deploy_scripts_extended(
     security_mode: str = SecurityMode.PW_ONLY.value,
     salt_b64: str = None,
     gpg_fingerprints: list = None,
+    verification_overridden: bool = False,  # BUG-013: Track if user skipped verification
 ) -> bool:
     """
     Copy scripts and create config on KeyDrive partition.
@@ -4685,6 +4688,9 @@ def deploy_scripts_extended(
             # Add GPG fingerprints for encrypted keyfile mode
             if gpg_fingerprints:
                 config[ConfigKeys.KEYFILE_FINGERPRINTS] = gpg_fingerprints
+
+    # BUG-013: Save verification_overridden flag to config
+    config[ConfigKeys.VERIFICATION_OVERRIDDEN] = verification_overridden
 
     # Config lives at .smartdrive/config.json, NOT .smartdrive/scripts/config.json
     # Atomic write for data integrity
@@ -4945,6 +4951,7 @@ def run_phase_4_yubikey_verification(state: PagedSetupState) -> tuple:
 
     CHG-20251218-002: Verify YubiKey access immediately after selection.
     This ensures users possess the keys before proceeding.
+    BUG-013 FIX: Verification is now optional - users can skip with [S].
 
     Returns: (success: bool, nav_choice: str)
     """
@@ -4958,6 +4965,40 @@ def run_phase_4_yubikey_verification(state: PagedSetupState) -> tuple:
         print("  [OK] Skipping verification (password-only or plain keyfile mode)")
         nav = prompt_navigation(3, TOTAL_SETUP_PAGES, can_go_back=True, can_rerun=False, auto_next=True)
         return True, nav
+
+    # BUG-013 FIX: Offer option to skip verification
+    print("  This step verifies your hardware key(s) can decrypt.")
+    print("  Verification is RECOMMENDED to prevent locking yourself out.\n")
+    print("  [!] Skipping verification means you won't know if the key works")
+    print("      until you try to mount the drive.\n")
+    print("  " + "-" * 66)
+    print("  [C] Continue with verification (RECOMMENDED)")
+    print("  [S] Skip verification (EXPERT: at your own risk)")
+    print("  [B] Back to key selection")
+    print("  [Q] Quit setup")
+    print("  " + "-" * 66)
+
+    while True:
+        choice = input("  Your choice: ").strip().upper()
+        if choice == "S":
+            # Skip verification - user takes responsibility
+            warn("\n  [!] Verification skipped at user request.")
+            print("      You are proceeding without confirming your key works.")
+            print("      If the key doesn't work, you will lose access to the drive.\n")
+            state.yubikeys_verified = False  # Mark as not verified
+            state.verification_overridden = True  # Track that it was skipped
+            SetupSessionState.verification_overridden = True
+            nav = prompt_navigation(3, TOTAL_SETUP_PAGES, can_go_back=True, can_rerun=False)
+            return True, nav
+        elif choice == "C":
+            # Continue with verification
+            break
+        elif choice == "B":
+            return True, UserInputs.BACK
+        elif choice == "Q":
+            return False, UserInputs.QUIT
+        else:
+            print("  Please enter C, S, B, or Q")
 
     # Check if YubiKey is present
     print("  Checking for YubiKey (required for GPG encryption)...\n")
@@ -5513,6 +5554,7 @@ def run_phase_7_deployment(state: PagedSetupState, *, auto_nav: bool = False) ->
             security_mode=security_mode,
             salt_b64=getattr(state, "session_salt_b64", None),
             gpg_fingerprints=fingerprints if fingerprints else None,
+            verification_overridden=state.verification_overridden,  # BUG-013
         )
 
         if not deploy_success:
