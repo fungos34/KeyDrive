@@ -3713,6 +3713,15 @@ class SettingsDialog(QDialog):
         self.setModal(True)
         self.resize(650, 700)  # Larger for tabbed interface
 
+        # BUG-20251221-001: Get _launcher_root from parent (MainWindow) for integrity/rekey operations
+        # This is required for Integrity.validate_integrity(), Integrity.sign_manifest(),
+        # and SecretProvider initialization in rekey flow.
+        if parent and hasattr(parent, "_launcher_root"):
+            self._launcher_root = parent._launcher_root
+        else:
+            # Fallback: detect from scripts directory
+            self._launcher_root = get_script_dir().parent
+
         # SECURITY: Initialize sensitive credential storage to None
         # These are only populated during recovery operations
         self._recovered_keyfile_bytes = None
@@ -3966,6 +3975,97 @@ class SettingsDialog(QDialog):
         rekey_layout.addWidget(instructions)
         self.field_labels["rekey_instructions"] = (instructions, "rekey_instructions")
 
+        # CHG-20251221-001: Mode selection section
+        mode_section = QFrame()
+        mode_layout = QFormLayout()
+        mode_layout.setSpacing(8)
+        mode_layout.setContentsMargins(0, 10, 0, 10)
+
+        # Current mode display
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+        try:
+            current_mode_enum = SecurityMode(current_mode)
+            current_mode_display = current_mode_enum.display_name
+        except (ValueError, KeyError):
+            current_mode_display = str(current_mode)
+
+        current_mode_label = QLabel(current_mode_display)
+        current_mode_label.setStyleSheet(f"font-weight: bold; color: {COLORS['primary']};")
+        mode_layout.addRow(tr("rekey_current_mode_label", lang=get_lang()), current_mode_label)
+        self.field_labels["rekey_current_mode_label"] = (current_mode_label, "rekey_current_mode_label")
+
+        # Target mode dropdown
+        self.rekey_target_mode_combo = QComboBox()
+        mode_options = [
+            (SecurityMode.PW_ONLY.value, tr("rekey_mode_pw_only", lang=get_lang())),
+            (SecurityMode.PW_KEYFILE.value, tr("rekey_mode_pw_keyfile", lang=get_lang())),
+            (SecurityMode.PW_GPG_KEYFILE.value, tr("rekey_mode_pw_gpg_keyfile", lang=get_lang())),
+            (SecurityMode.GPG_PW_ONLY.value, tr("rekey_mode_gpg_pw_only", lang=get_lang())),
+        ]
+        current_mode_index = 0
+        for i, (mode_val, mode_display) in enumerate(mode_options):
+            self.rekey_target_mode_combo.addItem(mode_display, mode_val)
+            if mode_val == current_mode:
+                current_mode_index = i
+        self.rekey_target_mode_combo.setCurrentIndex(current_mode_index)
+        self.rekey_target_mode_combo.setToolTip(tr("rekey_mode_same_tooltip", lang=get_lang()))
+        self.rekey_target_mode_combo.currentIndexChanged.connect(self._on_rekey_mode_changed)
+        mode_layout.addRow(tr("rekey_target_mode_label", lang=get_lang()), self.rekey_target_mode_combo)
+
+        # Conditional inputs container
+        self.rekey_conditional_inputs = QFrame()
+        conditional_layout = QFormLayout()
+        conditional_layout.setSpacing(6)
+        conditional_layout.setContentsMargins(0, 5, 0, 0)
+
+        # Keyfile path input (for PW_KEYFILE mode)
+        self.rekey_keyfile_row = QWidget()
+        keyfile_layout = QHBoxLayout()
+        keyfile_layout.setContentsMargins(0, 0, 0, 0)
+        self.rekey_keyfile_edit = QLineEdit()
+        self.rekey_keyfile_edit.setPlaceholderText(tr("rekey_new_keyfile_label", lang=get_lang()))
+        keyfile_layout.addWidget(self.rekey_keyfile_edit, stretch=1)
+        self.rekey_keyfile_browse_btn = QPushButton(tr("btn_browse_keyfile", lang=get_lang()))
+        self.rekey_keyfile_browse_btn.clicked.connect(self._browse_rekey_keyfile)
+        keyfile_layout.addWidget(self.rekey_keyfile_browse_btn)
+        self.rekey_keyfile_row.setLayout(keyfile_layout)
+        self.rekey_keyfile_label = QLabel(tr("rekey_new_keyfile_label", lang=get_lang()))
+        conditional_layout.addRow(self.rekey_keyfile_label, self.rekey_keyfile_row)
+        self.rekey_keyfile_label.setVisible(False)
+        self.rekey_keyfile_row.setVisible(False)
+
+        # GPG seed path input (for GPG modes)
+        self.rekey_gpg_row = QWidget()
+        gpg_layout = QHBoxLayout()
+        gpg_layout.setContentsMargins(0, 0, 0, 0)
+        self.rekey_gpg_seed_edit = QLineEdit()
+        self.rekey_gpg_seed_edit.setPlaceholderText(tr("rekey_new_gpg_seed_label", lang=get_lang()))
+        gpg_layout.addWidget(self.rekey_gpg_seed_edit, stretch=1)
+        self.rekey_gpg_browse_btn = QPushButton(tr("btn_browse_keyfile", lang=get_lang()))
+        self.rekey_gpg_browse_btn.clicked.connect(self._browse_rekey_gpg_seed)
+        gpg_layout.addWidget(self.rekey_gpg_browse_btn)
+        self.rekey_gpg_row.setLayout(gpg_layout)
+        self.rekey_gpg_label = QLabel(tr("rekey_new_gpg_seed_label", lang=get_lang()))
+        conditional_layout.addRow(self.rekey_gpg_label, self.rekey_gpg_row)
+        self.rekey_gpg_label.setVisible(False)
+        self.rekey_gpg_row.setVisible(False)
+
+        self.rekey_conditional_inputs.setLayout(conditional_layout)
+        mode_layout.addRow(self.rekey_conditional_inputs)
+
+        # Mode change warning
+        self.rekey_mode_warning = QLabel(tr("rekey_mode_change_warning", lang=get_lang()))
+        self.rekey_mode_warning.setWordWrap(True)
+        self.rekey_mode_warning.setStyleSheet(f"color: {COLORS['warning']}; font-style: italic; font-size: 10px;")
+        self.rekey_mode_warning.setVisible(False)
+        mode_layout.addRow(self.rekey_mode_warning)
+
+        mode_section.setLayout(mode_layout)
+        rekey_layout.addWidget(mode_section)
+        # End CHG-20251221-001
+
         # Start rekey button
         self.start_rekey_btn = QPushButton(tr("btn_start_rekey", lang=get_lang()))
         self.start_rekey_btn.setStyleSheet(
@@ -4000,6 +4100,51 @@ class SettingsDialog(QDialog):
         self.rekey_section_box.setLayout(rekey_layout)
         tab_layout.addWidget(self.rekey_section_box)
 
+    def _on_rekey_mode_changed(self, index: int):
+        """
+        Handle target mode selection changes.
+        CHG-20251221-001: Show/hide conditional inputs based on selected mode.
+        """
+        target_mode = self.rekey_target_mode_combo.currentData()
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+
+        # Determine which inputs to show
+        show_keyfile = target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value)
+        show_gpg = target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value)
+        mode_changed = target_mode != current_mode
+
+        # Update visibility
+        self.rekey_keyfile_label.setVisible(show_keyfile)
+        self.rekey_keyfile_row.setVisible(show_keyfile)
+        self.rekey_gpg_label.setVisible(show_gpg)
+        self.rekey_gpg_row.setVisible(show_gpg)
+        self.rekey_mode_warning.setVisible(mode_changed)
+
+    def _browse_rekey_keyfile(self):
+        """Browse for a new keyfile path."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, tr("rekey_new_keyfile_label", lang=get_lang()), "", "Key Files (*.key *.bin);;All Files (*.*)"
+        )
+        if file_path:
+            self.rekey_keyfile_edit.setText(file_path)
+
+    def _browse_rekey_gpg_seed(self):
+        """Browse for a new GPG seed file path."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("rekey_new_gpg_seed_label", lang=get_lang()),
+            "",
+            "Seed Files (*.seed *.gpg *.bin);;All Files (*.*)",
+        )
+        if file_path:
+            self.rekey_gpg_seed_edit.setText(file_path)
+
     def _start_rekey_flow(self):
         """
         Start the credential change (rekey) flow.
@@ -4007,6 +4152,7 @@ class SettingsDialog(QDialog):
         CHG-20251220-001: Opens VeraCrypt GUI for credential change with appropriate
         credential provisioning based on security mode.
         BUG-011 FIX: Actually derive and provide password for GPG_PW_ONLY mode.
+        CHG-20251221-001: Support mode changes during rekey.
         """
         import os
         import subprocess
@@ -4015,15 +4161,63 @@ class SettingsDialog(QDialog):
         self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         QApplication.processEvents()
 
-        # Get security mode
-        mode = (
+        # Get current security mode
+        current_mode = (
             self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
         )
+
+        # CHG-20251221-001: Get target mode from combo box
+        target_mode = self.rekey_target_mode_combo.currentData()
+        mode_is_changing = target_mode != current_mode
+
+        # Validate conditional inputs based on target mode
+        if mode_is_changing:
+            # Validate keyfile path for keyfile modes
+            if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
+                keyfile_path = self.rekey_keyfile_edit.text().strip()
+                if not keyfile_path:
+                    QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        "Please specify a keyfile path for the new security mode.",
+                    )
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+            # Validate GPG seed path for GPG modes
+            if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
+                gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
+                if not gpg_seed_path:
+                    QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        tr("rekey_gpg_seed_instructions", lang=get_lang()),
+                    )
+                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    return
+
+            # Confirm mode change
+            reply = QMessageBox.warning(
+                self,
+                tr("rekey_section_title", lang=get_lang()),
+                f"{tr('rekey_mode_change_warning', lang=get_lang())}\n\n"
+                f"Changing from {SecurityMode(current_mode).display_name} to {SecurityMode(target_mode).display_name}.\n\n"
+                "Are you sure you want to proceed?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                return
+
+        # Store target mode for _complete_rekey
+        self._rekey_target_mode = target_mode
+        self._rekey_mode_changing = mode_is_changing
 
         # Determine if we need to provide current credentials
         # For GPG_PW_ONLY mode, the password is derived from GPG-encrypted seed
         # For other modes, user knows the password
-        need_credential_provision = mode == SecurityMode.GPG_PW_ONLY.value
+        need_credential_provision = current_mode == SecurityMode.GPG_PW_ONLY.value
 
         # Check for post-recovery state (credentials were already recovered)
         post_recovery = self.config.get("post_recovery", {})
@@ -4138,7 +4332,10 @@ class SettingsDialog(QDialog):
             self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
 
     def _complete_rekey(self):
-        """Mark rekey as completed and update config."""
+        """
+        Mark rekey as completed and update config.
+        CHG-20251221-001: Also handle mode changes during rekey.
+        """
         from datetime import datetime
 
         timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -4147,6 +4344,27 @@ class SettingsDialog(QDialog):
         if "post_recovery" in self.config:
             self.config["post_recovery"]["rekey_completed"] = True
             self.config["post_recovery"]["rekey_completed_at"] = timestamp
+
+        # CHG-20251221-001: Handle mode changes
+        if hasattr(self, "_rekey_mode_changing") and self._rekey_mode_changing:
+            target_mode = getattr(self, "_rekey_target_mode", None)
+            if target_mode:
+                old_mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
+                self.config[ConfigKeys.MODE] = target_mode
+
+                # Update keyfile path if changed
+                if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
+                    keyfile_path = self.rekey_keyfile_edit.text().strip()
+                    if keyfile_path:
+                        self.config[ConfigKeys.KEYFILE] = keyfile_path
+
+                # Update GPG seed path if changed
+                if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
+                    gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
+                    if gpg_seed_path:
+                        self.config[ConfigKeys.GPG_SEED] = gpg_seed_path
+
+                _gui_logger.info(f"Security mode changed from {old_mode} to {target_mode}")
 
         # Invalidate old recovery kit (must generate new one after rekey)
         if "recovery" in self.config:
@@ -4161,7 +4379,12 @@ class SettingsDialog(QDialog):
         self._save_config_atomic()
 
         # Log event
-        self._gui_audit_log("REKEY_COMPLETED_GUI")
+        mode_change_suffix = "_MODE_CHANGED" if getattr(self, "_rekey_mode_changing", False) else ""
+        self._gui_audit_log(f"REKEY_COMPLETED_GUI{mode_change_suffix}")
+
+        # Clear mode change state
+        self._rekey_mode_changing = False
+        self._rekey_target_mode = None
 
         # Update status
         self.rekey_status_label.setText(tr("rekey_status_success", lang=get_lang()))
