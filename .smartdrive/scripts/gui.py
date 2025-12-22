@@ -709,13 +709,14 @@ class MountWorker(QThread):
             if self.keyfiles:
                 for kf in self.keyfiles:
                     cmd.extend(["--keyfile", kf])
+            # BUG-20251222-001: Use getattr for CREATE_NO_WINDOW (Windows-only flag)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 cwd=script_dir,
                 timeout=Limits.VERACRYPT_MOUNT_TIMEOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
 
             if result.returncode == 0:
@@ -789,13 +790,14 @@ class UnmountWorker(QThread):
             if self.config_path:
                 cmd.extend(["--config", str(self.config_path)])
 
+            # BUG-20251222-001: Use getattr for CREATE_NO_WINDOW (Windows-only flag)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 cwd=script_dir,
                 timeout=Limits.VERACRYPT_MOUNT_TIMEOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
 
             if result.returncode == 0:
@@ -952,6 +954,7 @@ class RecoveryGenerateWorker(QThread):
 
             self.progress.emit("recovery_generate_status_running")
 
+            # BUG-20251222-001: Use getattr for CREATE_NO_WINDOW (Windows-only flag)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -959,7 +962,7 @@ class RecoveryGenerateWorker(QThread):
                 cwd=script_dir,
                 timeout=120,  # 2 minutes timeout
                 env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
 
             if result.returncode == 0:
@@ -3311,28 +3314,21 @@ QPushButton:pressed {{
         CHG-20251221-042: Handle unexpected remote drive disconnection.
 
         Shows warning and exits remote mode gracefully.
-        """
-        # Stop the identity check timer first
-        if self._remote_identity_timer:
-            self._remote_identity_timer.stop()
-            self._remote_identity_timer = None
 
-        # Store drive letter for message before clearing profile
+        BUG-20251221-045/BUG-20251221-047 FIX: Reuse exit_remote_mode() for proper cleanup
+        instead of duplicating partial exit logic. This ensures:
+        - Button styles are restored
+        - Mount status is refreshed
+        - Remote banner/border is removed
+        - All timers are stopped
+        """
+        # Store drive letter for message before exit_remote_mode clears the profile
         drive_letter = ""
         if self._remote_profile:
             drive_letter = self._remote_profile.original_drive_letter
 
-        # Exit remote mode
-        self._app_mode = AppMode.LOCAL
-        self._remote_profile = None
-
-        # Restore local config
-        self._reload_config()
-
-        # Update UI
-        self.update_button_states()
-        self.update_storage_display()
-        self._update_lost_and_found_banner()
+        # Use exit_remote_mode for proper cleanup
+        self.exit_remote_mode()
 
         # Show warning to user
         show_popup(
@@ -4228,6 +4224,7 @@ QPushButton:pressed {{
             "mount_btn": self.mount_btn.styleSheet(),
             "unmount_btn": self.unmount_btn.styleSheet(),
             "tools_btn": self.tools_btn.styleSheet(),
+            "btn_open_launcher": self.btn_open_launcher.styleSheet() if hasattr(self, "btn_open_launcher") else "",
         }
 
         # Create remote profile
@@ -4442,7 +4439,14 @@ QPushButton:pressed {{
             self.mount_btn.setStyleSheet(self._original_button_styles.get("mount_btn", ""))
             self.unmount_btn.setStyleSheet(self._original_button_styles.get("unmount_btn", ""))
             self.tools_btn.setStyleSheet(self._original_button_styles.get("tools_btn", ""))
+            # BUG-20251221-045 FIX: Restore btn_open_launcher style
+            if hasattr(self, "btn_open_launcher"):
+                self.btn_open_launcher.setStyleSheet(self._original_button_styles.get("btn_open_launcher", ""))
             self._original_button_styles = None
+
+        # BUG-20251221-047 FIX: Force refresh mount status to use local config's mount letter
+        # This ensures is_mounted reflects local volume state, not stale remote state
+        self.is_mounted = check_mount_status_veracrypt()
 
         # Apply local UI state
         self._apply_local_ui_state()

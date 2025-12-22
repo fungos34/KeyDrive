@@ -5213,7 +5213,8 @@ def run_phase_4_yubikey_verification(state: PagedSetupState) -> tuple:
             print("      If the key doesn't work, you will lose access to the drive.\n")
             state.yubikeys_verified = False  # Mark as not verified
             state.verification_overridden = True  # Track that it was skipped
-            SetupSessionState.verification_overridden = True
+            # BUG-20251222-050 FIX: Removed redundant line with typo (SetupSessionState doesn't exist)
+            # Line 5215 already sets verification_overridden on state instance
             nav = prompt_navigation(3, TOTAL_SETUP_PAGES, can_go_back=True, can_rerun=False)
             return True, nav
         elif choice == "C":

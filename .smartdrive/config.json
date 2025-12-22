@@ -3,37 +3,60 @@
   "version": "0.0.1",
   "drive_name": null,
   "mode": "gpg_pw_only",
-  "setup_date": "2025-12-21",
-  "last_password_change": "2025-12-21",
+  "setup_date": "2025-12-22",
+  "last_password_change": "2025-12-22",
   "windows": {
-    "volume_path": "\\Device\\Harddisk2\\Partition2",
-    "mount_letter": "U",
+    "volume_path": "\\Device\\Harddisk1\\Partition2",
+    "mount_letter": "K",
     "veracrypt_path": ""
   },
   "unix": {
-    "volume_path": "\\Device\\Harddisk2\\Partition2",
+    "volume_path": "\\Device\\Harddisk1\\Partition2",
     "mount_point": "~/veradrive"
   },
   "seed_gpg_path": "keys\\seed.gpg",
   "kdf": "hkdf-sha256",
-  "salt_b64": "KvHNmukbvtXVcbnYLa++5g==",
+  "salt_b64": "SvBXXzSBOhHdyG3DNu+xug==",
   "hkdf_info": "smartdrive-vc-pw-v1",
   "pw_encoding": "base64url_nopad",
   "keyfile_fingerprints": [
-    "20795EBE7248969E0A5AE9F1183999995BCBDACD"
+    "20795EBE7248969E0A5AE9F1183999995BCBDACD",
+    "AC8D308F14F53C963811B89E9FA66E6E9DDEDE55"
   ],
   "verification_overridden": false,
+  "device_info": {
+    "device_name": "Seagate BUP Slim SL",
+    "device_bus": "USB",
+    "device_size_gb": 1863.02,
+    "device_unique_id": "5000000000000001",
+    "device_serial": "NA77BFS3",
+    "device_partitions": [
+      {
+        "DriveLetter": "F",
+        "Number": 1,
+        "Type": "IFS",
+        "Size": 4.88
+      },
+      {
+        "DriveLetter": null,
+        "Number": 2,
+        "Type": "Logical",
+        "Size": 1858.13
+      }
+    ],
+    "launcher_partition": "F"
+  },
   "recovery": {
     "enabled": true,
     "used": false,
     "state": "enabled",
-    "phrase_hash": "79df33ad14e3123d",
-    "container_path": "H:\\.smartdrive\\recovery\\recovery_container.bin",
-    "header_path": "H:\\.smartdrive\\recovery\\header_backup.hdr",
+    "phrase_hash": "a42f5a3149749b38",
+    "container_path": "F:\\.smartdrive\\recovery\\recovery_container.bin",
+    "header_path": "F:\\.smartdrive\\recovery\\header_backup.hdr",
     "volume_identity": "device-path-skip",
-    "created_at": "2025-12-21T22:07:30.303874Z"
+    "created_at": "2025-12-22T00:06:50.739491Z"
   },
-  "drive_id": "222d82ea-72cc-4fee-bc84-2e1e2b30f25c",
+  "drive_id": "33bdde7d-f0a5-4a29-93af-5c2396ef8227",
   "lost_and_found": {
     "enabled": false,
     "message": ""
