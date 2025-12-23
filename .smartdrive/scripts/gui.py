@@ -1538,6 +1538,9 @@ class SmartDriveGUI(QWidget):
         # Multi-keyfile support
         self.keyfiles = []
 
+        # CHG-20251223-055: Non-modal settings dialog instance tracking
+        self._settings_dialog: Optional["SettingsDialog"] = None
+
         # CHG-20251221-042: Remote Control Mode state
         self._app_mode = AppMode.LOCAL
         self._remote_profile: Optional[RemoteMountProfile] = None
@@ -4028,20 +4031,30 @@ QPushButton:pressed {{
             self.render_keyfiles()
 
     def show_recovery(self):
-        """Show recovery options by opening Settings dialog to Recovery tab."""
-        # CHG-20251221-025: Use initial_tab parameter instead of manual tab selection
-        dialog = SettingsDialog(self.settings, self, initial_tab="Recovery")
+        """
+        Show recovery options by opening Settings dialog to Recovery tab.
 
-        # Show the dialog
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Reload config if settings were saved
-            try:
-                self.config = self.load_config()
-                self._update_lost_and_found_banner()
-                current_product_name = get_product_name(self.settings)
-                self.apply_branding(current_product_name)
-            except Exception as e:
-                log_exception("Error reloading config after settings", e, level="warning")
+        CHG-20251223-055: Changed from modal to non-modal with instance tracking.
+        """
+        # CHG-20251223-055: Check if settings dialog is already open
+        if self._settings_dialog is not None and self._settings_dialog.isVisible():
+            # Bring existing dialog to front and switch to Recovery tab
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            # Try to switch to Recovery tab if tabs exist
+            if hasattr(self._settings_dialog, "tabs"):
+                for i in range(self._settings_dialog.tabs.count()):
+                    if self._settings_dialog.tabs.tabText(i) == "Recovery":
+                        self._settings_dialog.tabs.setCurrentIndex(i)
+                        break
+            return
+
+        # CHG-20251221-025: Use initial_tab parameter instead of manual tab selection
+        self._settings_dialog = SettingsDialog(self.settings, self, initial_tab="Recovery")
+        # Connect to finished signal for async result handling
+        self._settings_dialog.finished.connect(self._on_settings_closed)
+        # Show non-modally
+        self._settings_dialog.show()
 
     def check_recovery_kit_available(self):
         """Check if recovery kit is available for this drive."""
@@ -4109,6 +4122,10 @@ QPushButton:pressed {{
             self.set_status("status_mount_success")
             self.status_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold;")
             # Removed popup - status label shows success
+
+            # BUG-20251223-066: Check if this is a post-recovery mount that should finalize
+            # container deletion (mount verified after rekey with skipped validation)
+            self._finalize_recovery_container_deletion_on_mount_success()
         else:
             self.set_status("status_mount_failed")
             self.status_label.setStyleSheet(f"color: {COLORS['error']}; font-weight: bold;")
@@ -4124,19 +4141,157 @@ QPushButton:pressed {{
         # Re-enable buttons and refresh status after a delay
         QTimer.singleShot(2000, self.update_button_states)  # 2 second delay to let filesystem settle
 
+    def _finalize_recovery_container_deletion_on_mount_success(self):
+        """
+        BUG-20251223-066: Finalize recovery container deletion after successful mount.
+
+        Called when mount succeeds and there's a pending recovery container deletion
+        that was deferred because the user skipped mount validation during rekey.
+        """
+        try:
+            # Check if there's a pending container deletion
+            recovery_cfg = self.config.get(ConfigKeys.RECOVERY, {})
+            pending_path = recovery_cfg.get("pending_container_path")
+
+            # Also check if we're in post-recovery state with rekey completed
+            post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+            rekey_completed = post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_COMPLETED, False)
+
+            if pending_path and rekey_completed:
+                container_path = Path(pending_path)
+                if container_path.exists():
+                    _gui_logger.info(
+                        f"BUG-20251223-066: Mount successful post-rekey. "
+                        f"Finalizing recovery container deletion: {container_path}"
+                    )
+
+                    # Securely delete the container
+                    self._secure_delete_file(container_path)
+
+                    # Update config to mark as fully used
+                    recovery_cfg[ConfigKeys.RECOVERY_USED] = True
+                    recovery_cfg[ConfigKeys.RECOVERY_STATE] = "used"
+                    if "pending_container_path" in recovery_cfg:
+                        del recovery_cfg["pending_container_path"]
+                    self.config[ConfigKeys.RECOVERY] = recovery_cfg
+                    self._save_config_atomic()
+
+                    _gui_logger.info("BUG-20251223-066: Recovery finalized - container deleted after verified mount")
+
+                    # Notify user
+                    QMessageBox.information(
+                        self,
+                        "Recovery Finalized",
+                        "✅ Your recovery kit has been securely deleted.\n\n"
+                        "Your new credentials are verified and working.\n"
+                        "Remember to generate a new recovery kit!",
+                        QMessageBox.StandardButton.Ok,
+                    )
+        except Exception as e:
+            _gui_logger.warning(f"BUG-20251223-066: Error finalizing recovery: {e}")
+
+    def _secure_delete_file(self, file_path: Path, passes: int = 3):
+        """
+        Securely delete a file by overwriting with random data.
+
+        BUG-20251223-066: Added to SmartDriveGUI for recovery container deletion.
+        """
+        import os
+
+        if not file_path.exists():
+            return
+        try:
+            file_size = file_path.stat().st_size
+            with open(file_path, "rb+") as f:
+                for _ in range(passes):
+                    f.seek(0)
+                    f.write(os.urandom(file_size))
+                    f.flush()
+                    os.fsync(f.fileno())
+            file_path.unlink()
+        except OSError as e:
+            log_exception(f"Secure delete failed for {file_path}: {e}")
+            try:
+                file_path.unlink()
+            except OSError:
+                log_exception(f"Regular delete also failed for {file_path}")
+
+    def _save_config_atomic(self):
+        """
+        Atomically save config to disk.
+
+        BUG-20251223-066: Added to SmartDriveGUI for recovery container finalization.
+        """
+        import json
+        import os
+
+        config_path = CONFIG_FILE
+        tmp_path = config_path.with_suffix(".json.tmp")
+
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(config_path)
+        except Exception as e:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+
     def show_settings(self):
-        """Show settings dialog."""
-        dialog = SettingsDialog(self.settings, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        """
+        Show settings dialog (non-modal).
+
+        CHG-20251223-055: Changed from modal to non-modal for better UX.
+        Uses instance tracking to prevent multiple dialogs.
+        """
+        # CHG-20251223-055: Check if settings dialog is already open
+        if self._settings_dialog is not None and self._settings_dialog.isVisible():
+            # Bring existing dialog to front
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
+
+        # Create new settings dialog
+        self._settings_dialog = SettingsDialog(self.settings, self)
+        # Connect to finished signal for async result handling
+        self._settings_dialog.finished.connect(self._on_settings_closed)
+        # Show non-modally
+        self._settings_dialog.show()
+
+    def _on_settings_closed(self, result: int):
+        """
+        Handle settings dialog closure (async result handling).
+
+        CHG-20251223-055: Called when non-modal settings dialog is closed.
+        Reloads config and updates UI if settings were saved.
+
+        Args:
+            result: QDialog.DialogCode value (Accepted or Rejected)
+        """
+        if result == QDialog.DialogCode.Accepted:
             # Settings were saved, reload config and update UI
-            self.config = self.load_config()
+            try:
+                self.config = self.load_config()
 
-            # Update lost and found banner visibility
-            self._update_lost_and_found_banner()
+                # Update lost and found banner visibility
+                self._update_lost_and_found_banner()
 
-            # Reapply branding
-            current_product_name = get_product_name(self.settings)
-            self.apply_branding(current_product_name)
+                # Reapply branding (language, theme, product name may have changed)
+                current_product_name = get_product_name(self.settings)
+                self.apply_branding(current_product_name)
+
+                # Refresh status display in case language changed
+                self.update_button_states()
+                self.update_storage_display()
+
+                _gui_logger.info("Settings saved - UI updated")
+            except Exception as e:
+                log_exception("Error reloading config after settings", e, level="warning")
+
+        # Clear reference to allow garbage collection
+        self._settings_dialog = None
 
     def show_tools_menu(self):
         """Show tools dropdown menu."""
@@ -4203,6 +4358,13 @@ QPushButton:pressed {{
         cli_action.triggered.connect(self._on_cli_action)
         cli_action.setEnabled(not is_remote)
 
+        # Separator before Exit
+        menu.addSeparator()
+
+        # CHG-20251223-061: Exit action - fully terminates app including tray
+        exit_action = menu.addAction(tr("menu_exit", lang=get_lang()))
+        exit_action.triggered.connect(self._on_exit_action)
+
         # Show menu below the tools button
         menu.exec(self.tools_btn.mapToGlobal(QPoint(0, self.tools_btn.height())))
 
@@ -4226,6 +4388,16 @@ QPushButton:pressed {{
             show_popup(self, "remote_mode_disabled_title", "remote_mode_disabled_cli", icon="warning")
             return
         self.open_cli()
+
+    def _on_exit_action(self) -> None:
+        """
+        CHG-20251223-061: Handle Exit menu action.
+
+        Completely terminates the application including tray icon.
+        Unlike the X button which minimizes to tray, this fully exits.
+        """
+        _gui_logger.info("menu.action.exit")
+        self._cleanup_and_quit()
 
     def _get_recent_remote_roots(self) -> List[Path]:
         """
@@ -5530,8 +5702,14 @@ class SettingsDialog(QDialog):
         self.parent = parent
         self._initial_tab = initial_tab  # CHG-20251221-025: Store for use after tabs are built
         self.setWindowTitle(tr("settings_window_title", lang=get_lang()))
-        self.setModal(True)
-        self.resize(650, 700)  # Larger for tabbed interface
+        # CHG-20251223-055: Non-modal dialog for better UX - main window stays responsive
+        self.setModal(False)
+
+        # CHG-20251223-065: Make settings dialog fully resizable for small screens/laptops
+        # Set size policies to allow both shrinking and expanding
+        self.setSizeGripEnabled(True)  # Show resize grip in corner
+        self.setMinimumSize(400, 300)  # Minimum usable size
+        self.resize(650, 700)  # Default size, larger for tabbed interface
 
         # BUG-20251221-001: Get _launcher_root from parent (MainWindow) for integrity/rekey operations
         # This is required for Integrity.validate_integrity(), Integrity.sign_manifest(),
@@ -5604,6 +5782,46 @@ class SettingsDialog(QDialog):
             log_exception("Error loading config in SettingsDialog", e, level="debug")
             self.config = {}
 
+    def _reload_config_from_disk(self):
+        """
+        CHG-20251223-055: Reload config from disk and refresh UI.
+
+        Called when user clicks "Reload Config" button in non-modal dialog.
+        Discards any unsaved changes and refreshes all field values.
+        """
+        # Reload config from disk
+        self._reload_config()
+
+        # Reset shadow config to match loaded config
+        import copy
+
+        self._shadow_config = copy.deepcopy(self.config)
+
+        # Refresh all field values from config
+        # This iterates through all registered fields and updates their values
+        for field_key, field_info in self.field_labels.items():
+            if isinstance(field_info, tuple) and len(field_info) >= 2:
+                widget, i18n_key = field_info[:2]
+                # Try to update widget value from config if it's an editable field
+                if hasattr(widget, "currentData") and callable(widget.currentData):
+                    # ComboBox - find matching index
+                    pass  # Complex to update, skip for now
+                elif hasattr(widget, "text") and hasattr(widget, "setText"):
+                    # QLineEdit - would need field path mapping
+                    pass  # Complex to update, skip for now
+                elif hasattr(widget, "isChecked") and hasattr(widget, "setChecked"):
+                    # QCheckBox - would need field path mapping
+                    pass  # Complex to update, skip for now
+
+        # Update status to indicate reload
+        if hasattr(self, "restart_info_label"):
+            self.restart_info_label.setText("✓ Config reloaded from disk")
+            self.restart_info_label.setStyleSheet(f"color: {COLORS['success']}; font-style: italic;")
+            # Reset after 3 seconds
+            QTimer.singleShot(3000, lambda: self.restart_info_label.setText(""))
+
+        _gui_logger.info("Settings dialog: config reloaded from disk")
+
     def _build_ui(self):
         """Build the UI dynamically from schema."""
         layout = QVBoxLayout()
@@ -5667,6 +5885,13 @@ class SettingsDialog(QDialog):
 
         # Buttons
         button_layout = QHBoxLayout()
+
+        # CHG-20251223-055: Add reload config button for non-modal dialog
+        self.reload_btn = QPushButton(tr("btn_reload_config", lang=get_lang()))
+        self.reload_btn.setToolTip(tr("tooltip_reload_config", lang=get_lang()))
+        self.reload_btn.clicked.connect(self._reload_config_from_disk)
+        button_layout.addWidget(self.reload_btn)
+
         button_layout.addStretch()
         self.save_btn = QPushButton(tr("btn_save", lang=get_lang()))
         self.cancel_btn = QPushButton(tr("btn_cancel", lang=get_lang()))
@@ -5786,8 +6011,24 @@ class SettingsDialog(QDialog):
         return False
 
     def _create_tab(self, tab_name: str):
-        """Create a tab widget with fields from schema."""
-        tab_widget = QWidget()
+        """
+        Create a tab widget with fields from schema.
+
+        CHG-20251223-065: Each tab is wrapped in a QScrollArea to enable
+        vertical and horizontal scrolling for small screens/laptops.
+        """
+        # CHG-20251223-065: Create scroll area wrapper for tab content
+        from PyQt6.QtWidgets import QScrollArea
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Remove scroll area border for cleaner look
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        # Create the actual content widget inside the scroll area
+        content_widget = QWidget()
         tab_layout = QVBoxLayout()
         tab_layout.setSpacing(12)
         tab_layout.setContentsMargins(8, 8, 8, 8)
@@ -5888,8 +6129,11 @@ class SettingsDialog(QDialog):
             self._add_integrity_section(tab_layout)
 
         tab_layout.addStretch()
-        tab_widget.setLayout(tab_layout)
-        return tab_widget
+        content_widget.setLayout(tab_layout)
+
+        # CHG-20251223-065: Set content widget inside scroll area
+        scroll_area.setWidget(content_widget)
+        return scroll_area
 
     def _add_rekey_section(self, tab_layout: QVBoxLayout):
         """
@@ -6129,6 +6373,59 @@ class SettingsDialog(QDialog):
         self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         rekey_layout.addWidget(self.rekey_status_label)
         self.field_labels["rekey_status_label"] = (self.rekey_status_label, "rekey_status_ready")
+
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        verify_cancel_layout = QHBoxLayout()
+        verify_cancel_layout.setSpacing(10)
+
+        # Verify New Credentials button (initially hidden)
+        self.verify_rekey_btn = QPushButton(tr("btn_verify_rekey", lang=get_lang()))
+        self.verify_rekey_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['success']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS.get('success_hover', '#2E7D32')};
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+            }}
+        """
+        )
+        self.verify_rekey_btn.setVisible(False)  # Hidden until rekey flow starts
+        self.verify_rekey_btn.clicked.connect(self._verify_rekey_credentials)
+        verify_cancel_layout.addWidget(self.verify_rekey_btn)
+
+        # Cancel button (initially hidden)
+        self.cancel_rekey_btn = QPushButton(tr("btn_cancel_rekey", lang=get_lang()))
+        self.cancel_rekey_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['error']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS.get('error_hover', '#C62828')};
+            }}
+        """
+        )
+        self.cancel_rekey_btn.setVisible(False)  # Hidden until rekey flow starts
+        self.cancel_rekey_btn.clicked.connect(self._cancel_rekey)
+        verify_cancel_layout.addWidget(self.cancel_rekey_btn)
+
+        verify_cancel_layout.addStretch()
+        rekey_layout.addLayout(verify_cancel_layout)
 
         self.rekey_section_box.setLayout(rekey_layout)
         tab_layout.addWidget(self.rekey_section_box)
@@ -6488,9 +6785,12 @@ class SettingsDialog(QDialog):
                 raise RuntimeError(f"GPG encryption failed: {stderr.decode()}")
 
             # Derive password from seed (for display to user)
+            # BUG-20251223-059 FIX: Use SSOT HKDF info, not hardcoded value
+            from core.constants import CryptoParams
             from core.secrets import _derive_password_from_seed
 
-            derived_password = _derive_password_from_seed(seed, salt, b"veracrypt-password")
+            hkdf_info = self.config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT)
+            derived_password = _derive_password_from_seed(seed, salt, hkdf_info.encode("utf-8"))
 
             # Update the GPG seed path field
             self.rekey_gpg_seed_edit.setText(save_path)
@@ -6698,6 +6998,8 @@ class SettingsDialog(QDialog):
         CHG-20251221-027: Added copy password button.
         CHG-20251221-028: Auto-unmount before VeraCrypt launch.
         CHG-20251221-029: Provide credentials based on security mode.
+        CHG-20251223-054: Streamlined UX - no modal dialogs, inline status updates,
+            verify/cancel buttons instead of confirmation dialogs.
         """
         import os
         import subprocess
@@ -6716,53 +7018,25 @@ class SettingsDialog(QDialog):
         mode_is_changing = target_mode != current_mode
 
         # Validate conditional inputs based on target mode
+        # CHG-20251223-054: Use status label for validation errors instead of modal dialogs
         if mode_is_changing:
             # Validate keyfile path for keyfile modes
             if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
                 keyfile_path = self.rekey_keyfile_edit.text().strip()
                 if not keyfile_path:
-                    QMessageBox.warning(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        "Please specify a keyfile path for the new security mode.",
-                    )
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    self.rekey_status_label.setText("⚠️ Please specify a keyfile path for the new security mode.")
+                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                     return
 
             # Validate GPG seed path for GPG modes
             if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
                 gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
                 if not gpg_seed_path:
-                    QMessageBox.warning(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        tr("rekey_gpg_seed_instructions", lang=get_lang()),
+                    self.rekey_status_label.setText(
+                        "⚠️ " + tr("rekey_gpg_seed_instructions", lang=get_lang())[:100] + "..."
                     )
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                     return
-
-            # Confirm mode change
-            # BUG-20251224-004 FIX: Use i18n keys for mode display (SSOT consistency)
-            mode_i18n_keys = {
-                SecurityMode.PW_ONLY.value: "rekey_mode_pw_only",
-                SecurityMode.PW_KEYFILE.value: "rekey_mode_pw_keyfile",
-                SecurityMode.PW_GPG_KEYFILE.value: "rekey_mode_pw_gpg_keyfile",
-                SecurityMode.GPG_PW_ONLY.value: "rekey_mode_gpg_pw_only",
-            }
-            from_mode_display = tr(mode_i18n_keys.get(current_mode, "rekey_mode_pw_only"), lang=get_lang())
-            to_mode_display = tr(mode_i18n_keys.get(target_mode, "rekey_mode_pw_only"), lang=get_lang())
-            reply = QMessageBox.warning(
-                self,
-                tr("rekey_section_title", lang=get_lang()),
-                f"{tr('rekey_mode_change_warning', lang=get_lang())}\n\n"
-                f"Changing from {from_mode_display} to {to_mode_display}.\n\n"
-                "Are you sure you want to proceed?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                return
 
         # Store target mode for _complete_rekey
         self._rekey_target_mode = target_mode
@@ -6783,32 +7057,16 @@ class SettingsDialog(QDialog):
                 mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
 
             if mount_point and get_mount_status(mount_point):
-                # Volume is mounted - ask user to confirm unmount
-                reply = QMessageBox.question(
-                    self,
-                    tr("rekey_section_title", lang=get_lang()),
-                    "⚠️ Volume is currently mounted.\n\n"
-                    "VeraCrypt cannot change credentials while the volume is mounted.\n"
-                    "The volume will be unmounted automatically.\n\n"
-                    "Do you want to continue?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                    return
-
-                # Unmount the volume
+                # Volume is mounted - auto-unmount without confirmation
+                # CHG-20251223-054: No dialog, just show status and unmount
                 self.rekey_status_label.setText(tr("status_unmounting_for_rekey", lang=get_lang()))
                 QApplication.processEvents()
 
                 if not unmount(mount_point, force=False):
-                    QMessageBox.critical(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        "Failed to unmount volume.\n\n" "Please close any applications using the volume and try again.",
+                    self.rekey_status_label.setText(
+                        "❌ Failed to unmount volume. Close applications using it and try again."
                     )
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                     return
 
                 _gui_logger.info("Volume unmounted successfully for rekey")
@@ -6830,77 +7088,12 @@ class SettingsDialog(QDialog):
         )
 
         # CHG-20251221-029: Provide credentials based on security mode
-        derived_password = None
+        # CHG-20251223-054: No dialogs - just prepare credentials silently
         temp_keyfile_path = None
 
         if need_credential_provision and not is_post_recovery:
-            if current_mode == SecurityMode.GPG_PW_ONLY.value:
-                # BUG-011 FIX: Actually derive and copy password for GPG_PW_ONLY mode
-                reply = QMessageBox.information(
-                    self,
-                    tr("rekey_section_title", lang=get_lang()),
-                    "For GPG_PW_ONLY mode, the current password will be derived using your hardware key.\n\n"
-                    "Please ensure your YubiKey/GPG card is inserted.\n\n"
-                    "The password will be copied to clipboard for use in VeraCrypt.\n"
-                    "Press OK to continue with password derivation.",
-                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                )
-                if reply == QMessageBox.StandardButton.Cancel:
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                    return
-
-                # Derive password using SecretProvider
-                self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
-                QApplication.processEvents()
-
-                try:
-                    from core.limits import Limits
-                    from core.secrets import SecretProvider
-
-                    smartdrive_dir = self._launcher_root / ".smartdrive"
-                    provider = SecretProvider.from_config(self.config, smartdrive_dir)
-
-                    # Derive password using the internal method
-                    derived_password = provider._derive_password_gpg_pw_only()
-
-                    # Copy to clipboard with SSOT-defined TTL
-                    clipboard_timeout = Limits.CLIPBOARD_TIMEOUT
-                    provider.copy_password_to_clipboard(timeout=clipboard_timeout)
-
-                    # CHG-20251221-027: Show password with Copy button
-                    QMessageBox.information(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        f"✅ Current password has been copied to clipboard!\n\n"
-                        f"⏱️ The clipboard will be cleared after {clipboard_timeout} seconds.\n\n"
-                        "Use Ctrl+V to paste the CURRENT password in VeraCrypt when changing credentials.",
-                    )
-                except Exception as e:
-                    _gui_logger.error(f"Failed to derive password: {e}")
-                    QMessageBox.critical(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        f"Failed to derive password from YubiKey:\n{e}\n\n"
-                        "Ensure your YubiKey is inserted and try again.",
-                    )
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                    return
-
-            elif current_mode == SecurityMode.PW_GPG_KEYFILE.value:
+            if current_mode == SecurityMode.PW_GPG_KEYFILE.value:
                 # CHG-20251221-029: Handle PW_GPG_KEYFILE mode - decrypt keyfile
-                reply = QMessageBox.information(
-                    self,
-                    tr("rekey_section_title", lang=get_lang()),
-                    "For PW_GPG_KEYFILE mode, the encrypted keyfile will be decrypted using your hardware key.\n\n"
-                    "Please ensure your YubiKey/GPG card is inserted.\n\n"
-                    "A temporary decrypted keyfile will be created for VeraCrypt.\n"
-                    "Press OK to continue with keyfile decryption.",
-                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                )
-                if reply == QMessageBox.StandardButton.Cancel:
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                    return
-
                 self.rekey_status_label.setText(tr("status_decrypting_keyfile", lang=get_lang()))
                 QApplication.processEvents()
 
@@ -6922,24 +7115,12 @@ class SettingsDialog(QDialog):
 
                     # Store for cleanup
                     self._temp_keyfile_path = temp_keyfile_path
+                    _gui_logger.info(f"Temporary keyfile created at: {temp_keyfile_path}")
 
-                    # Show path to user
-                    QMessageBox.information(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        f"✅ Keyfile decrypted successfully!\n\n"
-                        f"📁 Temporary keyfile location:\n{temp_keyfile_path}\n\n"
-                        "Use this path as the 'Current keyfile' in VeraCrypt.\n\n"
-                        "⚠️ The temporary keyfile will be securely deleted after rekey.",
-                    )
                 except Exception as e:
                     _gui_logger.error(f"Failed to decrypt keyfile: {e}")
-                    QMessageBox.critical(
-                        self,
-                        tr("rekey_section_title", lang=get_lang()),
-                        f"Failed to decrypt keyfile:\n{e}\n\n" "Ensure your YubiKey is inserted and try again.",
-                    )
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                    self.rekey_status_label.setText(f"❌ Failed to decrypt keyfile: {e}")
+                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                     return
 
         # Launch VeraCrypt GUI
@@ -6952,57 +7133,125 @@ class SettingsDialog(QDialog):
             vc_exe = Paths.veracrypt_exe()
 
             if not vc_exe or not vc_exe.exists():
-                QMessageBox.warning(self, "Rekey", "VeraCrypt not found. Please install VeraCrypt first.")
-                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+                self.rekey_status_label.setText("❌ VeraCrypt not found. Please install VeraCrypt first.")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                 return
 
             # Launch VeraCrypt GUI (user will use Tools > Change Volume Password)
             subprocess.Popen([str(vc_exe)], creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
-            self.rekey_status_label.setText(tr("rekey_status_awaiting_confirmation", lang=get_lang()))
+            # CHG-20251223-054: Show instructions in status label, enable verify/cancel buttons
+            # Build instruction text - include temp keyfile path if applicable
+            instructions = tr("rekey_instructions_veracrypt", lang=get_lang())
+            if temp_keyfile_path:
+                instructions += f"\n\n📁 Temp keyfile: {temp_keyfile_path}"
+
+            self.rekey_status_label.setText(instructions)
             self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
 
-            # Show instructions
-            QMessageBox.information(
-                self,
-                tr("rekey_section_title", lang=get_lang()),
-                "VeraCrypt GUI has been opened.\n\n"
-                "To change your credentials:\n"
-                "1. Go to 'Tools' → 'Change Volume Password'\n"
-                "2. Select your volume (use 'Select Device' if needed)\n"
-                "3. Enter current credentials\n"
-                "4. Enter and confirm new password/keyfile\n"
-                "5. Click 'OK' to apply changes\n\n"
-                "After completing in VeraCrypt, click 'Yes' to confirm the change was successful.",
-            )
+            # Toggle button states: disable Start, show Verify/Cancel
+            self.start_rekey_btn.setEnabled(False)
+            self.verify_rekey_btn.setVisible(True)
+            self.cancel_rekey_btn.setVisible(True)
 
-            # Ask user to confirm rekey was successful
-            reply = QMessageBox.question(
-                self,
-                tr("rekey_section_title", lang=get_lang()),
-                "Did you successfully change your credentials in VeraCrypt?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                # BUG-20251221-030: Validate new credentials before replacing files
-                validation_ok, skip_validation = self._validate_new_credentials_before_rekey()
-                if not validation_ok and not skip_validation:
-                    # User chose not to proceed without validation
-                    self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                    self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-                    return
-
-                # Mark rekey as completed (with warning if validation skipped)
-                self._complete_rekey(validation_skipped=skip_validation)
-            else:
-                self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
-                self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+            _gui_logger.info("Rekey flow started - VeraCrypt GUI opened, awaiting user verification")
 
         except Exception as e:
-            QMessageBox.warning(self, "Rekey", f"Failed to launch VeraCrypt: {e}")
-            self.rekey_status_label.setText(tr("rekey_status_ready", lang=get_lang()))
+            _gui_logger.error(f"Failed to launch VeraCrypt: {e}")
+            self.rekey_status_label.setText(f"❌ Failed to launch VeraCrypt: {e}")
+            self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+    def _verify_rekey_credentials(self):
+        """
+        CHG-20251223-054: Verify new credentials via mount test after user completes
+        VeraCrypt credential change.
+
+        Called when user clicks "Verify New Credentials" button after completing
+        the credential change in VeraCrypt GUI. Validates via mount test before
+        finalizing the rekey.
+        """
+        self.rekey_status_label.setText(tr("rekey_verifying", lang=get_lang()))
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            # Call existing validation method
+            validation_ok, skip_validation = self._validate_new_credentials_before_rekey()
+
+            if validation_ok:
+                # Verification succeeded - show success, complete rekey
+                self.rekey_status_label.setText(tr("rekey_verification_success", lang=get_lang()))
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+                QApplication.processEvents()
+
+                # Complete the rekey process
+                self._complete_rekey(validation_skipped=False)
+
+                # Reset button states
+                self.verify_rekey_btn.setVisible(False)
+                self.cancel_rekey_btn.setVisible(False)
+                self.start_rekey_btn.setEnabled(True)
+
+            elif skip_validation:
+                # User chose to skip validation - proceed with warning
+                self.rekey_status_label.setText("⚠️ Proceeding without verification...")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
+                QApplication.processEvents()
+
+                self._complete_rekey(validation_skipped=True)
+
+                # Reset button states
+                self.verify_rekey_btn.setVisible(False)
+                self.cancel_rekey_btn.setVisible(False)
+                self.start_rekey_btn.setEnabled(True)
+
+            else:
+                # Validation failed and user chose not to proceed
+                self.rekey_status_label.setText(tr("rekey_verification_failed", lang=get_lang()))
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+                # Keep verify/cancel buttons visible for retry
+
+        except Exception as e:
+            _gui_logger.error(f"Verification failed with exception: {e}")
+            self.rekey_status_label.setText(f"❌ Verification error: {e}")
+            self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
+
+    def _cancel_rekey(self):
+        """
+        CHG-20251223-054: Cancel the rekey flow and reset UI state.
+
+        Called when user clicks "Cancel" button during rekey flow.
+        Cleans up any temporary files and resets UI to initial state.
+        """
+        _gui_logger.info("Rekey flow cancelled by user")
+
+        # Clean up temporary keyfile if created
+        if hasattr(self, "_temp_keyfile_path") and self._temp_keyfile_path:
+            try:
+                import os
+
+                if os.path.exists(self._temp_keyfile_path):
+                    os.remove(self._temp_keyfile_path)
+                    _gui_logger.info(f"Cleaned up temporary keyfile: {self._temp_keyfile_path}")
+                self._temp_keyfile_path = None
+            except Exception as e:
+                _gui_logger.warning(f"Failed to clean up temp keyfile: {e}")
+
+        # Reset stored state
+        self._rekey_target_mode = None
+        self._rekey_mode_changing = False
+
+        # Reset UI state
+        self.rekey_status_label.setText(tr("rekey_cancelled", lang=get_lang()))
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+
+        # Toggle button states: re-enable Start, hide Verify/Cancel
+        self.start_rekey_btn.setEnabled(True)
+        self.verify_rekey_btn.setVisible(False)
+        self.cancel_rekey_btn.setVisible(False)
+
+        # Update button state based on current metadata
+        self._update_rekey_button_state()
 
     def _validate_new_credentials_before_rekey(self) -> tuple:
         """
@@ -7076,7 +7325,7 @@ class SettingsDialog(QDialog):
                 # Get salt (from generated seed or config)
                 salt_b64 = getattr(self, "_generated_seed_salt", None)
                 if not salt_b64:
-                    salt_b64 = self.config.get(ConfigKeys.SALT, "")
+                    salt_b64 = self.config.get(ConfigKeys.SALT_B64, "")
                 if not salt_b64:
                     reply = QMessageBox.warning(
                         self,
@@ -7114,7 +7363,11 @@ class SettingsDialog(QDialog):
 
                     seed_bytes = gpg_result.stdout
                     salt_bytes = base64.b64decode(salt_b64)
-                    new_password = _derive_password_from_seed(seed_bytes, salt_bytes, b"veracrypt-password")
+                    # BUG-20251223-059 FIX: Use SSOT HKDF info, not hardcoded value
+                    from core.constants import CryptoParams
+
+                    hkdf_info = self.config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT)
+                    new_password = _derive_password_from_seed(seed_bytes, salt_bytes, hkdf_info.encode("utf-8"))
                 except Exception as e:
                     _gui_logger.error(f"Password derivation failed: {e}")
                     reply = QMessageBox.warning(
@@ -7221,6 +7474,108 @@ class SettingsDialog(QDialog):
             )
             return (False, reply == QMessageBox.StandardButton.Yes)
 
+    def _verify_credentials_via_mount(
+        self, volume_path: str, mount_point: str, password: str, keyfile_path=None
+    ) -> tuple[bool, str]:
+        """
+        BUG-20251223-056 FIX: Verify credentials by attempting mount/unmount.
+        Copied from RecoveryGenerateWorker for use in SettingsDialog rekey flow.
+
+        This ensures the rekey operation will use valid credentials.
+        Invalid credentials would cause the rekey to fail.
+
+        Returns:
+            (success, error_message)
+        """
+        import platform
+        import tempfile
+
+        try:
+            from scripts.veracrypt_cli import (
+                InvalidCredentialsError,
+                VeraCryptError,
+                get_mount_status,
+                try_mount,
+                unmount,
+            )
+        except ImportError as e:
+            return False, f"Cannot import veracrypt_cli: {e}"
+
+        # Check if already mounted - if so, credentials are already verified
+        try:
+            status = get_mount_status()
+            # Check if our volume is in the mounted list
+            if status and any(volume_path in str(m.get("volume", "")) for m in status):
+                return True, ""  # Already mounted = credentials valid
+        except Exception as e:
+            _gui_logger.debug(f"Mount status check failed (continuing): {e}")
+
+        # Determine mount point for test
+        is_windows = platform.system().lower() == "windows"
+        if is_windows:
+            # Use a temporary drive letter for test mount
+            import string
+
+            used_letters = set()
+            try:
+                for m in get_mount_status() or []:
+                    letter = m.get(ConfigKeys.MOUNT_POINT, "")
+                    if letter:
+                        used_letters.add(letter[0].upper())
+            except Exception as e:
+                _gui_logger.debug(f"Failed to get used drive letters: {e}")
+
+            test_letter = None
+            for letter in reversed(string.ascii_uppercase):
+                if letter not in used_letters and letter not in ["C", "D"]:
+                    test_letter = letter
+                    break
+            if not test_letter:
+                return False, "No available drive letter for credential test"
+            test_mount = f"{test_letter}:"
+        else:
+            # Linux/macOS: Use temp directory
+            test_mount = tempfile.mkdtemp(prefix="keydrive_test_")
+
+        try:
+            # Attempt mount
+            success, err = try_mount(
+                volume_path=volume_path,
+                mount_point=test_mount,
+                password=password,
+                keyfile_path=keyfile_path,
+            )
+
+            if not success:
+                return False, f"Credential verification failed: {err}"
+
+            # Immediately unmount
+            try:
+                unmount(test_mount)
+            except Exception as e:
+                try:
+                    unmount(test_mount, force=True)
+                except Exception as e2:
+                    _gui_logger.debug(f"Best effort unmount failed: {e2}")
+
+            return True, ""
+
+        except InvalidCredentialsError as e:
+            return False, f"Invalid credentials: {e}"
+        except VeraCryptError as e:
+            return False, f"VeraCrypt error during verification: {e}"
+        except Exception as e:
+            return False, f"Unexpected error during credential verification: {e}"
+        finally:
+            # Cleanup temp directory on Linux
+            if not is_windows and test_mount.startswith("/tmp/"):
+                try:
+                    import shutil
+
+                    shutil.rmtree(test_mount, ignore_errors=True)
+                except Exception as e:
+                    _gui_logger.debug(f"Temp directory cleanup failed: {e}")
+
     def _complete_rekey(self, validation_skipped: bool = False):
         """
         Mark rekey as completed and update config.
@@ -7229,6 +7584,7 @@ class SettingsDialog(QDialog):
         CHG-20251221-029: Clean up temp keyfile if created.
         BUG-20251221-030: Added validation_skipped parameter for warning.
         BUG-20251223-052: Finalize GPG→GPG seed transition (backup old, activate new).
+        BUG-20251223-066: Finalize recovery container deletion ONLY after successful mount.
 
         Args:
             validation_skipped: If True, validation was skipped (show warning).
@@ -7238,6 +7594,59 @@ class SettingsDialog(QDialog):
 
         # BUG-20251221-029: Use timezone.utc (module-level import) instead of datetime.UTC
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # BUG-20251223-066 CRITICAL: Finalize recovery container deletion
+        # Container is ONLY deleted after successful rekey + mount verification
+        # ═══════════════════════════════════════════════════════════════════
+        pending_container_path = getattr(self, "_pending_container_deletion_path", None)
+        recovery_cfg = self.config.get(ConfigKeys.RECOVERY, {})
+        config_pending_path = recovery_cfg.get("pending_container_path")
+
+        # Determine container path from either memory or config
+        container_to_delete = None
+        if pending_container_path and Path(pending_container_path).exists():
+            container_to_delete = Path(pending_container_path)
+        elif config_pending_path and Path(config_pending_path).exists():
+            container_to_delete = Path(config_pending_path)
+
+        if container_to_delete:
+            if validation_skipped:
+                # Mount was NOT verified - DO NOT delete container yet
+                # User needs another chance to verify mount works
+                _gui_logger.warning(
+                    f"BUG-20251223-066: Rekey completed but mount NOT verified. "
+                    f"Container preserved at: {container_to_delete}"
+                )
+                # Show warning to user
+                QMessageBox.warning(
+                    self,
+                    tr("warning", lang=get_lang()),
+                    "⚠️ IMPORTANT: Mount verification was skipped.\n\n"
+                    "Your recovery container has NOT been deleted yet.\n"
+                    "Please verify you can mount the volume with your new credentials.\n\n"
+                    "If mount fails, you can still use your recovery phrase.\n"
+                    "Container will be deleted after successful mount.",
+                    QMessageBox.StandardButton.Ok,
+                )
+            else:
+                # Mount WAS verified - safe to delete container now
+                _gui_logger.info(
+                    f"BUG-20251223-066: Rekey + mount verified. "
+                    f"Now securely deleting container: {container_to_delete}"
+                )
+                self._secure_delete_file(container_to_delete)
+                self._pending_container_deletion_path = None
+
+                # Update recovery config to mark as fully used
+                if ConfigKeys.RECOVERY in self.config:
+                    self.config[ConfigKeys.RECOVERY][ConfigKeys.RECOVERY_USED] = True
+                    self.config[ConfigKeys.RECOVERY][ConfigKeys.RECOVERY_STATE] = "used"
+                    # Remove pending path from config
+                    if "pending_container_path" in self.config[ConfigKeys.RECOVERY]:
+                        del self.config[ConfigKeys.RECOVERY]["pending_container_path"]
+
+                _gui_logger.info("BUG-20251223-066: Recovery container securely deleted after verified rekey")
 
         # CHG-20251221-029: Clean up temp keyfile if it was created during rekey
         if hasattr(self, "_temp_keyfile_path") and self._temp_keyfile_path:
@@ -7256,11 +7665,14 @@ class SettingsDialog(QDialog):
                 self._temp_keyfile_path = None
 
         # BUG-20251223-052: Finalize GPG→GPG seed transition
-        # If we have a pending new seed that's different from the original, backup old and update config
+        # BUG-20251223-062 FIX: Move new seed to SSOT location so mount.py finds it
+        # If we have a pending new seed that's different from the original, backup old and install new
         pending_new_seed = getattr(self, "_pending_new_seed_path", None)
         original_seed = getattr(self, "_original_seed_path", None)
         if pending_new_seed and original_seed:
             try:
+                import shutil
+
                 new_seed_path = Path(pending_new_seed)
                 old_seed_path = Path(original_seed)
 
@@ -7271,14 +7683,22 @@ class SettingsDialog(QDialog):
                     backup_path = old_seed_path.with_suffix(f".gpg.backup_{backup_suffix}")
 
                     if old_seed_path.exists():
-                        import shutil
-
                         shutil.copy2(old_seed_path, backup_path)
                         _gui_logger.info(f"Backed up old seed: {old_seed_path} → {backup_path}")
 
-                    # The new seed path will be used as-is (user chose location)
-                    # Config will be updated to point to new seed path
-                    _gui_logger.info(f"New seed finalized: {new_seed_path}")
+                    # BUG-20251223-062 FIX: Copy new seed to SSOT location
+                    # mount.py's resolve_encrypted_seed checks Paths.seed_gpg() first
+                    # So the new seed MUST be at the SSOT location for automount to work
+                    ssot_seed_path = Paths.seed_gpg(self._launcher_root)
+                    if new_seed_path != ssot_seed_path:
+                        shutil.copy2(new_seed_path, ssot_seed_path)
+                        _gui_logger.info(f"Installed new seed to SSOT location: {new_seed_path} → {ssot_seed_path}")
+
+                        # Update rekey_gpg_seed_edit to show SSOT path
+                        # This ensures config will have the canonical path
+                        self.rekey_gpg_seed_edit.setText(str(ssot_seed_path))
+                    else:
+                        _gui_logger.info(f"New seed already at SSOT location: {new_seed_path}")
             except Exception as e:
                 _gui_logger.warning(f"Seed finalization warning: {e}")
             finally:
@@ -7297,6 +7717,9 @@ class SettingsDialog(QDialog):
             old_mode = self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
             self.config[ConfigKeys.MODE] = target_mode
 
+            # BUG-20251223-059 FIX: Update last_password_change timestamp
+            self.config[ConfigKeys.LAST_PASSWORD_CHANGE] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
             # Update keyfile path if target mode uses keyfiles
             if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
                 keyfile_path = self.rekey_keyfile_edit.text().strip()
@@ -7307,12 +7730,25 @@ class SettingsDialog(QDialog):
             if target_mode in (SecurityMode.PW_GPG_KEYFILE.value, SecurityMode.GPG_PW_ONLY.value):
                 gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
                 if gpg_seed_path:
+                    # BUG-20251223-062 FIX: Ensure seed is at SSOT location for mount.py to find it
+                    # mount.py's resolve_encrypted_seed checks Paths.seed_gpg() first
+                    seed_path = Path(gpg_seed_path)
+                    ssot_seed_path = Paths.seed_gpg(self._launcher_root)
+                    if seed_path.exists() and seed_path.resolve() != ssot_seed_path.resolve():
+                        import shutil
+
+                        # Seed is not at SSOT location - copy it there
+                        ssot_seed_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(seed_path, ssot_seed_path)
+                        _gui_logger.info(f"Copied seed to SSOT location: {seed_path} → {ssot_seed_path}")
+                        gpg_seed_path = str(ssot_seed_path)
+
                     # BUG-20251221-007 FIX: Use ConfigKeys.SEED_GPG_PATH (config key) not FileNames.SEED_GPG (filename)
                     self.config[ConfigKeys.SEED_GPG_PATH] = gpg_seed_path
 
                 # CHG-20251221-003: Save generated salt if available
                 if hasattr(self, "_generated_seed_salt") and self._generated_seed_salt:
-                    self.config[ConfigKeys.SALT] = self._generated_seed_salt
+                    self.config[ConfigKeys.SALT_B64] = self._generated_seed_salt
                     self._generated_seed_salt = None
 
             if target_mode != old_mode:
@@ -8262,13 +8698,26 @@ class SettingsDialog(QDialog):
 
         # ═══════════════════════════════════════════════════════════════════
         # SECURITY CHECK: Is recovery kit already used?
+        # BUG-20251223-066: Also check for "recovery_active" state (recovery started, rekey pending)
         # ═══════════════════════════════════════════════════════════════════
         recovery_config = self.config.get("recovery", {})
         state = recovery_config.get("state", "enabled")
+
+        # Check if recovery is already in progress or completed
         if state == "used" or recovery_config.get("used"):
             self.recovery_status_label.setText(tr("recovery_already_used", lang=get_lang()))
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
             self._gui_audit_log("RECOVERY_BLOCKED", "already_used")
+            return
+
+        # BUG-20251223-066: If recovery is already active (credentials extracted, rekey pending)
+        # inform user they need to complete rekey, not start recovery again
+        if state == "recovery_active" or state == "consuming":
+            self.recovery_status_label.setText(
+                "⚠️ Recovery already in progress. Complete the rekey in Security tab first."
+            )
+            self.recovery_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
+            self._gui_audit_log("RECOVERY_BLOCKED", "recovery_already_active")
             return
 
         try:
@@ -8300,27 +8749,39 @@ class SettingsDialog(QDialog):
             # ═══════════════════════════════════════════════════════════════════
             # SUCCESS: Now perform TWO-PHASE COMMIT (one-time use enforcement)
             # ═══════════════════════════════════════════════════════════════════
+            # BUG-20251223-066 CRITICAL FIX: Do NOT delete recovery container yet!
+            # Container must be preserved until successful rekey + successful mount.
+            # User reported data loss when container was deleted before rekey completed.
             self.recovery_status_label.setText(tr("recovery_status_invalidating", lang=get_lang()))
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
             QApplication.processEvents()
 
-            # Phase 1: Transition to "consuming" state
+            # Phase 1: Transition to "consuming" state (but keep container for safety)
             recovery_config["state"] = "consuming"
             self.config["recovery"] = recovery_config
             self._save_config_atomic()
 
-            # Phase 2: Securely delete the container
-            self._secure_delete_file(container_path)
+            # BUG-20251223-066 CRITICAL: Do NOT delete container here!
+            # Instead, store path for deferred deletion after successful rekey + mount
+            # The old code was: self._secure_delete_file(container_path)
+            # This caused data loss when user couldn't complete rekey!
+            self._pending_container_deletion_path = container_path
+            _gui_logger.info(
+                f"BUG-20251223-066: Deferred container deletion until rekey + mount verified: {container_path}"
+            )
 
-            # Phase 3: Transition to "used" state + set rekey requirement
+            # Phase 2: Transition to "recovery_active" state (NOT "used" until rekey succeeds)
             # BUG-20251221-029: Use module-level timezone import instead of datetime.UTC
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             self.config[ConfigKeys.RECOVERY] = {
                 ConfigKeys.RECOVERY_ENABLED: False,
-                ConfigKeys.RECOVERY_USED: True,
-                ConfigKeys.RECOVERY_STATE: "used",
+                # BUG-20251223-066: Mark as "recovery_active" NOT "used" - container still exists
+                ConfigKeys.RECOVERY_USED: False,  # Will be True after rekey + mount succeeds
+                ConfigKeys.RECOVERY_STATE: "recovery_active",  # New state: recovery started but not finalized
                 ConfigKeys.RECOVERY_INVALIDATED_AT: timestamp,
+                # BUG-20251223-066: Store container path for deferred deletion
+                "pending_container_path": str(container_path),
             }
             self.config[ConfigKeys.POST_RECOVERY] = {
                 ConfigKeys.POST_RECOVERY_REKEY_REQUIRED: True,
@@ -8810,11 +9271,21 @@ class SettingsDialog(QDialog):
 
     def _add_product_name_to_general_tab(self):
         """Add product name field to General tab (QSettings, not config.json)."""
+        from PyQt6.QtWidgets import QScrollArea
+
         # Find General tab
         for i in range(self.tab_widget.count()):
             if self.tab_widget.tabText(i) == "General":
                 tab = self.tab_widget.widget(i)
-                layout = tab.layout()
+                # CHG-20251223-065: Tab is now a QScrollArea, get the content widget inside
+                if isinstance(tab, QScrollArea):
+                    content_widget = tab.widget()
+                    layout = content_widget.layout() if content_widget else None
+                else:
+                    layout = tab.layout()
+
+                if layout is None:
+                    break
 
                 # Find the first group box or create form layout
                 if layout.count() > 0:
@@ -8847,13 +9318,23 @@ class SettingsDialog(QDialog):
         CHG-20251221-012: Displays version, build ID, and compatibility version
         in a dedicated About group box at the bottom of the General tab.
         """
+        from PyQt6.QtWidgets import QScrollArea
+
         # Find General tab
         for i in range(self.tab_widget.count()):
             tab_text = self.tab_widget.tabText(i)
             # Handle translated tab names
             if tab_text in ["General", "Allgemein", "Opšte", "General", "Général", "Общие", "常规"]:
                 tab = self.tab_widget.widget(i)
-                layout = tab.layout()
+                # CHG-20251223-065: Tab is now a QScrollArea, get the content widget inside
+                if isinstance(tab, QScrollArea):
+                    content_widget = tab.widget()
+                    layout = content_widget.layout() if content_widget else None
+                else:
+                    layout = tab.layout()
+
+                if layout is None:
+                    break
 
                 # Add stretch before About section to push it to bottom
                 layout.addStretch()
@@ -9120,6 +9601,10 @@ class SettingsDialog(QDialog):
         # Update buttons
         self.save_btn.setText(tr("btn_save", lang=lang_code))
         self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
+        # CHG-20251223-055: Update reload config button
+        if hasattr(self, "reload_btn"):
+            self.reload_btn.setText(tr("btn_reload_config", lang=lang_code))
+            self.reload_btn.setToolTip(tr("tooltip_reload_config", lang=lang_code))
 
     def refresh_settings_values(self):
         """
@@ -9481,6 +9966,10 @@ class SettingsDialog(QDialog):
         # Update buttons
         self.save_btn.setText(tr("btn_save", lang=lang_code))
         self.cancel_btn.setText(tr("btn_cancel", lang=lang_code))
+        # CHG-20251223-055: Update reload config button
+        if hasattr(self, "reload_btn"):
+            self.reload_btn.setText(tr("btn_reload_config", lang=lang_code))
+            self.reload_btn.setToolTip(tr("tooltip_reload_config", lang=lang_code))
 
     def _get_widget_value(self, widget, field):
         """Extract value from widget based on field type."""

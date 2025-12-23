@@ -46,6 +46,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Save",
         "btn_cancel": "Cancel",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Reload Config",
+        "tooltip_reload_config": "Reload configuration from disk (discards unsaved changes)",
         # Status messages
         "status_config_not_found": "Configuration not found",
         "status_volume_mounted": "Volume mounted",
@@ -87,6 +90,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Recovery Kit",
         "menu_about": "ℹ️ About",
         "menu_cli": "💻 Open CLI",
+        "menu_exit": "⏻ Exit",
         "menu_clear_keyfiles": "Clear Keyfiles",
         "menu_switch_drive": "🔀 Switch Drive...",
         "menu_switch_drive_browse": "📂 Browse...",
@@ -328,6 +332,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Change your VeraCrypt volume password and/or keyfile. This will open VeraCrypt GUI to perform the actual credential change.",
         "rekey_post_recovery_notice": "⚠️ REKEY REQUIRED: Your credentials were exposed during recovery. You must change them now.",
         "btn_start_rekey": "🔑 Start Credential Change",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Verify New Credentials",
+        "btn_cancel_rekey": "✕ Cancel",
+        "rekey_instructions_veracrypt": "VeraCrypt GUI opened. In VeraCrypt:\n1. Tools → Change Volume Password\n2. Select Device → choose your volume\n3. Enter current password (use 'Copy Old Password' above)\n4. Enter new password (use 'Copy New Password' above)\n5. Click OK to apply\n\nAfter VeraCrypt confirms success, click 'Verify New Credentials' below.",
+        "rekey_verifying": "Verifying new credentials via mount test...",
+        "rekey_verification_success": "✓ New credentials verified! Finalizing rekey...",
+        "rekey_verification_failed": "✕ Credential verification failed. Please check your new password/keyfile.",
+        "rekey_cancelled": "Credential change cancelled.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity on old vs new credentials
         "btn_copy_old_password": "📋 Copy Old Password",
@@ -501,6 +513,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Speichern",
         "btn_cancel": "Abbrechen",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Konfig neu laden",
+        "tooltip_reload_config": "Konfiguration von Festplatte neu laden (verwirft ungespeicherte Änderungen)",
         # Status messages
         "status_config_not_found": "Konfiguration nicht gefunden",
         "status_volume_mounted": "Volume eingebunden",
@@ -542,6 +557,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Wiederherstellungs-Kit",
         "menu_about": "ℹ️ Über",
         "menu_cli": "💻 CLI öffnen",
+        "menu_exit": "⏻ Beenden",
         "menu_clear_keyfiles": "Schlüsseldateien löschen",
         "menu_switch_drive": "🔀 Laufwerk wechseln...",
         "menu_switch_drive_browse": "📂 Durchsuchen...",
@@ -711,6 +727,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Ändern Sie Ihr VeraCrypt-Volume-Passwort und/oder Schlüsseldatei. Dies öffnet die VeraCrypt-GUI für die eigentliche Änderung.",
         "rekey_post_recovery_notice": "⚠️ ÄNDERUNG ERFORDERLICH: Ihre Zugangsdaten wurden während der Wiederherstellung offengelegt. Sie müssen sie jetzt ändern.",
         "btn_start_rekey": "🔑 Zugangsdaten-Änderung starten",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Neue Zugangsdaten verifizieren",
+        "btn_cancel_rekey": "✕ Abbrechen",
+        "rekey_instructions_veracrypt": "VeraCrypt-GUI geöffnet. In VeraCrypt:\n1. Tools → Volume-Passwort ändern\n2. Gerät auswählen → Ihr Volume wählen\n3. Aktuelles Passwort eingeben ('Altes Passwort kopieren' oben)\n4. Neues Passwort eingeben ('Neues Passwort kopieren' oben)\n5. OK klicken\n\nNach Bestätigung in VeraCrypt, 'Neue Zugangsdaten verifizieren' klicken.",
+        "rekey_verifying": "Verifiziere neue Zugangsdaten via Mount-Test...",
+        "rekey_verification_success": "✓ Neue Zugangsdaten verifiziert! Rekey wird abgeschlossen...",
+        "rekey_verification_failed": "✕ Verifizierung fehlgeschlagen. Bitte prüfen Sie Ihr neues Passwort/Schlüsseldatei.",
+        "rekey_cancelled": "Zugangsdaten-Änderung abgebrochen.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 Altes Passwort kopieren",
@@ -956,6 +980,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Sačuvaj",
         "btn_cancel": "Otkaži",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Ponovo učitaj",
+        "tooltip_reload_config": "Ponovo učitaj konfiguraciju s diska (odbacuje nesačuvane promjene)",
         # Status messages
         "status_config_not_found": "Konfiguracija nije pronađena",
         "status_volume_mounted": "Volumen montiran",
@@ -997,6 +1024,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Paket za oporavak",
         "menu_about": "ℹ️ O programu",
         "menu_cli": "💻 Otvori CLI",
+        "menu_exit": "⏻ Izlaz",
         "menu_clear_keyfiles": "Očisti datoteke ključa",
         "menu_switch_drive": "🔀 Promijeni disk...",
         "menu_switch_drive_browse": "📂 Pregledaj...",
@@ -1166,6 +1194,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Promijenite lozinku i/ili datoteku ključa za VeraCrypt volumen. Ovo će otvoriti VeraCrypt GUI za stvarnu promjenu.",
         "rekey_post_recovery_notice": "⚠️ PROMJENA POTREBNA: Vaši pristupni podaci su otkriveni tijekom oporavka. Morate ih promijeniti sada.",
         "btn_start_rekey": "🔑 Započni promjenu pristupnih podataka",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Verificiraj nove pristupne podatke",
+        "btn_cancel_rekey": "✕ Otkaži",
+        "rekey_instructions_veracrypt": "VeraCrypt GUI otvoren. U VeraCryptu:\n1. Tools → Promijeni lozinku volumena\n2. Odaberi uređaj → izaberite svoj volumen\n3. Unesite trenutnu lozinku ('Kopiraj staru lozinku' gore)\n4. Unesite novu lozinku ('Kopiraj novu lozinku' gore)\n5. Kliknite OK\n\nNakon potvrde u VeraCryptu, kliknite 'Verificiraj nove pristupne podatke'.",
+        "rekey_verifying": "Verificiram nove pristupne podatke putem mount testa...",
+        "rekey_verification_success": "✓ Novi pristupni podaci verificirani! Završavam rekey...",
+        "rekey_verification_failed": "✕ Verifikacija neuspjela. Provjerite novu lozinku/datoteku ključa.",
+        "rekey_cancelled": "Promjena pristupnih podataka otkazana.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 Kopiraj staru lozinku",
@@ -1410,6 +1446,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Guardar",
         "btn_cancel": "Cancelar",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Recargar config",
+        "tooltip_reload_config": "Recargar configuración desde disco (descarta cambios no guardados)",
         # Status messages
         "status_config_not_found": "Configuración no encontrada",
         "status_volume_mounted": "Volumen montado",
@@ -1451,6 +1490,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Kit de recuperación",
         "menu_about": "ℹ️ Acerca de",
         "menu_cli": "💻 Abrir CLI",
+        "menu_exit": "⏻ Salir",
         "menu_clear_keyfiles": "Borrar archivos de clave",
         "menu_switch_drive": "🔀 Cambiar unidad...",
         "menu_switch_drive_browse": "📂 Examinar...",
@@ -1614,6 +1654,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Cambia la contraseña de tu contenedor VeraCrypt y/o archivos de clave.",
         "rekey_post_recovery_notice": "⚠️ POST-RECUPERACIÓN: Debes cambiar las credenciales antes de que el montaje sea permitido.",
         "btn_start_rekey": "Iniciar cambio de credenciales...",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Verificar nuevas credenciales",
+        "btn_cancel_rekey": "✕ Cancelar",
+        "rekey_instructions_veracrypt": "GUI de VeraCrypt abierto. En VeraCrypt:\n1. Herramientas → Cambiar contraseña del volumen\n2. Seleccionar dispositivo → elige tu volumen\n3. Ingresa contraseña actual ('Copiar contraseña anterior' arriba)\n4. Ingresa nueva contraseña ('Copiar contraseña nueva' arriba)\n5. Haz clic en OK\n\nDespués de confirmar en VeraCrypt, haz clic en 'Verificar nuevas credenciales'.",
+        "rekey_verifying": "Verificando nuevas credenciales mediante prueba de montaje...",
+        "rekey_verification_success": "✓ ¡Nuevas credenciales verificadas! Finalizando rekey...",
+        "rekey_verification_failed": "✕ Verificación fallida. Verifica tu nueva contraseña/archivo de clave.",
+        "rekey_cancelled": "Cambio de credenciales cancelado.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 Copiar contraseña anterior",
@@ -1856,6 +1904,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Enregistrer",
         "btn_cancel": "Annuler",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Recharger config",
+        "tooltip_reload_config": "Recharger la configuration depuis le disque (annule les modifications non enregistrées)",
         # Status messages
         "status_config_not_found": "Configuration introuvable",
         "status_volume_mounted": "Volume monté",
@@ -1897,6 +1948,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Kit de récupération",
         "menu_about": "ℹ️ À propos",
         "menu_cli": "💻 Ouvrir la CLI",
+        "menu_exit": "⏻ Quitter",
         "menu_clear_keyfiles": "Effacer les fichiers clés",
         "menu_switch_drive": "🔀 Changer de lecteur...",
         "menu_switch_drive_browse": "📂 Parcourir...",
@@ -2060,6 +2112,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Changez le mot de passe de votre conteneur VeraCrypt et/ou les fichiers clé.",
         "rekey_post_recovery_notice": "⚠️ POST-RÉCUPÉRATION : Vous devez changer les identifiants avant que le montage soit autorisé.",
         "btn_start_rekey": "Démarrer le changement d'identifiants...",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Vérifier nouveaux identifiants",
+        "btn_cancel_rekey": "✕ Annuler",
+        "rekey_instructions_veracrypt": "GUI VeraCrypt ouvert. Dans VeraCrypt :\n1. Outils → Changer le mot de passe du volume\n2. Sélectionner appareil → choisissez votre volume\n3. Entrez mot de passe actuel ('Copier ancien mot de passe' ci-dessus)\n4. Entrez nouveau mot de passe ('Copier nouveau mot de passe' ci-dessus)\n5. Cliquez OK\n\nAprès confirmation dans VeraCrypt, cliquez 'Vérifier nouveaux identifiants'.",
+        "rekey_verifying": "Vérification des nouveaux identifiants via test de montage...",
+        "rekey_verification_success": "✓ Nouveaux identifiants vérifiés ! Finalisation du rekey...",
+        "rekey_verification_failed": "✕ Vérification échouée. Vérifiez votre nouveau mot de passe/fichier clé.",
+        "rekey_cancelled": "Changement d'identifiants annulé.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 Copier ancien mot de passe",
@@ -2302,6 +2362,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "Сохранить",
         "btn_cancel": "Отмена",
         "btn_ok": "OK",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ Перезагрузить",
+        "tooltip_reload_config": "Перезагрузить конфигурацию с диска (отменяет несохранённые изменения)",
         # Status messages
         "status_config_not_found": "Конфигурация не найдена",
         "status_volume_mounted": "Том смонтирован",
@@ -2343,6 +2406,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 Набор восстановления",
         "menu_about": "ℹ️ О программе",
         "menu_cli": "💻 Открыть CLI",
+        "menu_exit": "⏻ Выход",
         "menu_clear_keyfiles": "Очистить ключевые файлы",
         "menu_switch_drive": "🔀 Сменить диск...",
         "menu_switch_drive_browse": "📂 Обзор...",
@@ -2506,6 +2570,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "Смените пароль контейнера VeraCrypt и/или ключевые файлы.",
         "rekey_post_recovery_notice": "⚠️ ПОСТ-ВОССТАНОВЛЕНИЕ: Вы должны сменить учётные данные, прежде чем монтирование будет разрешено.",
         "btn_start_rekey": "Начать смену учётных данных...",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ Проверить новые учётные данные",
+        "btn_cancel_rekey": "✕ Отмена",
+        "rekey_instructions_veracrypt": "VeraCrypt GUI открыт. В VeraCrypt:\n1. Сервис → Изменить пароль тома\n2. Выбрать устройство → выберите ваш том\n3. Введите текущий пароль ('Скопировать старый пароль' выше)\n4. Введите новый пароль ('Скопировать новый пароль' выше)\n5. Нажмите OK\n\nПосле подтверждения в VeraCrypt нажмите 'Проверить новые учётные данные'.",
+        "rekey_verifying": "Проверка новых учётных данных через тест монтирования...",
+        "rekey_verification_success": "✓ Новые учётные данные проверены! Завершение rekey...",
+        "rekey_verification_failed": "✕ Проверка не удалась. Проверьте новый пароль/ключевой файл.",
+        "rekey_cancelled": "Смена учётных данных отменена.",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 Скопировать старый пароль",
@@ -2748,6 +2820,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_save": "保存",
         "btn_cancel": "取消",
         "btn_ok": "确定",
+        # CHG-20251223-055: Reload config button for non-modal settings
+        "btn_reload_config": "↻ 重新加载配置",
+        "tooltip_reload_config": "从磁盘重新加载配置（放弃未保存的更改）",
         # Status messages
         "status_config_not_found": "未找到配置",
         "status_volume_mounted": "卷已挂载",
@@ -2789,6 +2864,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "menu_recovery": "💾 恢复工具包",
         "menu_about": "ℹ️ 关于",
         "menu_cli": "💻 打开 CLI",
+        "menu_exit": "⏻ 退出",
         "menu_clear_keyfiles": "清除密钥文件",
         "menu_switch_drive": "🔀 切换驱动器...",
         "menu_switch_drive_browse": "📂 浏览...",
@@ -2952,6 +3028,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "rekey_instructions": "更改您的 VeraCrypt 容器密码和/或密钥文件。",
         "rekey_post_recovery_notice": "⚠️ 恢复后：您必须更改凭证才能允许挂载。",
         "btn_start_rekey": "开始更改凭证...",
+        # CHG-20251223-054: Verify/Cancel buttons for streamlined rekey flow
+        "btn_verify_rekey": "✓ 验证新凭证",
+        "btn_cancel_rekey": "✕ 取消",
+        "rekey_instructions_veracrypt": "VeraCrypt GUI 已打开。在 VeraCrypt 中：\n1. 工具 → 更改卷密码\n2. 选择设备 → 选择您的卷\n3. 输入当前密码（使用上面的「复制旧密码」）\n4. 输入新密码（使用上面的「复制新密码」）\n5. 点击确定\n\n在 VeraCrypt 确认后，点击「验证新凭证」。",
+        "rekey_verifying": "通过挂载测试验证新凭证...",
+        "rekey_verification_success": "✓ 新凭证已验证！正在完成密钥更换...",
+        "rekey_verification_failed": "✕ 验证失败。请检查您的新密码/密钥文件。",
+        "rekey_cancelled": "凭证更改已取消。",
         # BUG-20251221-039: Copy credential buttons
         # CHG-20251222-018: Enhanced tooltips for clarity
         "btn_copy_old_password": "📋 复制旧密码",

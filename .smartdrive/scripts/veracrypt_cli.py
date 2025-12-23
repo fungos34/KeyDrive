@@ -1147,7 +1147,14 @@ def export_header(
         cmd.append("/backup-headers")
         cmd.append("/quit")  # Required on Windows to prevent GUI prompts
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_MOUNT)
+        # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup on error
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_MOUNT,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         returncode = result.returncode
         stdout = result.stdout
         stderr = result.stderr
@@ -1232,6 +1239,10 @@ def restore_header(
 
     Use this when volume header is corrupted but data is intact.
 
+    BUG-20251223-067 FIX: Windows VeraCrypt CLI uses /flag syntax (e.g., /restore-headers),
+    NOT --flag syntax. Using Unix-style flags on Windows causes "syntax error in
+    command line" popup from VeraCrypt.
+
     SECURITY: On Linux, password is passed via stdin. On Windows,
               command line is used (VeraCrypt limitation).
 
@@ -1259,27 +1270,43 @@ def restore_header(
 
     is_windows = platform.system().lower() == "windows"
 
-    # Build command
-    cmd = [str(vc_exe), "--text"]
-
+    # BUG-20251223-067: Use platform-specific flag syntax
     if is_windows:
-        cmd.extend(["--password", password])
+        # Windows: /restore-headers /volume /password /quit /silent (DOS-style)
+        cmd = [
+            str(vc_exe),
+            "/restore-headers",
+            str(header_backup_path),
+            "/volume",
+            volume_path,
+            "/password",
+            password,
+            "/quit",
+            "/silent",
+        ]
+        if keyfile_path:
+            cmd.extend(["/keyfile", str(keyfile_path)])
+        if use_pim and pim_value > 0:
+            cmd.extend(["/pim", str(pim_value)])
     else:
-        cmd.append("--stdin")
-        cmd.append("--non-interactive")
-
-    if keyfile_path:
-        cmd.extend(["--keyfiles", str(keyfile_path)])
-
-    if use_pim and pim_value > 0:
-        cmd.extend(["--pim", str(pim_value)])
-
-    # Restore command
-    cmd.extend(["--restore-headers", str(header_backup_path), volume_path])
+        # Unix: --text --stdin --non-interactive --restore-headers (GNU-style)
+        cmd = [str(vc_exe), "--text", "--stdin", "--non-interactive"]
+        if keyfile_path:
+            cmd.extend(["--keyfiles", str(keyfile_path)])
+        if use_pim and pim_value > 0:
+            cmd.extend(["--pim", str(pim_value)])
+        cmd.extend(["--restore-headers", str(header_backup_path), volume_path])
 
     # Run command
     if is_windows:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_MOUNT)
+        # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup on error
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_MOUNT,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         returncode = result.returncode
         stderr = result.stderr
         stdout = result.stdout
@@ -1323,6 +1350,10 @@ def try_mount(
               On Windows, VeraCrypt does not support stdin - password is passed via
               command line argument which is a known limitation.
 
+    BUG-20251223-067 FIX: Windows VeraCrypt CLI uses /flag syntax (e.g., /volume, /password),
+    NOT --flag syntax. Using Unix-style flags on Windows causes "syntax error in
+    command line" popup from VeraCrypt.
+
     Args:
         volume_path: Path to VeraCrypt volume
         mount_point: Where to mount (drive letter on Windows, path on Linux)
@@ -1347,33 +1378,51 @@ def try_mount(
 
     is_windows = platform.system().lower() == "windows"
 
-    # Build command
-    cmd = [str(vc_exe), "--text"]
-
+    # BUG-20251223-067: Use platform-specific flag syntax
+    # Windows: /volume /letter /password /quit /silent (DOS-style)
+    # Unix: --text --stdin --non-interactive (GNU-style)
     if is_windows:
-        # Windows: Must use command line arg (no stdin support)
-        # This is a known VeraCrypt limitation on Windows
-        cmd.extend(["--password", password])
+        # Windows VeraCrypt CLI syntax (per setup.py build_veracrypt_mount_cmd_windows)
+        # Normalize mount point: "V:" or "V" -> "V"
+        letter = mount_point.rstrip(":").upper()
+        cmd = [
+            str(vc_exe),
+            "/volume",
+            volume_path,
+            "/letter",
+            letter,
+            "/password",
+            password,
+            "/quit",
+            "/silent",
+        ]
+        if keyfile_path:
+            cmd.extend(["/keyfile", str(keyfile_path)])
+        if use_pim and pim_value > 0:
+            cmd.extend(["/pim", str(pim_value)])
+        # Note: read_only not directly supported in Windows syntax; /ro may work on some versions
     else:
-        # Linux/macOS: Use stdin for password (more secure)
-        cmd.append("--stdin")
-        cmd.append("--non-interactive")
-
-    if keyfile_path:
-        cmd.extend(["--keyfiles", str(keyfile_path)])
-
-    if use_pim and pim_value > 0:
-        cmd.extend(["--pim", str(pim_value)])
-
-    if read_only:
-        cmd.append("--mount-options=readonly")
-
-    # Mount command
-    cmd.extend([volume_path, mount_point])
+        # Linux/macOS: Use --flag syntax with stdin for password (more secure)
+        cmd = [str(vc_exe), "--text", "--stdin", "--non-interactive"]
+        if keyfile_path:
+            cmd.extend(["--keyfiles", str(keyfile_path)])
+        if use_pim and pim_value > 0:
+            cmd.extend(["--pim", str(pim_value)])
+        if read_only:
+            cmd.append("--mount-options=readonly")
+        # Mount command: volume path and mount point
+        cmd.extend([volume_path, mount_point])
 
     # Run command
     if is_windows:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_LONG)
+        # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup on error
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_LONG,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         returncode = result.returncode
         stdout = result.stdout
         stderr = result.stderr
@@ -1425,6 +1474,10 @@ def unmount(mount_point: str, force: bool = False) -> bool:
     """
     Unmount VeraCrypt volume.
 
+    BUG-20251223-067 FIX: Windows VeraCrypt CLI uses /flag syntax (e.g., /dismount),
+    NOT --flag syntax. Using Unix-style flags on Windows causes "syntax error in
+    command line" popup from VeraCrypt.
+
     Args:
         mount_point: Mount point or volume path
         force: Force unmount even if in use
@@ -1440,12 +1493,31 @@ def unmount(mount_point: str, force: bool = False) -> bool:
     if not vc_exe:
         raise VeraCryptError("VeraCrypt not found in PATH or standard installation locations")
 
-    cmd = [str(vc_exe), "--text", "--dismount", mount_point]
+    # BUG-20251223-067: Use platform-specific flag syntax
+    is_windows = platform.system().lower() == "windows"
+    if is_windows:
+        # Windows: /dismount /letter X /quit /silent (or /d X /q /s)
+        # Normalize mount point: "V:" or "V" -> "V"
+        letter = mount_point.rstrip(":").upper() if len(mount_point) <= 2 else mount_point
+        cmd = [str(vc_exe), "/dismount", letter, "/quit", "/silent"]
+        if force:
+            cmd.append("/force")
+    else:
+        # Unix: --text --dismount mount_point
+        cmd = [str(vc_exe), "--text", "--dismount", mount_point]
+        if force:
+            cmd.append("--force")
 
-    if force:
-        cmd.append("--force")
+    # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup on error
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+        "timeout": TIMEOUT_MOUNT,
+    }
+    if platform.system().lower() == "windows":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_MOUNT)
+    result = subprocess.run(cmd, **kwargs)
 
     if result.returncode != 0:
         error_msg = result.stderr or result.stdout
@@ -1462,6 +1534,9 @@ def get_mount_status(mount_point: str) -> bool:
     """
     Check if volume is mounted at given mount point.
 
+    BUG-20251223-067 FIX: Windows VeraCrypt CLI uses /flag syntax.
+    On Windows, use /l (list) instead of --list.
+
     Returns:
         True if mounted, False otherwise
     """
@@ -1469,12 +1544,26 @@ def get_mount_status(mount_point: str) -> bool:
         return False
 
     try:
-        result = subprocess.run(
-            ["veracrypt", "--text", "--list"],
-            capture_output=True,
-            text=True,
-            timeout=Limits.GPG_CARD_STATUS_TIMEOUT,  # 10 second timeout
-        )
+        # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": Limits.GPG_CARD_STATUS_TIMEOUT,  # 10 second timeout
+        }
+
+        # BUG-20251223-067: Use platform-specific flag syntax
+        is_windows = platform.system().lower() == "windows"
+        vc_exe = get_veracrypt_exe()
+        if not vc_exe:
+            return False
+
+        if is_windows:
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            # Windows: VeraCrypt /l lists mounted volumes
+            result = subprocess.run([str(vc_exe), "/l"], **kwargs)
+        else:
+            # Unix: --text --list
+            result = subprocess.run([str(vc_exe), "--text", "--list"], **kwargs)
 
         if result.returncode == 0:
             # Check if mount_point appears in output

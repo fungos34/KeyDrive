@@ -1,28 +1,25 @@
 {
-  "schema_version": 3,
+  "schema_version": 2,
   "version": "0.0.1",
-  "drive_name": "",
+  "drive_name": null,
   "mode": "gpg_pw_only",
   "setup_date": "2025-12-23",
   "last_password_change": "2025-12-23",
   "windows": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_letter": "",
-    "veracrypt_path": "",
-    "allow_mount_fallback": true
+    "mount_letter": "P",
+    "veracrypt_path": ""
   },
   "unix": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_point": "~/veradrive",
-    "allow_mount_fallback": true
+    "mount_point": "~/veradrive"
   },
   "seed_gpg_path": "keys\\seed.gpg",
-  "kdf": "scrypt",
-  "salt_b64": "AlRhtVmopa4ReS7Z1Eug3A==",
+  "kdf": "hkdf-sha256",
+  "salt_b64": "TM2g2RBJgWELwff7e5MAIw==",
   "hkdf_info": "smartdrive-vc-pw-v1",
-  "pw_encoding": "utf-8",
+  "pw_encoding": "base64url_nopad",
   "keyfile_fingerprints": [
-    "20795EBE7248969E0A5AE9F1183999995BCBDACD",
     "AC8D308F14F53C963811B89E9FA66E6E9DDEDE55"
   ],
   "verification_overridden": false,
@@ -34,7 +31,7 @@
     "device_serial": "\u00030",
     "device_partitions": [
       {
-        "DriveLetter": "G",
+        "DriveLetter": "H",
         "Number": 1,
         "Type": "IFS",
         "Size": 4.88
@@ -46,31 +43,16 @@
         "Size": 52.74
       }
     ],
-    "launcher_partition": "G"
+    "launcher_partition": "E"
   },
   "recovery": {
     "enabled": true,
     "used": false,
     "state": "enabled",
-    "phrase_hash": "dc88aa82cc42679e",
-    "container_path": "G:\\.smartdrive\\recovery\\recovery_container.bin",
-    "header_path": "G:\\.smartdrive\\recovery\\header_backup.hdr",
+    "phrase_hash": "c9ad0d14b273eeeb",
+    "container_path": "E:\\.smartdrive\\recovery\\recovery_container.bin",
+    "header_path": "E:\\.smartdrive\\recovery\\header_backup.hdr",
     "volume_identity": "device-path-skip",
-    "created_at": "2025-12-23T11:58:06.623766Z",
-    "share_count": 5,
-    "threshold": 3
-  },
-  "drive_id": "7c300757-6d93-4d8d-92f6-4091cbb30710",
-  "lost_and_found": {
-    "enabled": false,
-    "message": ""
-  },
-  "gui_theme": "green",
-  "gui_lang": "en",
-  "keyfile": "C:\\Users\\accou\\Code\\VeraCrypt_Yubikey_2FA\\.smartdrive\\keys\\keyfile.vc",
-  "update_source_type": "local",
-  "update_url": "http://server:8000/api/update/download/latest",
-  "update_local_root": "",
-  "integrity_server_url": "http://127.0.0.1:8000/api/check",
-  "last_updated": "2025-12-23 13:45:29"
+    "created_at": "2025-12-23T21:59:13.789191Z"
+  }
 }
