@@ -320,6 +320,18 @@ SETTINGS_SCHEMA: List[SettingField] = [
         tooltip_key="tooltip_mount_letter",
         order=2,
     ),
+    # BUG-20251221-037: Mount point fallback toggle
+    SettingField(
+        key=ConfigKeys.WINDOWS_ALLOW_MOUNT_FALLBACK,
+        label_key="label_allow_mount_fallback",
+        field_type=FieldType.BOOLEAN,
+        tab="Windows",
+        group=None,
+        nested_path=[ConfigKeys.WINDOWS, ConfigKeys.ALLOW_MOUNT_FALLBACK],
+        default=True,
+        tooltip_key="tooltip_allow_mount_fallback",
+        order=3,
+    ),
     SettingField(
         key=ConfigKeys.VERACRYPT_PATH,
         label_key="label_veracrypt_path",
@@ -329,7 +341,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
         nested_path=[ConfigKeys.WINDOWS, ConfigKeys.VERACRYPT_PATH],
         placeholder=r"C:\Program Files\VeraCrypt\VeraCrypt.exe",
         tooltip_key="tooltip_veracrypt_path",
-        order=3,
+        order=4,
     ),
     # =========================================================================
     # Drive Context Display (CHG-20251221-040)
@@ -394,6 +406,18 @@ SETTINGS_SCHEMA: List[SettingField] = [
         placeholder="~/veradrive",
         tooltip_key="tooltip_mount_point",
         order=2,
+    ),
+    # BUG-20251221-037: Mount point fallback toggle
+    SettingField(
+        key=ConfigKeys.UNIX_ALLOW_MOUNT_FALLBACK,
+        label_key="label_allow_mount_fallback",
+        field_type=FieldType.BOOLEAN,
+        tab="Unix",
+        group=None,
+        nested_path=[ConfigKeys.UNIX, ConfigKeys.ALLOW_MOUNT_FALLBACK],
+        default=True,
+        tooltip_key="tooltip_allow_mount_fallback",
+        order=3,
     ),
     # =========================================================================
     # Drive Context Display (CHG-20251221-040) - Unix
@@ -541,62 +565,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
     # =========================================================================
     # Advanced Tab
     # =========================================================================
-    SettingField(
-        key=ConfigKeys.VERIFICATION_OVERRIDDEN,
-        label_key="label_verification_overridden",
-        field_type=FieldType.BOOLEAN,
-        tab="Advanced",
-        group="Verification",
-        default=False,
-        tooltip_key="tooltip_verification_overridden",
-        order=1,
-    ),
-    SettingField(
-        key=ConfigKeys.INTEGRITY_SIGNED,
-        label_key="label_integrity_signed",
-        field_type=FieldType.READONLY,
-        tab="Advanced",
-        group="Verification",
-        readonly=True,
-        tooltip_key="tooltip_integrity_signed",
-        order=2,
-    ),
-    SettingField(
-        key=ConfigKeys.SIGNING_KEY_FPR,
-        label_key="label_signing_key_fpr",
-        field_type=FieldType.READONLY,
-        tab="Advanced",
-        group="Verification",
-        readonly=True,
-        tooltip_key="tooltip_signing_key_fpr",
-        order=3,
-    ),
-    # =========================================================================
-    # Integrity Tab (CHG-20251220-002)
-    # Provides GUI access to integrity verification and signing operations
-    # =========================================================================
-    SettingField(
-        key="integrity_placeholder",
-        label_key="label_integrity_status",
-        field_type=FieldType.READONLY,
-        tab="Integrity",
-        group="Software Integrity",
-        readonly=True,
-        tooltip_key="tooltip_integrity_status",
-        order=1,
-    ),
-    # CHG-20251221-002: Remote verification server URL
-    SettingField(
-        key=ConfigKeys.INTEGRITY_SERVER_URL,
-        label_key="label_integrity_server_url",
-        field_type=FieldType.TEXT,
-        tab="Integrity",
-        group="Remote Verification",
-        placeholder=Paths.INTEGRITY_URL,
-        default=Paths.INTEGRITY_URL,
-        tooltip_key="tooltip_integrity_server_url",
-        order=10,
-    ),
+    # CHG-20251222-013: Verification/Integrity fields moved to Integrity tab
+    # for consolidation (user feedback: redundancy in settings tabs)
     SettingField(
         key=ConfigKeys.SALT_B64,
         label_key="label_salt_b64",
@@ -627,14 +597,68 @@ SETTINGS_SCHEMA: List[SettingField] = [
         readonly=True,
         order=20,
     ),
+    # CHG-20251224-001: VERSION field removed from Advanced tab
+    # Version info is shown in General → About section to avoid redundancy
+    # User feedback: "at least two different sites where the version and stuff is denoted"
+    # =========================================================================
+    # Integrity Tab (CHG-20251220-002)
+    # Provides GUI access to integrity verification and signing operations
+    # CHG-20251222-013: Consolidated all integrity-related fields here
+    # =========================================================================
     SettingField(
-        key=ConfigKeys.VERSION,
-        label_key="label_version",
+        key="integrity_placeholder",
+        label_key="label_integrity_status",
         field_type=FieldType.READONLY,
-        tab="Advanced",
-        group="Metadata",
+        tab="Integrity",
+        group="Software Integrity",
         readonly=True,
-        order=21,
+        tooltip_key="tooltip_integrity_status",
+        order=1,
+    ),
+    # CHG-20251222-013: Moved from Advanced tab - Verification override
+    SettingField(
+        key=ConfigKeys.VERIFICATION_OVERRIDDEN,
+        label_key="label_verification_overridden",
+        field_type=FieldType.BOOLEAN,
+        tab="Integrity",
+        group="Verification Status",
+        default=False,
+        tooltip_key="tooltip_verification_overridden",
+        order=5,
+    ),
+    # CHG-20251222-013: Moved from Advanced tab - Signature status
+    SettingField(
+        key=ConfigKeys.INTEGRITY_SIGNED,
+        label_key="label_integrity_signed",
+        field_type=FieldType.READONLY,
+        tab="Integrity",
+        group="Verification Status",
+        readonly=True,
+        tooltip_key="tooltip_integrity_signed",
+        order=6,
+    ),
+    # CHG-20251222-013: Moved from Advanced tab - Signing key fingerprint
+    SettingField(
+        key=ConfigKeys.SIGNING_KEY_FPR,
+        label_key="label_signing_key_fpr",
+        field_type=FieldType.READONLY,
+        tab="Integrity",
+        group="Verification Status",
+        readonly=True,
+        tooltip_key="tooltip_signing_key_fpr",
+        order=7,
+    ),
+    # CHG-20251221-002: Remote verification server URL
+    SettingField(
+        key=ConfigKeys.INTEGRITY_SERVER_URL,
+        label_key="label_integrity_server_url",
+        field_type=FieldType.TEXT,
+        tab="Integrity",
+        group="Remote Verification",
+        placeholder=Paths.INTEGRITY_URL,
+        default=Paths.INTEGRITY_URL,
+        tooltip_key="tooltip_integrity_server_url",
+        order=10,
     ),
 ]
 

@@ -1,38 +1,40 @@
 {
   "schema_version": 3,
   "version": "0.0.1",
-  "drive_name": null,
+  "drive_name": "",
   "mode": "gpg_pw_only",
-  "setup_date": "2025-12-22",
-  "last_password_change": "2025-12-22",
+  "setup_date": "2025-12-23",
+  "last_password_change": "2025-12-23",
   "windows": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_letter": "K",
-    "veracrypt_path": ""
+    "mount_letter": "",
+    "veracrypt_path": "",
+    "allow_mount_fallback": true
   },
   "unix": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_point": "~/veradrive"
+    "mount_point": "~/veradrive",
+    "allow_mount_fallback": true
   },
   "seed_gpg_path": "keys\\seed.gpg",
-  "kdf": "hkdf-sha256",
-  "salt_b64": "SvBXXzSBOhHdyG3DNu+xug==",
+  "kdf": "scrypt",
+  "salt_b64": "AlRhtVmopa4ReS7Z1Eug3A==",
   "hkdf_info": "smartdrive-vc-pw-v1",
-  "pw_encoding": "base64url_nopad",
+  "pw_encoding": "utf-8",
   "keyfile_fingerprints": [
     "20795EBE7248969E0A5AE9F1183999995BCBDACD",
     "AC8D308F14F53C963811B89E9FA66E6E9DDEDE55"
   ],
   "verification_overridden": false,
   "device_info": {
-    "device_name": "Seagate BUP Slim SL",
+    "device_name": "Kingston DataTraveler 70",
     "device_bus": "USB",
-    "device_size_gb": 1863.02,
-    "device_unique_id": "5000000000000001",
-    "device_serial": "NA77BFS3",
+    "device_size_gb": 57.62,
+    "device_unique_id": "USBSTOR\\DISK&VEN_KINGSTON&PROD_DATATRAVELER_70&REV_\\4CEDFB74A331F8202900018C&0:Janosh",
+    "device_serial": "\u00030",
     "device_partitions": [
       {
-        "DriveLetter": "F",
+        "DriveLetter": "G",
         "Number": 1,
         "Type": "IFS",
         "Size": 4.88
@@ -41,24 +43,34 @@
         "DriveLetter": null,
         "Number": 2,
         "Type": "Logical",
-        "Size": 1858.13
+        "Size": 52.74
       }
     ],
-    "launcher_partition": "F"
+    "launcher_partition": "G"
   },
   "recovery": {
     "enabled": true,
     "used": false,
     "state": "enabled",
-    "phrase_hash": "a42f5a3149749b38",
-    "container_path": "F:\\.smartdrive\\recovery\\recovery_container.bin",
-    "header_path": "F:\\.smartdrive\\recovery\\header_backup.hdr",
+    "phrase_hash": "dc88aa82cc42679e",
+    "container_path": "G:\\.smartdrive\\recovery\\recovery_container.bin",
+    "header_path": "G:\\.smartdrive\\recovery\\header_backup.hdr",
     "volume_identity": "device-path-skip",
-    "created_at": "2025-12-22T00:06:50.739491Z"
+    "created_at": "2025-12-23T11:58:06.623766Z",
+    "share_count": 5,
+    "threshold": 3
   },
-  "drive_id": "33bdde7d-f0a5-4a29-93af-5c2396ef8227",
+  "drive_id": "7c300757-6d93-4d8d-92f6-4091cbb30710",
   "lost_and_found": {
     "enabled": false,
     "message": ""
-  }
+  },
+  "gui_theme": "green",
+  "gui_lang": "en",
+  "keyfile": "C:\\Users\\accou\\Code\\VeraCrypt_Yubikey_2FA\\.smartdrive\\keys\\keyfile.vc",
+  "update_source_type": "local",
+  "update_url": "http://server:8000/api/update/download/latest",
+  "update_local_root": "",
+  "integrity_server_url": "http://127.0.0.1:8000/api/check",
+  "last_updated": "2025-12-23 13:45:29"
 }

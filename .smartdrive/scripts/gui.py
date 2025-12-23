@@ -7,7 +7,10 @@ A clean, minimal GUI for KeyDrive operations that integrates
 with the existing CLI backend while providing a modern interface.
 
 Author: KeyDrive Project
-License: MIT
+License: This project is licensed under a custom non-commercial, no-derivatives license.
+Commercial use and modified versions are not permitted.
+See the LICENSE file for details.
+
 """
 
 import json
@@ -837,6 +840,110 @@ class RecoveryGenerateWorker(QThread):
         self.force = force
         self.password = password  # BUG-20251221-043: Optional password for PW_ONLY mode
 
+    def _verify_credentials_via_mount(
+        self, volume_path: str, mount_point: str, password: str, keyfile_path=None
+    ) -> tuple[bool, str]:
+        """
+        BUG-20251222-011 FIX: Verify credentials by attempting mount/unmount.
+
+        This ensures the recovery kit will contain valid credentials.
+        Invalid credentials would create a useless recovery kit.
+
+        Returns:
+            (success, error_message)
+        """
+        import platform
+        import tempfile
+
+        try:
+            from scripts.veracrypt_cli import (
+                InvalidCredentialsError,
+                VeraCryptError,
+                get_mount_status,
+                try_mount,
+                unmount,
+            )
+        except ImportError as e:
+            return False, f"Cannot import veracrypt_cli: {e}"
+
+        # Check if already mounted - if so, credentials are already verified
+        try:
+            status = get_mount_status()
+            # Check if our volume is in the mounted list
+            if status and any(volume_path in str(m.get("volume", "")) for m in status):
+                return True, ""  # Already mounted = credentials valid
+        except Exception as e:
+            _gui_logger.debug(f"Mount status check failed (continuing): {e}")  # Continue with mount test
+
+        # Determine mount point for test
+        is_windows = platform.system().lower() == "windows"
+        if is_windows:
+            # Use a temporary drive letter for test mount
+            # Find an unused letter
+            import string
+
+            used_letters = set()
+            try:
+                for m in get_mount_status() or []:
+                    # BUG-20251224-006: Use ConfigKeys.MOUNT_POINT for SSOT compliance
+                    letter = m.get(ConfigKeys.MOUNT_POINT, "")
+                    if letter:
+                        used_letters.add(letter[0].upper())
+            except Exception as e:
+                _gui_logger.debug(f"Failed to get used drive letters: {e}")
+
+            test_letter = None
+            for letter in reversed(string.ascii_uppercase):
+                if letter not in used_letters and letter not in ["C", "D"]:  # Skip system drives
+                    test_letter = letter
+                    break
+            if not test_letter:
+                return False, "No available drive letter for credential test"
+            test_mount = f"{test_letter}:"
+        else:
+            # Linux/macOS: Use temp directory
+            test_mount = tempfile.mkdtemp(prefix="keydrive_test_")
+
+        try:
+            # Attempt mount
+            success, err = try_mount(
+                volume_path=volume_path,
+                mount_point=test_mount,
+                password=password,
+                keyfile_path=keyfile_path,
+            )
+
+            if not success:
+                return False, f"Credential verification failed: {err}"
+
+            # Immediately unmount
+            try:
+                unmount(test_mount)
+            except Exception as e:
+                # Try force unmount
+                try:
+                    unmount(test_mount, force=True)
+                except Exception as e2:
+                    _gui_logger.debug(f"Best effort unmount failed: {e2}")  # Best effort unmount
+
+            return True, ""
+
+        except InvalidCredentialsError as e:
+            return False, f"Invalid credentials: {e}"
+        except VeraCryptError as e:
+            return False, f"VeraCrypt error during verification: {e}"
+        except Exception as e:
+            return False, f"Unexpected error during credential verification: {e}"
+        finally:
+            # Cleanup temp directory on Linux
+            if not is_windows and test_mount.startswith("/tmp/"):
+                try:
+                    import shutil
+
+                    shutil.rmtree(test_mount, ignore_errors=True)
+                except Exception as e:
+                    _gui_logger.debug(f"Temp directory cleanup failed: {e}")
+
     def run(self):
         """
         Execute recovery kit generation in background thread.
@@ -849,6 +956,10 @@ class RecoveryGenerateWorker(QThread):
 
         BUG-20251221-043 FIX:
         - For PW_ONLY mode, use password provided in constructor instead of returning early
+
+        BUG-20251222-011 FIX:
+        - Verify credentials via mount/unmount test BEFORE generating recovery kit
+        - Invalid credentials would create useless recovery kit
         """
         try:
             import base64
@@ -915,6 +1026,7 @@ class RecoveryGenerateWorker(QThread):
 
                 # Handle keyfile if needed
                 keyfile_b64 = None
+                keyfile_path_for_test = None
                 if mode in [SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value]:
                     keyfile_path_config = self.config.get(ConfigKeys.KEYFILE_PATH)
                     if keyfile_path_config:
@@ -922,11 +1034,18 @@ class RecoveryGenerateWorker(QThread):
                         if keyfile_path.exists():
                             keyfile_bytes = keyfile_path.read_bytes()
                             keyfile_b64 = base64.b64encode(keyfile_bytes).decode("ascii")
+                            keyfile_path_for_test = keyfile_path
                         else:
                             # Try GPG keyfile decryption
                             try:
                                 keyfile_bytes = provider._decrypt_keyfile_gpg()
                                 keyfile_b64 = base64.b64encode(keyfile_bytes).decode("ascii")
+                                # Write temp keyfile for verification test
+                                import tempfile
+
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".keyfile") as tf:
+                                    tf.write(keyfile_bytes)
+                                    keyfile_path_for_test = Path(tf.name)
                             except Exception as e:
                                 self.finished.emit(
                                     False,
@@ -940,6 +1059,34 @@ class RecoveryGenerateWorker(QThread):
                     False, "recovery_generate_status_failed", {"error": f"Credential derivation failed: {e}"}
                 )
                 return
+
+            # BUG-20251222-011 FIX: Verify credentials before generating recovery kit
+            self.progress.emit("recovery_generate_status_verifying")
+
+            # Get volume path from config
+            import platform as plat
+
+            if plat.system().lower() == "windows":
+                volume_path = self.config.get("windows", {}).get(ConfigKeys.VOLUME_PATH, "")
+                mount_point = self.config.get("windows", {}).get(ConfigKeys.MOUNT_LETTER, "")
+            else:
+                volume_path = self.config.get("unix", {}).get(ConfigKeys.VOLUME_PATH, "")
+                mount_point = self.config.get("unix", {}).get(ConfigKeys.MOUNT_POINT, "")
+
+            if volume_path:
+                verify_success, verify_error = self._verify_credentials_via_mount(
+                    volume_path=volume_path,
+                    mount_point=mount_point,
+                    password=password,
+                    keyfile_path=keyfile_path_for_test,
+                )
+                if not verify_success:
+                    self.finished.emit(
+                        False,
+                        "recovery_generate_status_failed",
+                        {"error": f"Credential verification failed. {verify_error}. Recovery kit not generated."},
+                    )
+                    return
 
             # Build command with non-interactive mode
             cmd = [str(python_exe), str(recovery_script), "generate", "--non-interactive", "--format", "printable"]
@@ -3677,12 +3824,14 @@ QPushButton:pressed {{
         if not self.config:
             return True
 
-        post_recovery = self.config.get("post_recovery", {})
-        if not post_recovery.get("rekey_required") or post_recovery.get("rekey_completed"):
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+        if not post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED) or post_recovery.get(
+            ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
+        ):
             return True  # No rekey needed or already completed
 
-        recovery_time = post_recovery.get("recovery_completed_at", "unknown")
-        policy = self.config.get("post_recovery_policy", "mandatory_rekey")
+        recovery_time = post_recovery.get(ConfigKeys.POST_RECOVERY_COMPLETED_AT, "unknown")
+        policy = self.config.get(ConfigKeys.POST_RECOVERY_POLICY, "mandatory_rekey")
 
         if policy == "mandatory_rekey":
             # Block mount entirely
@@ -4027,10 +4176,13 @@ QPushButton:pressed {{
         settings_action.triggered.connect(self._on_settings_action)
         settings_action.setEnabled(not is_remote)
 
-        # Switch Drive submenu (CHG-20251221-026) - disabled in remote mode
-        switch_drive_menu = menu.addMenu(tr("menu_switch_drive", lang=get_lang()))
-        switch_drive_menu.setEnabled(not is_remote)
-        self._populate_switch_drive_menu(switch_drive_menu)
+        # BUG-20251222-012: "Switch Drive" menu removed per user request (issue xi)
+        # The 4 volume types are documented in FEATURE_FLOWS.md:
+        # 1. Launcher volume - where current referred installation is located
+        # 2. Instance volume - where currently running instance was started from
+        # 3. Handled VeraCrypt volume - currently being managed
+        # 4. Default VeraCrypt volume - instance running is pointing to by default
+        # Use "Manage Remote" for switching between installations instead.
 
         # CHG-20251221-042: Remote Control Mode submenu
         if is_remote:
@@ -4218,14 +4370,9 @@ QPushButton:pressed {{
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # BUG-20251221-045 FIX: Save original button styles before entering remote mode
-        # BUG-20251222-049 FIX: Use correct attribute name tools_btn (not tools_button)
-        self._original_button_styles = {
-            "mount_btn": self.mount_btn.styleSheet(),
-            "unmount_btn": self.unmount_btn.styleSheet(),
-            "tools_btn": self.tools_btn.styleSheet(),
-            "btn_open_launcher": self.btn_open_launcher.styleSheet() if hasattr(self, "btn_open_launcher") else "",
-        }
+        # BUG-20251223-050: Save local theme BEFORE switching to remote config
+        # Button styles don't need saving - they don't change, only theme colors change
+        self._local_theme = self.config.get(ConfigKeys.GUI_THEME, GUIConfig.DEFAULT_THEME)
 
         # Create remote profile
         self._remote_profile = RemoteMountProfile(
@@ -4249,6 +4396,11 @@ QPushButton:pressed {{
 
         # Reload config from remote
         self.config = remote_config
+
+        # BUG-20251223-050: Apply theme from remote config (button shapes unchanged, only colors change)
+        remote_theme = remote_config.get(ConfigKeys.GUI_THEME, GUIConfig.DEFAULT_THEME)
+        if remote_theme != self._local_theme:
+            self.apply_theme(remote_theme, persist=False)
 
         # Apply remote UI state
         self._apply_remote_ui_state()
@@ -4334,9 +4486,10 @@ QPushButton:pressed {{
         CHG-20251221-042: Apply or remove red border around window.
 
         BUG-20251221-046 FIX: Use rectangular border (no rounded corners) for retro style.
+        BUG-20251223-050 FIX: Preserve full stylesheet including button styles when applying border.
         """
         if enabled:
-            # BUG-20251221-046 FIX: Use border-radius: 0px for rectangular border
+            # BUG-20251223-050: Include full button styles to prevent style loss
             self.setStyleSheet(
                 f"""
                 QWidget#mainWindow {{
@@ -4344,18 +4497,34 @@ QPushButton:pressed {{
                     border-radius: 0px;
                     border: 3px solid #D32F2F;
                 }}
-            """
-            )
-        else:
-            # Remove border, restore normal style with original corner radius
-            self.setStyleSheet(
-                f"""
-                QWidget#mainWindow {{
-                    background-color: {COLORS['background']};
-                    border-radius: {CORNER_RADIUS}px;
+
+                QPushButton {{
+                    background-color: {COLORS['primary']};
+                    color: {COLORS['text']};
+                    border: none;
+                    border-radius: 8px;
+                    padding: 10px 16px;
+                    font-weight: 500;
+                }}
+
+                QPushButton:hover {{
+                    background-color: {COLORS['primary_hover']};
+                }}
+
+                QPushButton:disabled {{
+                    background-color: {COLORS['border']};
+                    color: {COLORS['text_disabled']};
+                }}
+
+                QLabel {{
+                    color: {COLORS['text']};
+                    border: none;
                 }}
             """
             )
+        else:
+            # Remove border, restore normal style - use apply_styling for consistency
+            self.apply_styling()
 
     def _start_remote_blink(self) -> None:
         """CHG-20251221-042: Start the remote banner blink animation."""
@@ -4373,7 +4542,10 @@ QPushButton:pressed {{
             self._remote_blink_timer = None
 
     def _toggle_remote_blink(self) -> None:
-        """CHG-20251221-042: Toggle the blink state for remote banner and border."""
+        """
+        CHG-20251221-042: Toggle the blink state for remote banner and border.
+        BUG-20251223-050 FIX: Preserve full stylesheet including button styles during blink.
+        """
         self._remote_blink_state = not self._remote_blink_state
 
         # Update banner blink state
@@ -4386,12 +4558,36 @@ QPushButton:pressed {{
         else:
             border_color = "#D32F2F"  # Red
 
+        # BUG-20251223-050: Include full button styles to prevent style loss during blink
         self.setStyleSheet(
             f"""
             QWidget#mainWindow {{
                 background-color: {COLORS['background']};
-                border-radius: {CORNER_RADIUS}px;
+                border-radius: 0px;
                 border: 3px solid {border_color};
+            }}
+
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: {COLORS['text']};
+                border: none;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-weight: 500;
+            }}
+
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+
+            QPushButton:disabled {{
+                background-color: {COLORS['border']};
+                color: {COLORS['text_disabled']};
+            }}
+
+            QLabel {{
+                color: {COLORS['text']};
+                border: none;
             }}
         """
         )
@@ -4433,16 +4629,10 @@ QPushButton:pressed {{
         # Reload local config
         self._reload_config()
 
-        # BUG-20251221-045 FIX: Restore original button styles
-        # BUG-20251222-049 FIX: Use correct attribute name tools_btn (not tools_button)
-        if hasattr(self, "_original_button_styles") and self._original_button_styles:
-            self.mount_btn.setStyleSheet(self._original_button_styles.get("mount_btn", ""))
-            self.unmount_btn.setStyleSheet(self._original_button_styles.get("unmount_btn", ""))
-            self.tools_btn.setStyleSheet(self._original_button_styles.get("tools_btn", ""))
-            # BUG-20251221-045 FIX: Restore btn_open_launcher style
-            if hasattr(self, "btn_open_launcher"):
-                self.btn_open_launcher.setStyleSheet(self._original_button_styles.get("btn_open_launcher", ""))
-            self._original_button_styles = None
+        # BUG-20251223-050: Restore local theme (button shapes don't change, only theme colors)
+        if hasattr(self, "_local_theme") and self._local_theme:
+            self.apply_theme(self._local_theme, persist=False)
+            self._local_theme = None
 
         # BUG-20251221-047 FIX: Force refresh mount status to use local config's mount letter
         # This ensures is_mounted reflects local volume state, not stale remote state
@@ -4500,6 +4690,9 @@ QPushButton:pressed {{
         """
         from pathlib import Path
 
+        # BUG-20251222-007 FIX: Import deployment filter for preview consistency
+        from update import should_exclude_from_deployment
+
         cfg = self.config or {}
         update_type = (cfg.get("update_source_type") or "local").lower()
         update_url = cfg.get("update_url") or ""
@@ -4540,17 +4733,29 @@ QPushButton:pressed {{
 
             plan["src_root"] = str(src_path)
 
-            # List top-level items in source
+            # List top-level items in source, filtered by deployment exclusions
+            # BUG-20251222-007 FIX: Preview must match actual deployment (WYSIWYG)
             try:
                 items = []
+                excluded_count = 0
                 for item in src_path.iterdir():
+                    # Apply deployment exclusion filter
+                    if should_exclude_from_deployment(item, src_path):
+                        excluded_count += 1
+                        continue
                     if item.is_dir():
                         items.append(f"{item.name}/")
                     else:
                         items.append(item.name)
                 plan["items"] = sorted(items)[:20]  # Limit to first 20 items
-                if len(list(src_path.iterdir())) > 20:
-                    plan["items"].append(f"... and {len(list(src_path.iterdir())) - 20} more")
+                total_included = len(items)
+                if total_included > 20:
+                    plan["items"].append(f"... and {total_included - 20} more")
+                # BUG-20251222-007: Show excluded count for transparency
+                if excluded_count > 0:
+                    plan["items"].append(f"({excluded_count} dev-only items excluded)")
+            except Exception as e:
+                plan["items"] = [f"(unable to list: {e})"]
             except Exception as e:
                 plan["items"] = [f"(unable to list: {e})"]
         else:
@@ -4946,26 +5151,39 @@ QPushButton:pressed {{
 
 
 # ============================================================
-# GPG KEY SELECTION DIALOG (CHG-20251221-008)
+# GPG KEY SELECTION DIALOG (CHG-20251221-008, CHG-20251222-001)
 # ============================================================
 
 
 class GPGKeySelectionDialog(QDialog):
-    """Dialog for selecting a GPG key from available secret keys or entering manually.
+    """Dialog for selecting GPG key(s) from available secret keys or entering manually.
+
+    CHG-20251221-008: Original single-key selection with combo box.
+    CHG-20251222-001: Added multi-key selection mode with checkboxes for hardware key redundancy.
 
     Provides:
-    - Combo box with all available GPG secret keys (fingerprint + email/name)
+    - Single mode: Combo box with all available GPG secret keys (fingerprint + email/name)
+    - Multi mode: List with checkboxes for selecting multiple keys
     - Clear hint text explaining what value is expected
     - Manual entry option for keys not yet recognized by the system
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, allow_multiple: bool = False):
+        """
+        Initialize GPG key selection dialog.
+
+        Args:
+            parent: Parent widget
+            allow_multiple: If True, enables multi-select mode with checkboxes
+        """
         super().__init__(parent)
         self.setWindowTitle(tr("gpg_key_select_title", lang=get_lang()))
         self.setModal(True)
         self.setMinimumWidth(500)
 
-        self._selected_key = ""
+        self._allow_multiple = allow_multiple
+        self._selected_key = ""  # For single mode
+        self._selected_keys: list[str] = []  # For multi mode
         self._keys: list[dict] = []
 
         self._init_ui()
@@ -4973,42 +5191,73 @@ class GPGKeySelectionDialog(QDialog):
 
     def _init_ui(self):
         """Initialize the dialog UI."""
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
         # Hint label
-        hint_label = QLabel(tr("gpg_key_select_hint", lang=get_lang()))
+        if self._allow_multiple:
+            hint_text = tr("gpg_key_select_hint_multi", lang=get_lang())
+        else:
+            hint_text = tr("gpg_key_select_hint", lang=get_lang())
+        hint_label = QLabel(hint_text)
         hint_label.setWordWrap(True)
         hint_label.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(hint_label)
 
-        # Key selection combo box
+        # Key selection - combo box for single, list for multi
         key_layout = QHBoxLayout()
         key_label = QLabel(tr("gpg_key_select_label", lang=get_lang()))
         key_label.setMinimumWidth(80)
+        key_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         key_layout.addWidget(key_label)
 
-        self._key_combo = QComboBox()
-        self._key_combo.setEditable(False)
-        self._key_combo.setMinimumWidth(350)
-        self._key_combo.currentIndexChanged.connect(self._on_combo_changed)
-        key_layout.addWidget(self._key_combo, 1)
+        if self._allow_multiple:
+            # Multi-select: QListWidget with checkboxes
+            self._key_list = QListWidget()
+            self._key_list.setMinimumWidth(350)
+            self._key_list.setMinimumHeight(150)
+            self._key_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+            key_layout.addWidget(self._key_list, 1)
+            self._key_combo = None  # Not used in multi mode
+        else:
+            # Single select: ComboBox
+            self._key_combo = QComboBox()
+            self._key_combo.setEditable(False)
+            self._key_combo.setMinimumWidth(350)
+            self._key_combo.currentIndexChanged.connect(self._on_combo_changed)
+            key_layout.addWidget(self._key_combo, 1)
+            self._key_list = None  # Not used in single mode
+
         layout.addLayout(key_layout)
 
-        # Manual entry field (hidden by default)
+        # Manual entry field
         manual_layout = QHBoxLayout()
-        self._manual_label = QLabel(tr("gpg_key_manual_label", lang=get_lang()))
+        if self._allow_multiple:
+            self._manual_label = QLabel(tr("gpg_key_manual_label_multi", lang=get_lang()))
+        else:
+            self._manual_label = QLabel(tr("gpg_key_manual_label", lang=get_lang()))
         self._manual_label.setMinimumWidth(80)
+        self._manual_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         manual_layout.addWidget(self._manual_label)
 
-        self._manual_entry = QLineEdit()
-        self._manual_entry.setPlaceholderText(tr("gpg_key_select_placeholder", lang=get_lang()))
+        if self._allow_multiple:
+            # Multi-line entry for multiple fingerprints
+            self._manual_entry = QTextEdit()
+            self._manual_entry.setPlaceholderText(tr("gpg_key_select_placeholder_multi", lang=get_lang()))
+            self._manual_entry.setMinimumHeight(60)
+            self._manual_entry.setMaximumHeight(80)
+        else:
+            self._manual_entry = QLineEdit()
+            self._manual_entry.setPlaceholderText(tr("gpg_key_select_placeholder", lang=get_lang()))
         manual_layout.addWidget(self._manual_entry, 1)
         layout.addLayout(manual_layout)
 
-        # Initially hide manual entry
-        self._manual_label.setVisible(False)
-        self._manual_entry.setVisible(False)
+        # In multi mode, always show manual entry; in single mode, hide by default
+        if not self._allow_multiple:
+            self._manual_label.setVisible(False)
+            self._manual_entry.setVisible(False)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -5027,8 +5276,9 @@ class GPGKeySelectionDialog(QDialog):
 
     def _load_gpg_keys(self):
         """Load available GPG secret keys using gpg --list-secret-keys --with-colons."""
+        from PyQt6.QtWidgets import QListWidgetItem
+
         self._keys = []
-        self._key_combo.clear()
 
         try:
             from core.limits import Limits
@@ -5044,18 +5294,37 @@ class GPGKeySelectionDialog(QDialog):
         except Exception as e:
             log_exception("Failed to list GPG keys", e, level="warning")
 
-        # Populate combo box
-        if self._keys:
-            for key in self._keys:
-                display = self._format_key_display(key)
-                self._key_combo.addItem(display, key)
-            # Add manual entry option at the end
-            self._key_combo.addItem(tr("gpg_key_select_manual", lang=get_lang()), None)
+        # Populate UI based on mode
+        if self._allow_multiple:
+            # Multi-select mode: QListWidget with checkboxes
+            self._key_list.clear()
+            if self._keys:
+                for key in self._keys:
+                    display = self._format_key_display(key)
+                    item = QListWidgetItem(display)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                    item.setData(Qt.ItemDataRole.UserRole, key)
+                    self._key_list.addItem(item)
+            else:
+                # No keys found - show message
+                item = QListWidgetItem(tr("gpg_key_select_none", lang=get_lang()))
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self._key_list.addItem(item)
         else:
-            self._key_combo.addItem(tr("gpg_key_select_none", lang=get_lang()), None)
-            # Show manual entry by default if no keys found
-            self._manual_label.setVisible(True)
-            self._manual_entry.setVisible(True)
+            # Single select mode: ComboBox
+            self._key_combo.clear()
+            if self._keys:
+                for key in self._keys:
+                    display = self._format_key_display(key)
+                    self._key_combo.addItem(display, key)
+                # Add manual entry option at the end
+                self._key_combo.addItem(tr("gpg_key_select_manual", lang=get_lang()), None)
+            else:
+                self._key_combo.addItem(tr("gpg_key_select_none", lang=get_lang()), None)
+                # Show manual entry by default if no keys found
+                self._manual_label.setVisible(True)
+                self._manual_entry.setVisible(True)
 
     def _parse_gpg_colon_output(self, output: str):
         """Parse gpg --with-colons output to extract key information.
@@ -5112,7 +5381,7 @@ class GPGKeySelectionDialog(QDialog):
             key["name"] = uid
 
     def _format_key_display(self, key: dict) -> str:
-        """Format key for display in combo box."""
+        """Format key for display in combo box or list."""
         name = key.get("name", "")
         email = key.get("email", "")
         fingerprint = key.get("fingerprint", "") or key.get("keyid", "")
@@ -5128,11 +5397,14 @@ class GPGKeySelectionDialog(QDialog):
             return short_fp
 
     def _on_combo_changed(self, index: int):
-        """Handle combo box selection change."""
+        """Handle combo box selection change (single mode only)."""
+        if self._key_combo is None:
+            return
+
         data = self._key_combo.itemData(index)
 
         # Show/hide manual entry based on selection
-        is_manual = data is None and self._keys  # Manual option selected
+        is_manual = data is None  # Manual option selected
         self._manual_label.setVisible(is_manual)
         self._manual_entry.setVisible(is_manual)
 
@@ -5141,41 +5413,98 @@ class GPGKeySelectionDialog(QDialog):
 
     def _on_accept(self):
         """Handle OK button click."""
-        data = self._key_combo.currentData()
+        if self._allow_multiple:
+            # Multi-select mode: collect all checked keys + manual entries
+            self._selected_keys = []
 
-        if data is None:
-            # Manual entry selected or no keys found
-            value = self._manual_entry.text().strip()
-            if not value:
+            # Get checked items from list
+            if self._key_list:
+                for i in range(self._key_list.count()):
+                    item = self._key_list.item(i)
+                    if item.checkState() == Qt.CheckState.Checked:
+                        key_data = item.data(Qt.ItemDataRole.UserRole)
+                        if key_data:
+                            fp = key_data.get("fingerprint") or key_data.get("email") or key_data.get("keyid", "")
+                            if fp:
+                                self._selected_keys.append(fp)
+
+            # Get manual entries (comma or newline separated)
+            manual_text = self._manual_entry.toPlainText().strip() if isinstance(self._manual_entry, QTextEdit) else ""
+            if manual_text:
+                # Split by comma or newline
+                import re
+
+                manual_fps = re.split(r"[,\n]+", manual_text)
+                for fp in manual_fps:
+                    fp = fp.strip()
+                    if fp and fp not in self._selected_keys:
+                        self._selected_keys.append(fp)
+
+            if not self._selected_keys:
                 QMessageBox.warning(
                     self,
                     tr("gpg_key_select_title", lang=get_lang()),
-                    tr("gpg_key_manual_label", lang=get_lang()),
+                    tr("gpg_key_select_none_selected", lang=get_lang()),
                 )
                 return
-            self._selected_key = value
-        else:
-            # Key from list selected - use fingerprint for encryption
-            self._selected_key = data.get("fingerprint") or data.get("email") or data.get("keyid", "")
 
-        self.accept()
+            self.accept()
+        else:
+            # Single select mode
+            data = self._key_combo.currentData() if self._key_combo else None
+
+            if data is None:
+                # Manual entry selected or no keys found
+                value = self._manual_entry.text().strip() if isinstance(self._manual_entry, QLineEdit) else ""
+                if not value:
+                    QMessageBox.warning(
+                        self,
+                        tr("gpg_key_select_title", lang=get_lang()),
+                        tr("gpg_key_manual_label", lang=get_lang()),
+                    )
+                    return
+                self._selected_key = value
+            else:
+                # Key from list selected - use fingerprint for encryption
+                self._selected_key = data.get("fingerprint") or data.get("email") or data.get("keyid", "")
+
+            self.accept()
 
     def get_selected_key(self) -> str:
-        """Return the selected key (fingerprint or manual entry)."""
+        """Return the selected key (fingerprint or manual entry) for single mode."""
         return self._selected_key
+
+    def get_selected_keys(self) -> list[str]:
+        """Return list of selected keys for multi mode."""
+        return self._selected_keys
 
     @staticmethod
     def get_key(parent=None) -> tuple[str, bool]:
-        """Static method to show dialog and return (key, ok).
+        """Static method to show single-select dialog and return (key, ok).
 
         Usage:
             fingerprint, ok = GPGKeySelectionDialog.get_key(self)
             if ok and fingerprint:
                 # Use fingerprint for GPG encryption
         """
-        dialog = GPGKeySelectionDialog(parent)
+        dialog = GPGKeySelectionDialog(parent, allow_multiple=False)
         result = dialog.exec()
         return dialog.get_selected_key(), result == QDialog.DialogCode.Accepted
+
+    @staticmethod
+    def get_keys(parent=None) -> tuple[list[str], bool]:
+        """Static method to show multi-select dialog and return (keys, ok).
+
+        CHG-20251222-001: Allows selecting multiple GPG keys for redundancy.
+
+        Usage:
+            fingerprints, ok = GPGKeySelectionDialog.get_keys(self)
+            if ok and fingerprints:
+                # Use fingerprints for GPG encryption with multiple recipients
+        """
+        dialog = GPGKeySelectionDialog(parent, allow_multiple=True)
+        result = dialog.exec()
+        return dialog.get_selected_keys(), result == QDialog.DialogCode.Accepted
 
 
 # ============================================================
@@ -5255,6 +5584,11 @@ class SettingsDialog(QDialog):
         # NOTE: These explicit calls are required for source code test detection
         _ = tr("settings_language", lang=get_lang())  # Used by language field
 
+        # CHG-20251222-012: Security tab blinking for post-recovery state
+        self._security_tab_blink_timer: Optional[QTimer] = None
+        self._security_tab_blink_state = False
+        self._security_tab_index = -1  # Set in _build_ui when tabs are created
+
         self._build_ui()
 
     def _reload_config(self):
@@ -5288,6 +5622,8 @@ class SettingsDialog(QDialog):
                 translated_tab_name = tr("settings_general", lang=get_lang())
             elif tab_name == "Security":
                 translated_tab_name = tr("settings_security", lang=get_lang())
+                # CHG-20251222-012: Track Security tab index for blinking
+                self._security_tab_index = self.tab_widget.count()
             elif tab_name == "Keyfile":
                 translated_tab_name = tr("settings_keyfile", lang=get_lang())
             elif tab_name == "Windows":
@@ -5308,6 +5644,18 @@ class SettingsDialog(QDialog):
                 tab_key = f"settings_{tab_name.lower()}"
                 translated_tab_name = tr(tab_key, lang=get_lang())
             self.tab_widget.addTab(tab_widget, translated_tab_name)
+
+            # CHG-20251222-014: Disable OS-specific tabs based on current OS
+            # Windows tabs disabled on Unix, Unix tabs disabled on Windows
+            import os
+
+            tab_index = self.tab_widget.count() - 1
+            if tab_name == "Windows" and os.name != "nt":
+                self.tab_widget.setTabEnabled(tab_index, False)
+                self.tab_widget.setTabToolTip(tab_index, tr("tooltip_tab_disabled_other_os", lang=get_lang()))
+            elif tab_name == "Unix" and os.name == "nt":
+                self.tab_widget.setTabEnabled(tab_index, False)
+                self.tab_widget.setTabToolTip(tab_index, tr("tooltip_tab_disabled_other_os", lang=get_lang()))
 
         layout.addWidget(self.tab_widget)
 
@@ -5340,6 +5688,75 @@ class SettingsDialog(QDialog):
         # CHG-20251221-025: Select initial tab if specified
         if self._initial_tab:
             self._select_tab_by_name(self._initial_tab)
+
+        # CHG-20251222-012: Start Security tab blinking if post-recovery rekey required
+        self._check_and_start_security_tab_blink()
+
+        # CHG-20251222-012: Stop blinking when user clicks on Security tab
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+
+    def _check_and_start_security_tab_blink(self):
+        """
+        CHG-20251222-012: Check if post-recovery rekey is required and start Security tab blinking.
+
+        Starts the tab blinking animation if:
+        - post_recovery.rekey_required is True
+        - post_recovery.rekey_completed is False
+        """
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+        if post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED) and not post_recovery.get(
+            ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
+        ):
+            self._start_security_tab_blink()
+
+    def _start_security_tab_blink(self):
+        """CHG-20251222-012: Start the Security tab blink animation."""
+        if self._security_tab_blink_timer is not None:
+            return  # Already blinking
+
+        if self._security_tab_index < 0:
+            return  # Security tab not found
+
+        self._security_tab_blink_timer = QTimer()
+        self._security_tab_blink_timer.timeout.connect(self._toggle_security_tab_blink)
+        self._security_tab_blink_timer.start(1000)  # 1 second interval
+
+    def _stop_security_tab_blink(self):
+        """CHG-20251222-012: Stop the Security tab blink animation."""
+        if self._security_tab_blink_timer is not None:
+            self._security_tab_blink_timer.stop()
+            self._security_tab_blink_timer = None
+
+        # Restore normal tab appearance
+        if self._security_tab_index >= 0:
+            tab_bar = self.tab_widget.tabBar()
+            # Reset to default stylesheet
+            tab_bar.setTabTextColor(self._security_tab_index, tab_bar.palette().text().color())
+
+    def _toggle_security_tab_blink(self):
+        """CHG-20251222-012: Toggle the blink state for Security tab."""
+        from PyQt6.QtGui import QColor
+
+        self._security_tab_blink_state = not self._security_tab_blink_state
+
+        if self._security_tab_index >= 0:
+            tab_bar = self.tab_widget.tabBar()
+            if self._security_tab_blink_state:
+                # Warning state: red text
+                tab_bar.setTabTextColor(self._security_tab_index, QColor("#FF5252"))
+            else:
+                # Normal state: white text
+                tab_bar.setTabTextColor(self._security_tab_index, QColor("#FFFFFF"))
+
+    def _on_tab_changed(self, index: int):
+        """
+        CHG-20251222-012: Handle tab change to stop blinking when Security tab is selected.
+
+        Args:
+            index: The index of the newly selected tab
+        """
+        if index == self._security_tab_index:
+            self._stop_security_tab_blink()
 
     def _select_tab_by_name(self, tab_name: str) -> bool:
         """
@@ -5461,8 +5878,10 @@ class SettingsDialog(QDialog):
             self._add_rekey_section(tab_layout)
 
         # CHG-20251221-005: Add informational hint to Updates tab
+        # CHG-20251222-016: Add update action section with Run Update button
         if tab_name == "Updates":
             self._add_update_hint_section(tab_layout)
+            self._add_update_action_section(tab_layout)
 
         # CHG-20251220-002: Add integrity verification section to Integrity tab
         if tab_name == "Integrity":
@@ -5490,8 +5909,10 @@ class SettingsDialog(QDialog):
         rekey_layout.setSpacing(10)
 
         # Check for post-recovery rekey requirement
-        post_recovery = self.config.get("post_recovery", {})
-        if post_recovery.get("rekey_required") and not post_recovery.get("rekey_completed"):
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+        if post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED) and not post_recovery.get(
+            ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
+        ):
             # Show critical warning
             warning_label = QLabel(tr("rekey_post_recovery_notice", lang=get_lang()))
             warning_label.setWordWrap(True)
@@ -5518,11 +5939,16 @@ class SettingsDialog(QDialog):
         current_mode = (
             self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
         )
-        try:
-            current_mode_enum = SecurityMode(current_mode)
-            current_mode_display = current_mode_enum.display_name
-        except (ValueError, KeyError):
-            current_mode_display = str(current_mode)
+        # BUG-20251224-004 FIX: Use i18n keys for mode display (SSOT consistency)
+        # Map mode values to i18n keys for translation
+        mode_i18n_keys = {
+            SecurityMode.PW_ONLY.value: "rekey_mode_pw_only",
+            SecurityMode.PW_KEYFILE.value: "rekey_mode_pw_keyfile",
+            SecurityMode.PW_GPG_KEYFILE.value: "rekey_mode_pw_gpg_keyfile",
+            SecurityMode.GPG_PW_ONLY.value: "rekey_mode_gpg_pw_only",
+        }
+        current_mode_i18n_key = mode_i18n_keys.get(current_mode, "rekey_mode_pw_only")
+        current_mode_display = tr(current_mode_i18n_key, lang=get_lang())
 
         current_mode_label = QLabel(current_mode_display)
         current_mode_label.setStyleSheet(f"font-weight: bold; color: {COLORS['primary']};")
@@ -5571,11 +5997,15 @@ class SettingsDialog(QDialog):
 
         # GPG seed path input (for GPG modes)
         # CHG-20251221-003: Added generate button for creating new GPG-encrypted seed
+        # CHG-20251222-015: Auto-populate with default seed.gpg path
         self.rekey_gpg_row = QWidget()
         gpg_layout = QHBoxLayout()
         gpg_layout.setContentsMargins(0, 0, 0, 0)
         self.rekey_gpg_seed_edit = QLineEdit()
         self.rekey_gpg_seed_edit.setPlaceholderText(tr("rekey_new_gpg_seed_label", lang=get_lang()))
+        # CHG-20251222-015: Auto-populate with default path to avoid manual picker
+        default_seed_path = self._launcher_root / ".smartdrive" / "keys" / "seed.gpg"
+        self.rekey_gpg_seed_edit.setText(str(default_seed_path))
         gpg_layout.addWidget(self.rekey_gpg_seed_edit, stretch=1)
         self.rekey_gpg_browse_btn = QPushButton(tr("btn_browse_keyfile", lang=get_lang()))
         self.rekey_gpg_browse_btn.clicked.connect(self._browse_rekey_gpg_seed)
@@ -5605,7 +6035,12 @@ class SettingsDialog(QDialog):
         rekey_layout.addWidget(mode_section)
         # End CHG-20251221-001
 
+        # BUG-20251222-005: Initialize visibility based on current mode
+        # setCurrentIndex doesn't emit currentIndexChanged if index is 0, so call handler explicitly
+        self._on_rekey_mode_changed(current_mode_index)
+
         # Start rekey button
+        # CHG-20251223-031: Button disabled initially; enabled when metadata is valid
         self.start_rekey_btn = QPushButton(tr("btn_start_rekey", lang=get_lang()))
         self.start_rekey_btn.setStyleSheet(
             f"""
@@ -5626,8 +6061,16 @@ class SettingsDialog(QDialog):
             }}
         """
         )
+        self.start_rekey_btn.setEnabled(False)  # CHG-20251223-031: Disabled until metadata valid
         self.start_rekey_btn.clicked.connect(self._start_rekey_flow)
         rekey_layout.addWidget(self.start_rekey_btn)
+
+        # CHG-20251223-031: Connect textChanged signals to update button state
+        self.rekey_keyfile_edit.textChanged.connect(self._update_rekey_button_state)
+        self.rekey_gpg_seed_edit.textChanged.connect(self._update_rekey_button_state)
+
+        # CHG-20251223-031: Initialize button state based on current mode
+        self._update_rekey_button_state()
 
         # BUG-20251221-039: Add copy credential buttons for on-demand credential retrieval
         copy_buttons_layout = QHBoxLayout()
@@ -5637,6 +6080,23 @@ class SettingsDialog(QDialog):
         self.copy_old_pwd_btn = QPushButton(tr("btn_copy_old_password", lang=get_lang()))
         self.copy_old_pwd_btn.setToolTip(tr("tooltip_copy_old_password", lang=get_lang()))
         self.copy_old_pwd_btn.clicked.connect(self._copy_old_credential_to_clipboard)
+
+        # CHG-20251223-002: Disable Copy Old Password button in post-recovery GPG modes
+        # In post-recovery state, the GPG seed may be missing/corrupted, so deriving old password will fail
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {}) if self.config else {}
+        is_post_recovery = post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED) and not post_recovery.get(
+            ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
+        )
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+        is_gpg_mode = current_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value)
+
+        if is_post_recovery and is_gpg_mode:
+            self.copy_old_pwd_btn.setEnabled(False)
+            self.copy_old_pwd_btn.setToolTip(tr("tooltip_copy_old_password_post_recovery", lang=get_lang()))
+            self.copy_old_pwd_btn.setStyleSheet("QPushButton { color: gray; }")
+
         copy_buttons_layout.addWidget(self.copy_old_pwd_btn)
 
         # Copy New Password button
@@ -5646,6 +6106,22 @@ class SettingsDialog(QDialog):
         copy_buttons_layout.addWidget(self.copy_new_pwd_btn)
 
         rekey_layout.addLayout(copy_buttons_layout)
+
+        # CHG-20251222-018: Add hint for GPG modes explaining old vs new password derivation
+        self.rekey_gpg_hint_label = QLabel(tr("rekey_gpg_seed_hint", lang=get_lang()))
+        self.rekey_gpg_hint_label.setWordWrap(True)
+        self.rekey_gpg_hint_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 10px; font-style: italic; padding: 5px; "
+            f"background-color: {COLORS.get('background_secondary', COLORS['surface'])}; border-radius: 4px;"
+        )
+        # Only show for GPG modes
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+        is_gpg_mode = current_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value)
+        self.rekey_gpg_hint_label.setVisible(is_gpg_mode)
+        rekey_layout.addWidget(self.rekey_gpg_hint_label)
+        self.field_labels["rekey_gpg_seed_hint"] = (self.rekey_gpg_hint_label, "rekey_gpg_seed_hint")
 
         # Status label
         self.rekey_status_label = QLabel(tr("rekey_status_ready", lang=get_lang()))
@@ -5661,6 +6137,7 @@ class SettingsDialog(QDialog):
         """
         Handle target mode selection changes.
         CHG-20251221-001: Show/hide conditional inputs based on selected mode.
+        CHG-20251223-031: Update button state when mode changes.
         """
         target_mode = self.rekey_target_mode_combo.currentData()
         current_mode = (
@@ -5678,6 +6155,57 @@ class SettingsDialog(QDialog):
         self.rekey_gpg_label.setVisible(show_gpg)
         self.rekey_gpg_row.setVisible(show_gpg)
         self.rekey_mode_warning.setVisible(mode_changed)
+        # CHG-20251222-018: Update GPG hint visibility based on target mode
+        if hasattr(self, "rekey_gpg_hint_label"):
+            self.rekey_gpg_hint_label.setVisible(show_gpg)
+
+        # CHG-20251223-031: Update button state when mode changes
+        self._update_rekey_button_state()
+
+    def _update_rekey_button_state(self):
+        """
+        CHG-20251223-031: Update the Start Credential Change button state.
+
+        The button is enabled when:
+        - Same mode (no mode change): always enabled (user can rotate password)
+        - Mode changing to PW_ONLY: always enabled (no metadata needed)
+        - Mode changing to PW_KEYFILE: keyfile path provided
+        - Mode changing to GPG_PW_ONLY: GPG seed path provided
+        - Mode changing to PW_GPG_KEYFILE: both keyfile and GPG seed paths provided
+        """
+        if not hasattr(self, "rekey_target_mode_combo") or not hasattr(self, "start_rekey_btn"):
+            return
+
+        target_mode = self.rekey_target_mode_combo.currentData()
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+
+        # Same mode: always enabled (user can rotate password with same mode)
+        if target_mode == current_mode:
+            self.start_rekey_btn.setEnabled(True)
+            return
+
+        # Mode is changing - check required metadata
+        keyfile_path = self.rekey_keyfile_edit.text().strip() if hasattr(self, "rekey_keyfile_edit") else ""
+        gpg_seed_path = self.rekey_gpg_seed_edit.text().strip() if hasattr(self, "rekey_gpg_seed_edit") else ""
+
+        enabled = False
+
+        if target_mode == SecurityMode.PW_ONLY.value:
+            # No metadata needed for PW_ONLY
+            enabled = True
+        elif target_mode == SecurityMode.PW_KEYFILE.value:
+            # Need keyfile
+            enabled = bool(keyfile_path)
+        elif target_mode == SecurityMode.GPG_PW_ONLY.value:
+            # Need GPG seed
+            enabled = bool(gpg_seed_path)
+        elif target_mode == SecurityMode.PW_GPG_KEYFILE.value:
+            # Need both keyfile and GPG seed
+            enabled = bool(keyfile_path) and bool(gpg_seed_path)
+
+        self.start_rekey_btn.setEnabled(enabled)
 
     def _browse_rekey_keyfile(self):
         """Browse for a new keyfile path."""
@@ -5702,12 +6230,68 @@ class SettingsDialog(QDialog):
         if file_path:
             self.rekey_gpg_seed_edit.setText(file_path)
 
+    def _authenticate_gpg_key(self, fingerprint: str) -> bool:
+        """
+        CHG-20251223-032: Authenticate a GPG key by signing a test message.
+
+        This verifies the user has access to the private key (hardware key
+        must be inserted and PIN entered).
+
+        Args:
+            fingerprint: The GPG key fingerprint to authenticate.
+
+        Returns:
+            True if authentication succeeded, False otherwise.
+        """
+        import subprocess
+        import tempfile
+
+        from core.limits import Limits
+
+        try:
+            # Create a test message to sign
+            test_message = b"SmartDrive key authentication test"
+
+            # Sign the message using the specified key
+            # This will prompt for PIN if the key is on a hardware token
+            # BUG-20251218-007: Always use --no-tty for non-interactive GPG calls
+            result = subprocess.run(
+                [
+                    "gpg",
+                    "--no-tty",
+                    "--local-user",
+                    fingerprint,
+                    "--sign",
+                    "--armor",
+                    "--output",
+                    "-",  # Output to stdout
+                ],
+                input=test_message,
+                capture_output=True,
+                timeout=Limits.GPG_KEY_AUTH_TIMEOUT,  # From SSOT
+            )
+
+            if result.returncode == 0:
+                _gui_logger.info(f"GPG key authenticated: {fingerprint[:8]}...")
+                return True
+            else:
+                _gui_logger.warning(f"GPG key authentication failed: {result.stderr.decode()}")
+                return False
+
+        except subprocess.TimeoutExpired:
+            _gui_logger.warning(f"GPG key authentication timed out for: {fingerprint[:8]}...")
+            return False
+        except Exception as e:
+            _gui_logger.error(f"GPG key authentication error: {e}")
+            return False
+
     def _generate_gpg_seed(self):
         """
         Generate a new GPG-encrypted seed for password derivation.
 
         CHG-20251221-003: Implements GPG seed generation for mode changes to GPG modes.
         CHG-20251221-008: Uses GPGKeySelectionDialog for improved key selection UX.
+        CHG-20251222-001: Supports multiple GPG keys for hardware key redundancy.
         Creates a cryptographically secure seed, encrypts it with GPG, and derives
         the password to show the user.
         """
@@ -5740,20 +6324,122 @@ class SettingsDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # CHG-20251221-008: Use GPGKeySelectionDialog for better UX
-        fingerprint, ok = GPGKeySelectionDialog.get_key(self)
-        if not ok or not fingerprint:
+        # CHG-20251222-001: Use multi-select GPGKeySelectionDialog for redundancy
+        fingerprints, ok = GPGKeySelectionDialog.get_keys(self)
+        if not ok or not fingerprints:
             return
+
+        # CHG-20251223-032: Authenticate each key before seed generation
+        # This ensures the user actually possesses all configured keys
+        authenticated_keys = []
+        for fp in fingerprints:
+            fp_display = fp[:16] + "..." if len(fp) > 16 else fp
+
+            # Prompt user for authentication
+            auth_reply = QMessageBox.question(
+                self,
+                tr("gpg_key_auth_title", lang=get_lang()),
+                tr("gpg_key_auth_prompt", lang=get_lang()).format(fingerprint=fp_display),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+
+            if auth_reply == QMessageBox.StandardButton.Yes:
+                # Attempt authentication
+                if self._authenticate_gpg_key(fp):
+                    QMessageBox.information(
+                        self,
+                        tr("gpg_key_auth_title", lang=get_lang()),
+                        tr("gpg_key_auth_success", lang=get_lang()),
+                    )
+                    authenticated_keys.append(fp)
+                    self._gui_audit_log("GPG_KEY_AUTHENTICATED", details={"fingerprint": fp[:8]})
+                else:
+                    # Authentication failed - ask if user wants to skip
+                    skip_reply = QMessageBox.warning(
+                        self,
+                        tr("gpg_key_auth_title", lang=get_lang()),
+                        f"{tr('gpg_key_auth_fail', lang=get_lang()).format(fingerprint=fp_display)}\n\n"
+                        + tr("gpg_key_auth_skip_prompt", lang=get_lang()),
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if skip_reply == QMessageBox.StandardButton.Yes:
+                        authenticated_keys.append(fp)
+                        self._gui_audit_log(
+                            "GPG_KEY_AUTH_SKIPPED", details={"fingerprint": fp[:8], "reason": "auth_failed"}
+                        )
+                    else:
+                        # User doesn't want to skip - cancel entire operation
+                        return
+            else:
+                # User chose not to authenticate - ask if they want to skip
+                skip_reply = QMessageBox.warning(
+                    self,
+                    tr("gpg_key_auth_title", lang=get_lang()),
+                    tr("gpg_key_auth_skip_prompt", lang=get_lang()),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if skip_reply == QMessageBox.StandardButton.Yes:
+                    authenticated_keys.append(fp)
+                    self._gui_audit_log(
+                        "GPG_KEY_AUTH_SKIPPED", details={"fingerprint": fp[:8], "reason": "user_choice"}
+                    )
+                else:
+                    # User doesn't want to skip - cancel entire operation
+                    return
+
+        # Use authenticated keys for encryption
+        fingerprints = authenticated_keys
+
+        # BUG-20251223-052: Detect if this is GPG→GPG rekey and suggest different filename
+        # to prevent overwriting old seed before verification
+        current_mode = (
+            self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
+        )
+        current_seed_path = self.config.get(ConfigKeys.SEED_GPG_PATH, "") if self.config else ""
+        is_gpg_to_gpg_rekey = (
+            current_mode
+            in (
+                SecurityMode.GPG_PW_ONLY.value,
+                SecurityMode.PW_GPG_KEYFILE.value,
+            )
+            and current_seed_path
+        )
+
+        if is_gpg_to_gpg_rekey:
+            # Suggest seed_new.gpg to avoid overwriting current seed
+            default_filename = "seed_new.gpg"
+        else:
+            default_filename = "seed.gpg"
 
         # Ask where to save the seed file
         save_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("gpg_seed_generate_title", lang=get_lang()),
-            str(self._launcher_root / ".smartdrive" / "keys" / "seed.gpg"),
+            str(self._launcher_root / ".smartdrive" / "keys" / default_filename),
             "GPG Encrypted Files (*.gpg);;All Files (*.*)",
         )
         if not save_path:
             return
+
+        # BUG-20251223-052: Warn if user chose same path as current seed during GPG→GPG rekey
+        if is_gpg_to_gpg_rekey and os.path.normpath(save_path) == os.path.normpath(current_seed_path):
+            warn_reply = QMessageBox.warning(
+                self,
+                tr("gpg_seed_generate_title", lang=get_lang()),
+                "⚠️ WARNING: Same path as current seed!\n\n"
+                f"Current seed: {current_seed_path}\n\n"
+                "If you overwrite the current seed now, you will lose access\n"
+                "to your old credentials before verification.\n\n"
+                "Recommended: Use a different filename (e.g., seed_new.gpg).\n\n"
+                "Do you want to continue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if warn_reply != QMessageBox.StandardButton.Yes:
+                return
 
         # BUG-20251221-038: Check if file exists and ask user before overwriting
         # GPG requires --yes flag for non-interactive overwrite
@@ -5779,6 +6465,7 @@ class SettingsDialog(QDialog):
             salt_b64 = base64.b64encode(salt).decode("ascii")
 
             # Encrypt seed with GPG
+            # CHG-20251222-001: Support multiple recipients for hardware key redundancy
             # BUG-20251221-038: Add --yes flag when overwriting existing file
             gpg_args = [
                 "gpg",
@@ -5786,9 +6473,11 @@ class SettingsDialog(QDialog):
                 "--armor",
                 "--output",
                 save_path,
-                "--recipient",
-                fingerprint,
             ]
+            # Add --recipient for each selected key
+            for fp in fingerprints:
+                gpg_args.extend(["--recipient", fp])
+
             if overwrite_mode:
                 gpg_args.insert(1, "--yes")  # Insert --yes after "gpg"
 
@@ -5810,30 +6499,41 @@ class SettingsDialog(QDialog):
             # User needs to note this or it will be stored when rekey completes
             self._generated_seed_salt = salt_b64
 
-            # Copy password to clipboard with TTL (30 seconds)
-            from PyQt6.QtCore import QTimer
-            from PyQt6.QtWidgets import QApplication
+            # BUG-20251223-052: Track pending new seed path for finalization in _complete_rekey()
+            # This allows us to properly rename/backup during credential finalization
+            if is_gpg_to_gpg_rekey:
+                self._pending_new_seed_path = save_path
+                self._original_seed_path = current_seed_path
 
-            clipboard = QApplication.clipboard()
-            clipboard.setText(derived_password)
+            # CHG-20251223-032: Do NOT auto-copy password to clipboard
+            # Copy buttons are accessible in the rekey section for on-demand credential retrieval
+            # This prevents accidental clipboard exposure and gives user control
 
-            # Auto-clear after 30 seconds
-            QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == derived_password else None)
+            # CHG-20251222-001: Show all recipients in success message
+            recipients_display = ", ".join(fp[:16] + "..." if len(fp) > 16 else fp for fp in fingerprints)
 
-            # Show success message with clipboard warning
+            # Show success message without clipboard warning
+            # CHG-20251223-032: Removed clipboard auto-copy; point to copy buttons instead
             QMessageBox.information(
                 self,
                 tr("gpg_seed_generate_title", lang=get_lang()),
                 f"{tr('gpg_seed_generate_success', lang=get_lang())}\n\n"
                 f"Seed file: {save_path}\n"
+                f"Recipients ({len(fingerprints)}): {recipients_display}\n"
                 f"Salt (SAVE THIS): {salt_b64}\n\n"
                 f"{tr('gpg_seed_derive_info', lang=get_lang())}\n\n"
-                f"\u26a0\ufe0f Derived password ({len(derived_password)} chars) copied to clipboard\n"
-                f"Clipboard will auto-clear after 30 seconds\n\n"
-                f"Paste the password into VeraCrypt now.",
+                f"Use the 'Copy New Password' button below to copy the derived password\n"
+                f"when you're ready to paste it into VeraCrypt.",
             )
 
-            self._gui_audit_log("GPG_SEED_GENERATED", details={"path": save_path, "fingerprint": fingerprint[:8]})
+            self._gui_audit_log(
+                "GPG_SEED_GENERATED",
+                details={
+                    "path": save_path,
+                    "recipients": len(fingerprints),
+                    "fingerprints": [fp[:8] for fp in fingerprints],
+                },
+            )
 
         except Exception as e:
             _gui_logger.error(f"GPG seed generation failed: {e}")
@@ -5846,6 +6546,7 @@ class SettingsDialog(QDialog):
     def _copy_old_credential_to_clipboard(self):
         """
         BUG-20251221-039: Copy old (current) password to clipboard.
+        BUG-20251223-051: Use non-blocking status update for success to keep Settings responsive.
 
         Derives password from current seed.gpg using SecretProvider,
         then copies to clipboard with 30-second TTL.
@@ -5863,23 +6564,15 @@ class SettingsDialog(QDialog):
 
             # Only GPG modes have derived passwords
             if current_mode not in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
-                QMessageBox.information(
-                    self,
-                    tr("copy_password_title", lang=get_lang()),
-                    "Current mode does not use derived passwords.\n"
-                    "For password-only modes, you must remember your password.",
-                )
+                # Non-blocking: update status label instead of modal dialog
+                self.rekey_status_label.setText("ℹ️ Current mode does not use derived passwords.")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
                 return
 
-            # Initialize SecretProvider with current config paths
+            # Initialize SecretProvider from config
             from core.secrets import SecretProvider
 
-            provider = SecretProvider(
-                smartdrive_dir=self._smartdrive_dir,
-                mode=current_mode,
-                salt_b64=self.config.get(ConfigKeys.SALT_B64),
-                seed_gpg_path=self.config.get(ConfigKeys.SEED_GPG_PATH),
-            )
+            provider = SecretProvider.from_config(self.config, self._smartdrive_dir)
 
             # Derive password
             password = provider._derive_password_gpg_pw_only()
@@ -5893,17 +6586,15 @@ class SettingsDialog(QDialog):
             # Auto-clear after 30 seconds
             QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == password else None)
 
-            QMessageBox.information(
-                self,
-                tr("copy_password_title", lang=get_lang()),
-                f"✓ Old password ({len(password)} chars) copied to clipboard.\n\n"
-                f"⏱ Clipboard will auto-clear in 30 seconds.",
-            )
+            # BUG-20251223-051: Non-blocking success feedback via status label
+            self.rekey_status_label.setText(f"✓ Old password ({len(password)} chars) copied. ⏱ Auto-clears in 30s.")
+            self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
 
             self._gui_audit_log("OLD_PASSWORD_COPIED", details={"mode": current_mode})
 
         except Exception as e:
             _gui_logger.error(f"Failed to copy old password: {e}")
+            # Keep error as modal since user needs to know about failure
             QMessageBox.critical(
                 self,
                 tr("copy_password_title", lang=get_lang()),
@@ -5913,6 +6604,7 @@ class SettingsDialog(QDialog):
     def _copy_new_credential_to_clipboard(self):
         """
         BUG-20251221-039: Copy new password to clipboard.
+        BUG-20251223-051: Use non-blocking status update for success to keep Settings responsive.
 
         Derives password from the GPG seed specified in the rekey form,
         then copies to clipboard with 30-second TTL.
@@ -5926,30 +6618,21 @@ class SettingsDialog(QDialog):
 
             # Only GPG modes have derived passwords
             if target_mode not in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
-                QMessageBox.information(
-                    self,
-                    tr("copy_password_title", lang=get_lang()),
-                    "Target mode does not use derived passwords.\n"
-                    "For password-only modes, enter your own password in VeraCrypt.",
-                )
+                # BUG-20251223-051: Non-blocking info via status label
+                self.rekey_status_label.setText("ℹ️ Target mode does not use derived passwords.")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
                 return
 
             # Get the new seed path from the form
             new_seed_path = self.rekey_gpg_seed_edit.text().strip()
             if not new_seed_path:
-                QMessageBox.warning(
-                    self,
-                    tr("copy_password_title", lang=get_lang()),
-                    "Please enter or generate a GPG seed file path first.",
-                )
+                self.rekey_status_label.setText("⚠️ Please enter or generate a GPG seed file path first.")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
                 return
 
             if not Path(new_seed_path).exists():
-                QMessageBox.warning(
-                    self,
-                    tr("copy_password_title", lang=get_lang()),
-                    f"Seed file not found:\n{new_seed_path}",
-                )
+                self.rekey_status_label.setText(f"⚠️ Seed file not found: {new_seed_path}")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
                 return
 
             # Use the stored salt if available (from recently generated seed)
@@ -5959,21 +6642,21 @@ class SettingsDialog(QDialog):
                 salt_b64 = self.config.get(ConfigKeys.SALT_B64) if self.config else None
 
             if not salt_b64:
-                QMessageBox.warning(
-                    self,
-                    tr("copy_password_title", lang=get_lang()),
-                    "Salt not available. Please generate a new seed first.",
-                )
+                self.rekey_status_label.setText("⚠️ Salt not available. Please generate a new seed first.")
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
                 return
 
-            # Derive password from the new seed
+            # Derive password from the new seed using session overrides
             from core.secrets import SecretProvider
 
-            provider = SecretProvider(
-                smartdrive_dir=self._smartdrive_dir,
-                mode=target_mode,
-                salt_b64=salt_b64,
-                seed_gpg_path=new_seed_path,
+            # Use from_config with session_overrides for the new seed path and salt
+            provider = SecretProvider.from_config(
+                self.config,
+                self._smartdrive_dir,
+                session_overrides={
+                    "seed_gpg_path": new_seed_path,
+                    "salt_b64": salt_b64,
+                },
             )
 
             password = provider._derive_password_gpg_pw_only()
@@ -5987,12 +6670,9 @@ class SettingsDialog(QDialog):
             # Auto-clear after 30 seconds
             QTimer.singleShot(30000, lambda: clipboard.clear() if clipboard.text() == password else None)
 
-            QMessageBox.information(
-                self,
-                tr("copy_password_title", lang=get_lang()),
-                f"✓ New password ({len(password)} chars) copied to clipboard.\n\n"
-                f"⏱ Clipboard will auto-clear in 30 seconds.",
-            )
+            # BUG-20251223-051: Non-blocking success feedback via status label
+            self.rekey_status_label.setText(f"✓ New password ({len(password)} chars) copied. ⏱ Auto-clears in 30s.")
+            self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
 
             self._gui_audit_log(
                 "NEW_PASSWORD_COPIED", details={"mode": target_mode, "seed": new_seed_path[:20] + "..."}
@@ -6000,6 +6680,7 @@ class SettingsDialog(QDialog):
 
         except Exception as e:
             _gui_logger.error(f"Failed to copy new password: {e}")
+            # Keep error as modal since user needs to know about failure
             QMessageBox.critical(
                 self,
                 tr("copy_password_title", lang=get_lang()),
@@ -6061,11 +6742,20 @@ class SettingsDialog(QDialog):
                     return
 
             # Confirm mode change
+            # BUG-20251224-004 FIX: Use i18n keys for mode display (SSOT consistency)
+            mode_i18n_keys = {
+                SecurityMode.PW_ONLY.value: "rekey_mode_pw_only",
+                SecurityMode.PW_KEYFILE.value: "rekey_mode_pw_keyfile",
+                SecurityMode.PW_GPG_KEYFILE.value: "rekey_mode_pw_gpg_keyfile",
+                SecurityMode.GPG_PW_ONLY.value: "rekey_mode_gpg_pw_only",
+            }
+            from_mode_display = tr(mode_i18n_keys.get(current_mode, "rekey_mode_pw_only"), lang=get_lang())
+            to_mode_display = tr(mode_i18n_keys.get(target_mode, "rekey_mode_pw_only"), lang=get_lang())
             reply = QMessageBox.warning(
                 self,
                 tr("rekey_section_title", lang=get_lang()),
                 f"{tr('rekey_mode_change_warning', lang=get_lang())}\n\n"
-                f"Changing from {SecurityMode(current_mode).display_name} to {SecurityMode(target_mode).display_name}.\n\n"
+                f"Changing from {from_mode_display} to {to_mode_display}.\n\n"
                 "Are you sure you want to proceed?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -6134,8 +6824,10 @@ class SettingsDialog(QDialog):
         need_credential_provision = current_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value)
 
         # Check for post-recovery state (credentials were already recovered)
-        post_recovery = self.config.get("post_recovery", {})
-        is_post_recovery = post_recovery.get("rekey_required") and not post_recovery.get("rekey_completed")
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+        is_post_recovery = post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED) and not post_recovery.get(
+            ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
+        )
 
         # CHG-20251221-029: Provide credentials based on security mode
         derived_password = None
@@ -6166,7 +6858,7 @@ class SettingsDialog(QDialog):
                     from core.secrets import SecretProvider
 
                     smartdrive_dir = self._launcher_root / ".smartdrive"
-                    provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
+                    provider = SecretProvider.from_config(self.config, smartdrive_dir)
 
                     # Derive password using the internal method
                     derived_password = provider._derive_password_gpg_pw_only()
@@ -6218,7 +6910,7 @@ class SettingsDialog(QDialog):
                     from core.secrets import SecretProvider
 
                     smartdrive_dir = self._launcher_root / ".smartdrive"
-                    provider = SecretProvider.from_config(self.config, smartdrive_dir=smartdrive_dir)
+                    provider = SecretProvider.from_config(self.config, smartdrive_dir)
 
                     # Get decrypted keyfile bytes
                     keyfile_bytes = provider.get_keyfile()
@@ -6314,10 +7006,15 @@ class SettingsDialog(QDialog):
 
     def _validate_new_credentials_before_rekey(self) -> tuple:
         """
-        BUG-20251221-030: Validate new credentials before replacing files.
+        CHG-20251223-030: Validate new credentials via mount before completing rekey.
 
-        Attempts to mount the volume with the new credentials to verify
-        the VeraCrypt credential change was successful.
+        Attempts to mount the volume with the NEW credentials to verify
+        the VeraCrypt credential change was successful. Old credentials
+        are NOT removed until this verification succeeds.
+
+        For GPG modes: derives password from NEW seed.gpg (stored in rekey_gpg_seed_edit)
+        For keyfile modes: uses keyfile path from rekey_keyfile_edit
+        For PW_ONLY: user must manually enter password
 
         Returns:
             tuple: (validation_passed: bool, user_chose_to_skip: bool)
@@ -6325,145 +7022,187 @@ class SettingsDialog(QDialog):
                 - (False, True): Validation failed but user chose to proceed anyway
                 - (False, False): Validation failed and user chose to abort
         """
-        # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
+        import platform
+
         self.rekey_status_label.setText(tr("rekey_validating", lang=get_lang()))
+        self.rekey_status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         QApplication.processEvents()
 
         try:
-            from scripts.veracrypt_cli import InvalidCredentialsError, VeraCryptError, try_mount, unmount
+            from scripts.veracrypt_cli import InvalidCredentialsError, try_mount, unmount
 
-            # Get volume path and mount point from config
+            # Get volume path from config
             if os.name == "nt":
                 volume_path = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.VOLUME_PATH, "")
-                mount_point = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
-                if mount_point and not mount_point.endswith(":"):
-                    mount_point = f"{mount_point}:"
+                configured_mount = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
             else:
                 volume_path = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.VOLUME_PATH, "")
-                mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+                configured_mount = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
 
-            if not volume_path or not mount_point:
-                # Can't validate without volume info - skip validation with warning
+            if not volume_path:
                 reply = QMessageBox.warning(
                     self,
                     tr("rekey_section_title", lang=get_lang()),
                     "⚠️ Cannot validate new credentials:\nVolume path not configured.\n\n"
                     "Do you want to proceed anyway?\n"
-                    "(Risk: If credential change failed, old files will be overwritten)",
+                    "(Risk: If credential change failed, old credentials will be lost)",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
                 return (False, reply == QMessageBox.StandardButton.Yes)
 
-            # Get new password from the form
-            new_password = self.rekey_new_password_edit.text()
-            if not new_password:
-                # If no password in form, can't validate
-                return (False, True)  # Skip validation, proceed anyway
-
-            # Get new keyfile if applicable
+            # Get target mode
             target_mode = getattr(self, "_rekey_target_mode", None)
-            keyfile_path = None
-            if target_mode in (SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value):
-                keyfile_text = self.rekey_keyfile_edit.text().strip()
-                if keyfile_text:
-                    keyfile_path = Path(keyfile_text)
+            if not target_mode:
+                target_mode = self.rekey_target_mode_combo.currentData()
 
-            # For GPG modes, derive the actual mount password
-            actual_password = new_password
+            # Derive/get new password based on target mode
+            new_password = None
+            new_keyfile = None
+
             if target_mode in (SecurityMode.GPG_PW_ONLY.value, SecurityMode.PW_GPG_KEYFILE.value):
-                # Need to derive password from GPG seed using the new password as PIN
-                try:
-                    gpg_seed_path = self.rekey_gpg_seed_edit.text().strip()
-                    if gpg_seed_path and Path(gpg_seed_path).exists():
-                        from core.secrets import SecretProvider
-
-                        provider = SecretProvider(config=self.config, smartdrive_dir=get_script_dir().parent)
-                        # This would derive the password using the seed and PIN
-                        # However, we can't easily test this without the full derivation logic
-                        # For now, skip validation for GPG modes with warning
-                        reply = QMessageBox.warning(
-                            self,
-                            tr("rekey_section_title", lang=get_lang()),
-                            "⚠️ GPG mode detected - automatic validation not available.\n\n"
-                            "Please verify manually that you can mount the volume\n"
-                            "with the new credentials before closing this dialog.\n\n"
-                            "Do you want to proceed?",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                            QMessageBox.StandardButton.No,
-                        )
-                        return (False, reply == QMessageBox.StandardButton.Yes)
-                except Exception as e:
-                    _gui_logger.warning(f"GPG derivation check failed: {e}")
-                    return (False, True)
-
-            # Try to mount with new credentials
-            # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
-            self.rekey_status_label.setText(tr("rekey_testing_mount", lang=get_lang()))
-            QApplication.processEvents()
-
-            try:
-                success, error_msg = try_mount(
-                    volume_path=volume_path,
-                    mount_point=mount_point,
-                    password=actual_password,
-                    keyfile_path=keyfile_path,
-                )
-
-                if success:
-                    # Unmount immediately after successful test
-                    # BUG-20251223-002 FIX: Use tr() instead of hardcoded strings
-                    self.rekey_status_label.setText(tr("rekey_validation_success", lang=get_lang()))
-                    QApplication.processEvents()
-                    try:
-                        unmount(mount_point)
-                    except Exception as e:
-                        # BUG-20251223-003 FIX: Log exception instead of silent swallowing
-                        _gui_logger.warning(f"Unmount cleanup after validation failed: {e}")
-                        pass  # Unmount failure is not critical for validation
-
-                    return (True, False)  # Validation passed
-                else:
-                    # Mount failed - warn user
+                # GPG mode: derive password from new seed
+                new_seed_path = self.rekey_gpg_seed_edit.text().strip()
+                if not new_seed_path:
                     reply = QMessageBox.warning(
                         self,
                         tr("rekey_section_title", lang=get_lang()),
-                        f"⚠️ VALIDATION FAILED\n\n"
-                        f"Could not mount volume with new credentials.\n"
-                        f"Error: {error_msg or 'Unknown error'}\n\n"
-                        f"This may mean the credential change in VeraCrypt failed.\n\n"
-                        f"⚠️ RISK: If you proceed, old credential files will be\n"
-                        f"replaced and you may be LOCKED OUT of your volume.\n\n"
-                        f"Do you want to proceed anyway?",
+                        "⚠️ Cannot validate: No new GPG seed path specified.\n\n" "Do you want to proceed anyway?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.No,
                     )
                     return (False, reply == QMessageBox.StandardButton.Yes)
 
-            except InvalidCredentialsError as e:
+                # Get salt (from generated seed or config)
+                salt_b64 = getattr(self, "_generated_seed_salt", None)
+                if not salt_b64:
+                    salt_b64 = self.config.get(ConfigKeys.SALT, "")
+                if not salt_b64:
+                    reply = QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        "⚠️ Cannot validate: No salt available for password derivation.\n\n"
+                        "Do you want to proceed anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    return (False, reply == QMessageBox.StandardButton.Yes)
+
+                # Derive password from new seed
+                self.rekey_status_label.setText(tr("status_deriving_yubikey_password", lang=get_lang()))
+                QApplication.processEvents()
+
+                try:
+                    import base64
+                    import subprocess
+                    from pathlib import Path
+
+                    from core.secrets import _derive_password_from_seed
+
+                    # Decrypt new seed using GPG
+                    seed_path = Path(new_seed_path)
+                    if not seed_path.exists():
+                        raise FileNotFoundError(f"Seed file not found: {new_seed_path}")
+
+                    # BUG-20251218-007: Include --no-tty flag for non-interactive GPG usage
+                    gpg_result = subprocess.run(
+                        ["gpg", "--decrypt", "--batch", "--quiet", "--no-tty", str(seed_path)],
+                        capture_output=True,
+                    )
+                    if gpg_result.returncode != 0:
+                        raise RuntimeError(f"GPG decryption failed: {gpg_result.stderr.decode()}")
+
+                    seed_bytes = gpg_result.stdout
+                    salt_bytes = base64.b64decode(salt_b64)
+                    new_password = _derive_password_from_seed(seed_bytes, salt_bytes, b"veracrypt-password")
+                except Exception as e:
+                    _gui_logger.error(f"Password derivation failed: {e}")
+                    reply = QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        f"⚠️ Password derivation failed:\n{e}\n\n" "Do you want to proceed anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    return (False, reply == QMessageBox.StandardButton.Yes)
+
+                # For PW_GPG_KEYFILE, also get new keyfile
+                if target_mode == SecurityMode.PW_GPG_KEYFILE.value:
+                    new_keyfile = self.rekey_keyfile_edit.text().strip()
+
+            elif target_mode == SecurityMode.PW_KEYFILE.value:
+                # Keyfile mode: get keyfile path, ask user for password
+                new_keyfile = self.rekey_keyfile_edit.text().strip()
+                if not new_keyfile:
+                    reply = QMessageBox.warning(
+                        self,
+                        tr("rekey_section_title", lang=get_lang()),
+                        "⚠️ Cannot validate: No new keyfile path specified.\n\n" "Do you want to proceed anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    return (False, reply == QMessageBox.StandardButton.Yes)
+
+                # Ask user to enter the new password for verification
+                new_password, ok = QInputDialog.getText(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    "Enter your NEW password for verification mount:",
+                    QLineEdit.EchoMode.Password,
+                )
+                if not ok:
+                    return (False, False)  # User cancelled
+
+            elif target_mode == SecurityMode.PW_ONLY.value:
+                # PW_ONLY mode: ask user to enter the new password
+                new_password, ok = QInputDialog.getText(
+                    self,
+                    tr("rekey_section_title", lang=get_lang()),
+                    "Enter your NEW password for verification mount:",
+                    QLineEdit.EchoMode.Password,
+                )
+                if not ok:
+                    return (False, False)  # User cancelled
+
+            else:
+                # Unknown mode - skip validation
                 reply = QMessageBox.warning(
                     self,
                     tr("rekey_section_title", lang=get_lang()),
-                    f"⚠️ CREDENTIALS INVALID\n\n"
-                    f"The new credentials were rejected by VeraCrypt.\n"
-                    f"Error: {e}\n\n"
-                    f"This means the credential change may have failed.\n\n"
-                    f"⚠️ RISK: Proceeding will overwrite old credential files!\n\n"
-                    f"Do you want to proceed anyway?",
+                    f"⚠️ Unknown target mode: {target_mode}\n\n" "Cannot validate credentials. Proceed anyway?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
                 return (False, reply == QMessageBox.StandardButton.Yes)
 
-            except VeraCryptError as e:
-                # Other VeraCrypt error - might be transient
+            # Use existing _verify_credentials_via_mount method
+            self.rekey_status_label.setText(tr("rekey_verifying_mount", lang=get_lang()))
+            QApplication.processEvents()
+
+            success, error = self._verify_credentials_via_mount(
+                volume_path=volume_path,
+                mount_point=configured_mount,
+                password=new_password or "",
+                keyfile_path=new_keyfile,
+            )
+
+            if success:
+                _gui_logger.info("New credentials verified successfully via mount")
+                self.rekey_status_label.setText("✅ " + tr("rekey_credentials_verified", lang=get_lang()))
+                self.rekey_status_label.setStyleSheet(f"color: {COLORS['success']}; font-size: 11px;")
+                QApplication.processEvents()
+                return (True, False)
+            else:
+                _gui_logger.warning(f"Credential verification failed: {error}")
                 reply = QMessageBox.warning(
                     self,
                     tr("rekey_section_title", lang=get_lang()),
-                    f"⚠️ VALIDATION ERROR\n\n"
-                    f"Could not validate new credentials.\n"
-                    f"Error: {e}\n\n"
-                    f"Do you want to proceed anyway?",
+                    f"⚠️ CREDENTIAL VERIFICATION FAILED\n\n"
+                    f"Error: {error}\n\n"
+                    f"This means the new credentials may not work.\n"
+                    f"Your old credentials are still preserved.\n\n"
+                    f"Do you want to proceed anyway?\n"
+                    f"(Risk: You may be locked out of your volume)",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -6471,7 +7210,6 @@ class SettingsDialog(QDialog):
 
         except Exception as e:
             _gui_logger.warning(f"Credential validation error: {e}")
-            # Unexpected error - allow user to decide
             reply = QMessageBox.warning(
                 self,
                 tr("rekey_section_title", lang=get_lang()),
@@ -6490,19 +7228,20 @@ class SettingsDialog(QDialog):
         CHG-20251221-003: Save generated GPG seed salt if available.
         CHG-20251221-029: Clean up temp keyfile if created.
         BUG-20251221-030: Added validation_skipped parameter for warning.
+        BUG-20251223-052: Finalize GPG→GPG seed transition (backup old, activate new).
 
         Args:
             validation_skipped: If True, validation was skipped (show warning).
         """
+        import os
+        from pathlib import Path
+
         # BUG-20251221-029: Use timezone.utc (module-level import) instead of datetime.UTC
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # CHG-20251221-029: Clean up temp keyfile if it was created during rekey
         if hasattr(self, "_temp_keyfile_path") and self._temp_keyfile_path:
             try:
-                import os
-                from pathlib import Path
-
                 temp_path = Path(self._temp_keyfile_path)
                 if temp_path.exists():
                     # Secure delete: overwrite with zeros before unlink
@@ -6516,10 +7255,40 @@ class SettingsDialog(QDialog):
             finally:
                 self._temp_keyfile_path = None
 
+        # BUG-20251223-052: Finalize GPG→GPG seed transition
+        # If we have a pending new seed that's different from the original, backup old and update config
+        pending_new_seed = getattr(self, "_pending_new_seed_path", None)
+        original_seed = getattr(self, "_original_seed_path", None)
+        if pending_new_seed and original_seed:
+            try:
+                new_seed_path = Path(pending_new_seed)
+                old_seed_path = Path(original_seed)
+
+                # Only process if new seed exists and is different from old
+                if new_seed_path.exists() and new_seed_path != old_seed_path:
+                    # Backup old seed with timestamp
+                    backup_suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                    backup_path = old_seed_path.with_suffix(f".gpg.backup_{backup_suffix}")
+
+                    if old_seed_path.exists():
+                        import shutil
+
+                        shutil.copy2(old_seed_path, backup_path)
+                        _gui_logger.info(f"Backed up old seed: {old_seed_path} → {backup_path}")
+
+                    # The new seed path will be used as-is (user chose location)
+                    # Config will be updated to point to new seed path
+                    _gui_logger.info(f"New seed finalized: {new_seed_path}")
+            except Exception as e:
+                _gui_logger.warning(f"Seed finalization warning: {e}")
+            finally:
+                self._pending_new_seed_path = None
+                self._original_seed_path = None
+
         # Update post_recovery to mark rekey completed
-        if "post_recovery" in self.config:
-            self.config["post_recovery"]["rekey_completed"] = True
-            self.config["post_recovery"]["rekey_completed_at"] = timestamp
+        if ConfigKeys.POST_RECOVERY in self.config:
+            self.config[ConfigKeys.POST_RECOVERY][ConfigKeys.POST_RECOVERY_REKEY_COMPLETED] = True
+            self.config[ConfigKeys.POST_RECOVERY][ConfigKeys.POST_RECOVERY_REKEY_COMPLETED_AT] = timestamp
 
         # CHG-20251221-001: Handle mode changes
         # BUG-20251221-040: ALWAYS update mode to target_mode to ensure consistency
@@ -6637,6 +7406,87 @@ class SettingsDialog(QDialog):
 
         # Store reference for language updates
         self.update_hint_label = hint_label
+
+    def _add_update_action_section(self, tab_layout: QVBoxLayout):
+        """
+        Add update action section with Run Update button and last update info.
+
+        CHG-20251222-016: Provides direct update execution from Updates tab.
+        """
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        tab_layout.addWidget(separator)
+
+        # Action group box
+        self.update_action_box = QGroupBox(tr("update_action_section_title", lang=get_lang()))
+        action_layout = QVBoxLayout()
+        action_layout.setSpacing(10)
+
+        # Last update info
+        info_layout = QFormLayout()
+        info_layout.setSpacing(6)
+
+        # Last update datetime
+        last_updated = self.config.get(ConfigKeys.LAST_UPDATED, "")
+        last_update_text = last_updated if last_updated else tr("update_never", lang=get_lang())
+        self.last_update_value = QLabel(last_update_text)
+        self.last_update_value.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        self.last_update_label = QLabel(tr("label_last_update", lang=get_lang()))
+        info_layout.addRow(self.last_update_label, self.last_update_value)
+
+        # Source info
+        source_type = self.config.get(ConfigKeys.UPDATE_SOURCE_TYPE, "")
+        if source_type == "local":
+            source_text = self.config.get(ConfigKeys.UPDATE_LOCAL_ROOT, "") or tr("update_source_none", lang=get_lang())
+        elif source_type == "server":
+            source_text = self.config.get(ConfigKeys.UPDATE_URL, "") or tr("update_source_none", lang=get_lang())
+        else:
+            source_text = tr("update_source_none", lang=get_lang())
+        self.last_update_source_value = QLabel(source_text)
+        self.last_update_source_value.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        self.last_update_source_value.setWordWrap(True)
+        self.last_update_source_label = QLabel(tr("label_last_update_source", lang=get_lang()))
+        info_layout.addRow(self.last_update_source_label, self.last_update_source_value)
+
+        action_layout.addLayout(info_layout)
+
+        # Run Update button
+        btn_layout = QHBoxLayout()
+        self.run_update_btn = QPushButton(tr("btn_run_update", lang=get_lang()))
+        self.run_update_btn.setToolTip(tr("tooltip_run_update", lang=get_lang()))
+        self.run_update_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS.get('primary_dark', COLORS['primary'])};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS.get('primary_darker', COLORS['primary'])};
+            }}
+            """
+        )
+        self.run_update_btn.clicked.connect(self._on_run_update_clicked)
+        btn_layout.addWidget(self.run_update_btn)
+        btn_layout.addStretch()
+        action_layout.addLayout(btn_layout)
+
+        self.update_action_box.setLayout(action_layout)
+        tab_layout.addWidget(self.update_action_box)
+
+    def _on_run_update_clicked(self):
+        """Handle Run Update button click from Settings Updates tab."""
+        # Close settings dialog and trigger update on main window
+        self.accept()
+        if self.parent is not None and hasattr(self.parent, "run_update"):
+            self.parent.run_update()
 
     def _add_integrity_section(self, tab_layout: QVBoxLayout):
         """
@@ -7240,7 +8090,8 @@ class SettingsDialog(QDialog):
         recovery_state = recovery_config.get("state", "")
 
         # Determine if this is a regeneration
-        is_regeneration = recovery_state == "RECOVERY_STATE_ENABLED"
+        # BUG-20251222-010 FIX: Check for "enabled" (constant value), not "RECOVERY_STATE_ENABLED"
+        is_regeneration = recovery_state == "enabled"
 
         # BUG-20251221-044 FIX: Show security warning if kit exists
         if is_regeneration:
@@ -7319,8 +8170,9 @@ class SettingsDialog(QDialog):
                 tr("recovery_generate_success_body", lang=get_lang(), path=kit_path),
             )
 
-            # Reload config to reflect new recovery state
-            self._reload_config()
+            # BUG-20251223-001 FIX: Call refresh_settings_values() not just _reload_config()
+            # refresh_settings_values() reloads config AND updates UI widgets including recovery_status_label
+            self.refresh_settings_values()
         else:
             self.recovery_generate_status.setText(tr(message_key, lang=get_lang(), **args))
             self.recovery_generate_status.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
@@ -7464,16 +8316,16 @@ class SettingsDialog(QDialog):
             # BUG-20251221-029: Use module-level timezone import instead of datetime.UTC
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            self.config["recovery"] = {
-                "enabled": False,
-                "used": True,
-                "state": "used",
-                "invalidated_at": timestamp,
+            self.config[ConfigKeys.RECOVERY] = {
+                ConfigKeys.RECOVERY_ENABLED: False,
+                ConfigKeys.RECOVERY_USED: True,
+                ConfigKeys.RECOVERY_STATE: "used",
+                ConfigKeys.RECOVERY_INVALIDATED_AT: timestamp,
             }
-            self.config["post_recovery"] = {
-                "rekey_required": True,
-                "rekey_completed": False,
-                "recovery_completed_at": timestamp,
+            self.config[ConfigKeys.POST_RECOVERY] = {
+                ConfigKeys.POST_RECOVERY_REKEY_REQUIRED: True,
+                ConfigKeys.POST_RECOVERY_REKEY_COMPLETED: False,
+                ConfigKeys.POST_RECOVERY_COMPLETED_AT: timestamp,
             }
             self._save_config_atomic()
 
@@ -7830,6 +8682,18 @@ class SettingsDialog(QDialog):
                 widget.currentIndexChanged.connect(self.on_theme_changed)
                 # Store as instance attribute for backward compatibility with tests
                 self.theme_combo = widget
+            # BUG-20251224-004 FIX: Special handling for security mode dropdown (SSOT - use i18n)
+            elif field.key == ConfigKeys.MODE:
+                mode_i18n_keys = {
+                    SecurityMode.PW_ONLY.value: "rekey_mode_pw_only",
+                    SecurityMode.PW_KEYFILE.value: "rekey_mode_pw_keyfile",
+                    SecurityMode.PW_GPG_KEYFILE.value: "rekey_mode_pw_gpg_keyfile",
+                    SecurityMode.GPG_PW_ONLY.value: "rekey_mode_gpg_pw_only",
+                }
+                for mode_value, i18n_key in mode_i18n_keys.items():
+                    widget.addItem(tr(i18n_key, lang=get_lang()), mode_value)
+                widget.currentIndexChanged.connect(self._on_security_mode_changed)
+                self.security_mode_combo = widget
             # Generic dropdown from options
             elif field.options:
                 for display, value in field.options:
@@ -8131,6 +8995,59 @@ class SettingsDialog(QDialog):
             except Exception as e:
                 log_exception("Error showing restart info label", e, level="debug")
 
+    def _on_security_mode_changed(self, index):
+        """
+        Handle security mode dropdown change with immediate field visibility update.
+        BUG-20251224-004 FIX: Real-time settings refresh when security mode changes.
+        """
+        widget = self.sender()
+        if widget is None and hasattr(self, "security_mode_combo"):
+            widget = self.security_mode_combo
+        if widget is None:
+            return
+        selected_mode = widget.itemData(index)
+        if selected_mode:
+            # Update pending config
+            self._pending_config[ConfigKeys.MODE] = selected_mode
+            self._config_dirty = True
+
+            # Update field visibility based on new mode
+            # This refreshes which fields are shown/hidden (e.g., keyfile fields, GPG fields)
+            try:
+                self._refresh_conditional_fields()
+            except Exception as e:
+                log_exception(f"Error refreshing conditional fields for mode '{selected_mode}'", e)
+
+            # Show "restart not required" message
+            try:
+                if hasattr(self, "restart_info_label") and self.restart_info_label:
+                    self.restart_info_label.setText(tr("settings_restart_not_required", lang=get_lang()))
+                    self.restart_info_label.setVisible(True)
+            except Exception as e:
+                log_exception("Error showing restart info label", e, level="debug")
+
+    def _refresh_conditional_fields(self):
+        """
+        Refresh visibility of fields with visibility_condition based on current pending config.
+        BUG-20251224-004 FIX: Real-time settings refresh.
+        """
+        for field in self.schema:
+            if field.visibility_condition is not None:
+                field_key = self._make_field_key(field)
+                # Check visibility using pending config (not committed config)
+                should_show = field.visibility_condition(self._pending_config)
+
+                # Find the field widget and its row in the layout
+                if field_key in self.field_widgets:
+                    widget = self.field_widgets[field_key]
+                    widget.setVisible(should_show)
+
+                    # Also hide/show the label
+                    if field_key in self.field_labels:
+                        label = self.field_labels[field_key]
+                        if hasattr(label, "setVisible"):
+                            label.setVisible(should_show)
+
     def refresh_dialog_labels(self, lang_code: str):
         """Refresh all labels in the settings dialog to new language."""
         self.setWindowTitle(tr("settings_window_title", lang=lang_code))
@@ -8269,15 +9186,60 @@ class SettingsDialog(QDialog):
         # Update recovery status label if it exists
         if hasattr(self, "recovery_status_label"):
             recovery_cfg = self.config.get("recovery", {})
-            if recovery_cfg.get("enabled") and recovery_cfg.get("state") == "RECOVERY_STATE_ENABLED":
+            # BUG-20251222-010 FIX: Check for "enabled"/"used" (constant values), not "RECOVERY_STATE_*"
+            if recovery_cfg.get("enabled") and recovery_cfg.get("state") == "enabled":
                 self.recovery_status_label.setText(tr("recovery_kit_available", lang=get_lang()))
                 self.recovery_status_label.setStyleSheet(f"color: {COLORS['success']};")
-            elif recovery_cfg.get("used") or recovery_cfg.get("state") == "RECOVERY_STATE_USED":
+            elif recovery_cfg.get("used") or recovery_cfg.get("state") == "used":
                 self.recovery_status_label.setText(tr("recovery_kit_used", lang=get_lang()))
                 self.recovery_status_label.setStyleSheet(f"color: {COLORS['warning']};")
             else:
                 self.recovery_status_label.setText(tr("recovery_kit_not_configured", lang=get_lang()))
                 self.recovery_status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+
+        # BUG-20251224-003: Also update schema-driven recovery status field widget
+        # The field_key for RECOVERY_ENABLED is "recovery.enabled" (from nested_path)
+        recovery_field_key = f"{ConfigKeys.RECOVERY}.{ConfigKeys.RECOVERY_ENABLED}"
+        if recovery_field_key in self.field_widgets:
+            recovery_cfg = self.config.get("recovery", {})
+            state = recovery_cfg.get("state", "")
+            used = recovery_cfg.get("used", False)
+            enabled = recovery_cfg.get("enabled", False)
+
+            # Priority 1: Explicitly marked as used
+            if used or state == "used":
+                status_text = tr("recovery_kit_used", lang=get_lang())
+                status_color = COLORS.get("warning", "#FFA500")
+            # Priority 2: Enabled (state "enabled" or missing state for legacy)
+            elif enabled and (state == "enabled" or state == ""):
+                status_text = tr("recovery_kit_available", lang=get_lang())
+                status_color = COLORS.get("success", "#28a745")
+            else:
+                status_text = tr("recovery_kit_not_configured", lang=get_lang())
+                status_color = COLORS.get("error", "#dc3545")
+
+            # Check if HTML recovery kit file still exists on device (warning)
+            html_warning = ""
+            try:
+                recovery_dir = Paths.recovery_dir(self._launcher_root)
+                html_file = recovery_dir / f"{Branding.PRODUCT_NAME}{FileNames.RECOVERY_KIT_HTML_SUFFIX}"
+                if html_file.exists():
+                    html_warning = tr("recovery_html_warning", lang=get_lang())
+            except Exception as e:
+                _gui_logger.debug(f"Error checking for HTML recovery file: {e}")
+
+            # Update the widget
+            widget = self.field_widgets[recovery_field_key]
+            if html_warning:
+                widget.setText(f"{status_text}\n⚠️ {html_warning}")
+                widget.setWordWrap(True)
+                widget.setStyleSheet(
+                    f"color: {status_color}; font-weight: bold; "
+                    f"background-color: #fff3cd; padding: 4px; border-radius: 4px;"
+                )
+            else:
+                widget.setText(status_text)
+                widget.setStyleSheet(f"color: {status_color}; font-weight: bold;")
 
         _gui_logger.info("Settings values refreshed from disk")
 

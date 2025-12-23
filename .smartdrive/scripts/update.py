@@ -834,10 +834,25 @@ if __name__ == "__main__":
 
                 # Copy payload directly to deploy_root
                 # dirs_exist_ok=True allows overlay without removing existing files
+                # BUG-20251224-003 FIX: Skip protected user data files during overlay
+                skipped_protected = 0
                 for item in payload_dir.rglob("*"):
                     if item.is_file():
                         # Compute relative path from payload root
                         rel_path = item.relative_to(payload_dir)
+                        
+                        # BUG-20251224-003: Check if any path component is protected
+                        # Protected items: config.json, keys/, integrity/, recovery_kits/
+                        is_protected = False
+                        for part in rel_path.parts:
+                            if part in PROTECTED:
+                                is_protected = True
+                                break
+                        
+                        if is_protected:
+                            skipped_protected += 1
+                            continue  # NEVER overwrite user data
+                        
                         dst = deploy_root / rel_path
 
                         # Ensure parent directory exists
@@ -846,7 +861,7 @@ if __name__ == "__main__":
                         # Copy file (overwrites if exists)
                         shutil.copy2(item, dst)
 
-                _log_update("update.overlay.complete")
+                _log_update("update.overlay.complete", skipped_protected=skipped_protected)
 
                 # Update version in config.json
                 cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON

@@ -86,7 +86,7 @@ def get_ram_temp_dir():
     return Path(tempfile.gettempdir())
 
 
-def find_available_mount_letter(preferred_letter: str = "V") -> str:
+def find_available_mount_letter(preferred_letter: str = "V", max_attempts: int = 3) -> tuple[str, list[str]]:
     """
     BUG-20251221-037: Find an available Windows drive letter for mounting.
 
@@ -95,12 +95,13 @@ def find_available_mount_letter(preferred_letter: str = "V") -> str:
 
     Args:
         preferred_letter: The preferred mount letter (uppercase)
+        max_attempts: Maximum number of letters to try before giving up
 
     Returns:
-        An available uppercase drive letter
+        Tuple of (available_letter, list_of_attempted_letters)
 
     Raises:
-        RuntimeError if no drive letter is available
+        RuntimeError if no drive letter is available after max_attempts
     """
     # System letters to avoid (floppy drives and typical system drive)
     reserved_letters = {"A", "B", "C"}
@@ -119,12 +120,110 @@ def find_available_mount_letter(preferred_letter: str = "V") -> str:
         if letter not in letters_to_try and letter not in reserved_letters:
             letters_to_try.append(letter)
 
-    # Find first available letter
-    for letter in letters_to_try:
+    # Find first available letter (limited by max_attempts)
+    attempted = []
+    for letter in letters_to_try[:max_attempts]:
+        attempted.append(letter)
         if not Path(f"{letter}:\\").exists():
-            return letter
+            return letter, attempted
 
-    raise RuntimeError("No available drive letters found. All letters D-Z are in use.")
+    # All attempted letters were in use
+    raise RuntimeError(
+        f"Could not find an available mount point after {max_attempts} attempts.\n\n"
+        f"All drive letters D-Z are in use (Windows) or mount point alternatives failed (Unix).\n\n"
+        "This is a mount point issue, NOT a credential problem."
+    )
+
+
+def is_mount_point_available_unix(mount_point: Path) -> bool:
+    """
+    BUG-20251221-037: Check if a Unix mount point is available for mounting.
+
+    A mount point is considered unavailable if:
+    - It already has something mounted there (checked via /proc/mounts or mount command)
+    - It exists and contains files (non-empty directory)
+
+    Args:
+        mount_point: Path to the mount point directory
+
+    Returns:
+        True if mount point is available, False otherwise
+    """
+    # If directory doesn't exist, it's available (will be created)
+    if not mount_point.exists():
+        return True
+
+    # Check if it's a mount point (something already mounted)
+    try:
+        # On Linux, check /proc/mounts
+        proc_mounts = Path("/proc/mounts")
+        if proc_mounts.exists():
+            with proc_mounts.open("r") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2 and Path(parts[1]) == mount_point.resolve():
+                        return False  # Already a mount point
+
+        # On macOS, use mount command
+        if platform.system() == "Darwin":
+            result = subprocess.run(["mount"], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split("\n"):
+                if f" on {mount_point} " in line or f" on {mount_point.resolve()} " in line:
+                    return False  # Already a mount point
+    except Exception:
+        pass  # If we can't check, assume it's not mounted
+
+    # Check if directory is non-empty
+    try:
+        if mount_point.is_dir():
+            # Check if directory has any contents
+            contents = list(mount_point.iterdir())
+            if contents:
+                return False  # Non-empty directory
+    except PermissionError:
+        return False  # Can't access, consider unavailable
+
+    return True
+
+
+def find_available_mount_point_unix(preferred_path: str, max_attempts: int = 3) -> tuple[Path, list[Path]]:
+    """
+    BUG-20251221-037: Find an available Unix mount point.
+
+    Tries the preferred path first, then iterates with numbered suffixes.
+    E.g., ~/veradrive -> ~/veradrive_1 -> ~/veradrive_2
+
+    Args:
+        preferred_path: The preferred mount point path (may contain ~)
+        max_attempts: Maximum number of paths to try before giving up
+
+    Returns:
+        Tuple of (available_path, list_of_attempted_paths)
+
+    Raises:
+        RuntimeError if no mount point is available after max_attempts
+    """
+    base_path = Path(os.path.expanduser(preferred_path))
+    attempted = []
+
+    # Try preferred path first
+    attempted.append(base_path)
+    if is_mount_point_available_unix(base_path):
+        return base_path, attempted
+
+    # Try numbered alternatives
+    for i in range(1, max_attempts):
+        alt_path = base_path.parent / f"{base_path.name}_{i}"
+        attempted.append(alt_path)
+        if is_mount_point_available_unix(alt_path):
+            return alt_path, attempted
+
+    # All attempted paths were unavailable
+    raise RuntimeError(
+        f"Could not find an available mount point after {max_attempts} attempts.\n\n"
+        f"Tried: {', '.join(str(p) for p in attempted)}\n\n"
+        "This is a mount point issue, NOT a credential problem."
+    )
 
 
 def secure_delete(file_path, passes=3):
@@ -1396,6 +1495,12 @@ def resolve_volume_path_windows(config_volume_path: str, script_path: Path) -> s
 
 
 def mount_veracrypt_windows(vc_exe: Path, cfg: dict, tmp_keys: list[Path] | None, password: str) -> None:
+    """
+    Mount a VeraCrypt volume on Windows.
+
+    BUG-20251221-037: Implements automatic mount letter fallback with user preference,
+    retry logic, and clear error messages distinguishing mount point issues from credentials.
+    """
     cfg_win = cfg.get(ConfigKeys.WINDOWS) or {}
     volume_path = (cfg_win.get(ConfigKeys.VOLUME_PATH) or "").strip()
     if not volume_path:
@@ -1410,26 +1515,50 @@ def mount_veracrypt_windows(vc_exe: Path, cfg: dict, tmp_keys: list[Path] | None
     validate_volume_path_windows(volume_path)
 
     mount_letter = (cfg_win.get(ConfigKeys.MOUNT_LETTER) or "").strip().upper() or "V"
-
-    # BUG-20251221-037: Auto-find available mount letter if configured one is in use
     original_letter = mount_letter
-    if Path(f"{mount_letter}:\\").exists():
-        log(f"Drive letter {mount_letter}: is in use, finding alternative...")
-        mount_letter = find_available_mount_letter(mount_letter)
-        log(f"Using alternative drive letter: {mount_letter}:")
 
-        # Update config with new mount letter for future mounts
+    # BUG-20251221-037: Check user preference for mount fallback
+    # Default is True (enabled) per Defaults.ALLOW_MOUNT_FALLBACK
+    allow_fallback = cfg_win.get(ConfigKeys.ALLOW_MOUNT_FALLBACK, Defaults.ALLOW_MOUNT_FALLBACK)
+
+    # Check if configured mount letter is in use
+    if Path(f"{mount_letter}:\\").exists():
+        if not allow_fallback:
+            # Fallback disabled - fail with clear error message
+            raise RuntimeError(
+                f"Mount point {mount_letter}: is already in use.\n\n"
+                f"To avoid this error in future, enable 'Auto-use alternative mount point' "
+                f"in Settings → Windows tab."
+            )
+
+        # Fallback enabled - find alternative
+        log(f"Drive letter {mount_letter}: is in use, finding alternative...")
         try:
-            # Derive config path from script location (script is in .smartdrive/scripts/)
-            config_path = script_path.parent.parent / CONFIG_FILENAME
-            if config_path.exists():
-                cfg_win[ConfigKeys.MOUNT_LETTER] = mount_letter
-                cfg[ConfigKeys.WINDOWS] = cfg_win
-                with config_path.open("w", encoding="utf-8") as f:
-                    json.dump(cfg, f, indent=2)
-                log(f"Updated config.json with new mount letter: {mount_letter}")
-        except Exception as e:
-            log(f"Warning: Could not update config with new mount letter: {e}")
+            mount_letter, attempted = find_available_mount_letter(mount_letter, max_attempts=Limits.MOUNT_MAX_ATTEMPTS)
+            log(f"Using alternative drive letter: {mount_letter}: (tried {len(attempted)} letters)")
+
+            # Update config with new mount letter for future mounts
+            try:
+                config_path = script_path.parent.parent / CONFIG_FILENAME
+                if config_path.exists():
+                    cfg_win[ConfigKeys.MOUNT_LETTER] = mount_letter
+                    cfg[ConfigKeys.WINDOWS] = cfg_win
+                    with config_path.open("w", encoding="utf-8") as f:
+                        json.dump(cfg, f, indent=2)
+                    log(f"Updated config.json with new mount letter: {mount_letter}")
+                    log(
+                        f"⚠ Warning: Configured mount point {original_letter}: was unavailable. Using {mount_letter}: instead. Config updated."
+                    )
+            except Exception as e:
+                log(f"Warning: Could not update config with new mount letter: {e}")
+
+        except RuntimeError as e:
+            # All attempted letters were in use
+            raise RuntimeError(
+                f"Could not find an available mount point after {Limits.MOUNT_MAX_ATTEMPTS} attempts.\n\n"
+                f"All drive letters D-Z are in use (Windows).\n\n"
+                "This is a mount point issue, NOT a credential problem."
+            ) from e
 
     log(f"Mounting VeraCrypt volume on Windows as drive {mount_letter}:")
     log(f"  Volume path: {volume_path}")
@@ -1589,6 +1718,12 @@ IconResource=drive_icon.ico,0
 
 
 def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) -> None:
+    """
+    Mount a VeraCrypt volume on Unix (Linux/macOS).
+
+    BUG-20251221-037: Implements automatic mount point fallback with user preference,
+    retry logic, and clear error messages distinguishing mount point issues from credentials.
+    """
     cfg_unix = cfg.get(ConfigKeys.UNIX) or {}
     volume_path = (cfg_unix.get(ConfigKeys.VOLUME_PATH) or "").strip()
     if not volume_path:
@@ -1598,7 +1733,56 @@ def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) 
     validate_volume_path_unix(volume_path)
 
     mount_point_raw = (cfg_unix.get(ConfigKeys.MOUNT_POINT) or "").strip() or "~/veradrive"
+    original_mount_point = mount_point_raw
+
+    # BUG-20251221-037: Check user preference for mount fallback
+    # Default is True (enabled) per Defaults.ALLOW_MOUNT_FALLBACK
+    allow_fallback = cfg_unix.get(ConfigKeys.ALLOW_MOUNT_FALLBACK, Defaults.ALLOW_MOUNT_FALLBACK)
+
+    # Check if configured mount point is available
     mount_point = Path(os.path.expanduser(mount_point_raw))
+    if not is_mount_point_available_unix(mount_point):
+        if not allow_fallback:
+            # Fallback disabled - fail with clear error message
+            raise RuntimeError(
+                f"Mount point {mount_point} is already in use.\n\n"
+                f"To avoid this error in future, enable 'Auto-use alternative mount point' "
+                f"in Settings → Unix tab."
+            )
+
+        # Fallback enabled - find alternative
+        log(f"Mount point {mount_point} is in use, finding alternative...")
+        try:
+            mount_point, attempted = find_available_mount_point_unix(
+                mount_point_raw, max_attempts=Limits.MOUNT_MAX_ATTEMPTS
+            )
+            log(f"Using alternative mount point: {mount_point} (tried {len(attempted)} paths)")
+
+            # Update config with new mount point for future mounts
+            try:
+                script_path = Path(__file__).resolve()
+                config_path = script_path.parent.parent / CONFIG_FILENAME
+                if config_path.exists():
+                    cfg_unix[ConfigKeys.MOUNT_POINT] = str(mount_point)
+                    cfg[ConfigKeys.UNIX] = cfg_unix
+                    with config_path.open("w", encoding="utf-8") as f:
+                        json.dump(cfg, f, indent=2)
+                    log(f"Updated config.json with new mount point: {mount_point}")
+                    log(
+                        f"⚠ Warning: Configured mount point {original_mount_point} was unavailable. Using {mount_point} instead. Config updated."
+                    )
+            except Exception as e:
+                log(f"Warning: Could not update config with new mount point: {e}")
+
+        except RuntimeError as e:
+            # All attempted paths were unavailable
+            raise RuntimeError(
+                f"Could not find an available mount point after {Limits.MOUNT_MAX_ATTEMPTS} attempts.\n\n"
+                f"Mount point alternatives failed (Unix).\n\n"
+                "This is a mount point issue, NOT a credential problem."
+            ) from e
+
+    # Create mount point directory
     mount_point.mkdir(parents=True, exist_ok=True)
 
     log(f"Mounting VeraCrypt volume on Unix at {mount_point}:")

@@ -311,6 +311,14 @@ class ConfigKeys:
     MOUNT_POINT = "mount_point"
     VERACRYPT_PATH = "veracrypt_path"
 
+    # BUG-20251221-037: Mount point fallback behavior
+    # When enabled, system automatically tries alternative mount points if configured one is occupied
+    # Default: True (enabled). When disabled, shows error suggesting to enable in settings.
+    ALLOW_MOUNT_FALLBACK = "allow_mount_fallback"
+    # Platform-specific nested paths
+    WINDOWS_ALLOW_MOUNT_FALLBACK = "windows.allow_mount_fallback"
+    UNIX_ALLOW_MOUNT_FALLBACK = "unix.allow_mount_fallback"
+
     # Multi-drive context (CHG-20251221-026)
     # BUG-20251223-001 FIX: Separate keys for Windows and Unix launcher_root display fields
     # These are read-only UI fields that show the current .smartdrive context (not saved to config)
@@ -387,6 +395,21 @@ class ConfigKeys:
     RECOVERY_INVALIDATED_AT = "invalidated_at"
     RECOVERY_INVALIDATION_REASON = "invalidation_reason"
     RECOVERY_INVALIDATED_BY_VERSION = "invalidated_by_version"
+    # CHG-20251222-017: Recovery state tracking
+    RECOVERY_STATE = "state"
+    RECOVERY_USED = "used"
+    RECOVERY_CONTAINER_PATH = "recovery_container_path"
+
+    # Post-recovery state tracking (CHG-20251222-017: SSOT keys for post-recovery state)
+    POST_RECOVERY = "post_recovery"
+    POST_RECOVERY_REKEY_REQUIRED = "rekey_required"
+    POST_RECOVERY_REKEY_COMPLETED = "rekey_completed"
+    POST_RECOVERY_REKEY_COMPLETED_AT = "rekey_completed_at"
+    POST_RECOVERY_COMPLETED_AT = "recovery_completed_at"
+    POST_RECOVERY_POLICY = "post_recovery_policy"
+
+    # YubiKey configuration (CHG-20251222-017: SSOT key)
+    YUBIKEY_SLOT = "yubikey_slot"
 
     # Legacy alias: SECURITY_MODE -> MODE (TODO 6: migration shim)
     # Some code may reference SECURITY_MODE, but SSOT key is "mode"
@@ -725,6 +748,10 @@ class Defaults:
     # Mount points
     WINDOWS_MOUNT_LETTER = "V"
     UNIX_MOUNT_POINT = "~/veradrive"
+
+    # BUG-20251221-037: Mount point fallback behavior
+    # Default: True - automatically try alternative mount points when configured one is occupied
+    ALLOW_MOUNT_FALLBACK = True
 
     # Config schema
     SCHEMA_VERSION = 2

@@ -47,20 +47,29 @@ def _read_constants() -> str:
 
 
 class TestSwitchDriveMenu:
-    """Test Switch Drive submenu in tools menu."""
+    """
+    Test Switch Drive submenu REMOVAL from tools menu.
 
-    def test_switch_drive_menu_added_to_tools_menu(self):
-        """Verify Switch Drive submenu is added to tools menu."""
+    BUG-20251222-012: "Switch Drive" menu removed per user request.
+    These tests verify the menu is NOT in the gear menu (was removed for simplicity).
+    The helper methods still exist for internal use by Remote Control mode.
+    """
+
+    def test_switch_drive_menu_not_in_gear_menu(self):
+        """Verify Switch Drive submenu is NOT added to gear menu (BUG-20251222-012)."""
         content = _read_gui()
-        assert 'switch_drive_menu = menu.addMenu(tr("menu_switch_drive"' in content
+        # The menu should NOT be added via addMenu
+        assert 'switch_drive_menu = menu.addMenu(tr("menu_switch_drive"' not in content
+        # But the bug fix comment should exist explaining why
+        assert "BUG-20251222-012" in content
 
-    def test_populate_switch_drive_menu_exists(self):
-        """Verify _populate_switch_drive_menu helper exists."""
+    def test_populate_switch_drive_menu_helper_still_exists(self):
+        """Verify _populate_switch_drive_menu helper exists (for internal/remote use)."""
         content = _read_gui()
         assert "def _populate_switch_drive_menu(self, menu:" in content
 
     def test_browse_for_drive_context_exists(self):
-        """Verify _browse_for_drive_context method exists."""
+        """Verify _browse_for_drive_context method exists (for internal use)."""
         content = _read_gui()
         assert "def _browse_for_drive_context(self)" in content
 

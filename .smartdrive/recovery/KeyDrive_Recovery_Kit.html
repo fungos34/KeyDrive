@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>KeyDrive Recovery Kit</title>
+    <style>
+        @media print {
+            body { margin: 0.5in; }
+            .no-print { display: none; }
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            max-width: 8.5in;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.4;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 3px solid #c00;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            color: #c00;
+            margin-bottom: 5px;
+        }
+        .warning {
+            background: #fee;
+            border: 2px solid #c00;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .warning h3 {
+            color: #c00;
+            margin-top: 0;
+        }
+        .phrase-section {
+            background: #f8f8f8;
+            border: 2px solid #333;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .phrase-section h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        td {
+            border: 1px solid #ccc;
+            padding: 8px 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .word-num {
+            color: #666;
+            font-size: 12px;
+        }
+        .hash {
+            font-family: monospace;
+            background: #eee;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+        .offline-section {
+            margin-top: 30px;
+            page-break-before: always;
+        }
+        .chunk {
+            margin: 15px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .chunk-header {
+            background: #333;
+            color: white;
+            padding: 8px 12px;
+            font-weight: bold;
+        }
+        .chunk-data {
+            background: #f5f5f5;
+            padding: 10px;
+            margin: 0;
+            font-size: 10px;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        .instructions {
+            background: #eff;
+            border: 1px solid #0aa;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
+            font-size: 12px;
+            color: #666;
+        }
+        .qr-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f8f8;
+            border: 2px solid #333;
+            border-radius: 5px;
+        }
+        .qr-section h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+        .qr-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .qr-chunk {
+            text-align: center;
+            padding: 10px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .qr-chunk img {
+            max-width: 150px;
+            height: auto;
+        }
+        .qr-chunk p {
+            margin: 10px 0 0 0;
+            font-size: 12px;
+            color: #666;
+        }
+        .note {
+            font-size: 12px;
+            color: #666;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔐 SMARTDRIVE RECOVERY KIT</h1>
+        <p>Volume: <strong>Unknown</strong></p>
+        <p>Security Mode: <strong>Password Only (no keyfile)</strong></p>
+        <p>Generated: 2025-12-22 20:37:36 | Version: <strong>v0.0.1</strong></p>
+    </div>
+    
+    <div class="warning">
+        <h3>⚠️ CRITICAL SECURITY WARNINGS</h3>
+        <ul>
+            <li><strong>PRINT THIS PAGE</strong> and store in a secure physical location</li>
+            <li><strong>DELETE THE DIGITAL FILE</strong> after printing</li>
+            <li><strong>ANYONE WITH THIS PHRASE</strong> can access your encrypted data</li>
+            <li><strong>ONE-TIME USE ONLY</strong> - recovery invalidates this kit</li>
+            <li><strong>MANDATORY REKEY</strong> - you must change credentials after recovery</li>
+        </ul>
+    </div>
+    
+    
+    
+    <div class="phrase-section">
+        <h2>📝 24-Word Recovery Phrase</h2>
+        <p>Write down these words <strong>in order</strong>. Each word is important.</p>
+        <table>
+            <tr><td><span class="word-num">1.</span> lawn</td><td><span class="word-num">2.</span> wood</td><td><span class="word-num">3.</span> typical</td><td><span class="word-num">4.</span> income</td><td><span class="word-num">5.</span> toy</td><td><span class="word-num">6.</span> vendor</td></tr>
+<tr><td><span class="word-num">7.</span> magic</td><td><span class="word-num">8.</span> trick</td><td><span class="word-num">9.</span> allow</td><td><span class="word-num">10.</span> rotate</td><td><span class="word-num">11.</span> predict</td><td><span class="word-num">12.</span> diesel</td></tr>
+<tr><td><span class="word-num">13.</span> sign</td><td><span class="word-num">14.</span> noble</td><td><span class="word-num">15.</span> grain</td><td><span class="word-num">16.</span> mango</td><td><span class="word-num">17.</span> tattoo</td><td><span class="word-num">18.</span> soccer</td></tr>
+<tr><td><span class="word-num">19.</span> loop</td><td><span class="word-num">20.</span> save</td><td><span class="word-num">21.</span> road</td><td><span class="word-num">22.</span> broccoli</td><td><span class="word-num">23.</span> accuse</td><td><span class="word-num">24.</span> shove</td></tr>
+        </table>
+        <p>Verification hash: <span class="hash">050a22463aa2048a</span></p>
+        <p><em>This hash can be used to verify you've entered the phrase correctly.</em></p>
+    </div>
+    
+    
+    <div class="qr-section">
+        <h2>📱 QR Codes for Easy Scanning</h2>
+        <p>Scan these QR codes to quickly capture your recovery phrase:</p>
+        <div class="qr-container">
+            
+                <div class="qr-chunk">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIcAAACHAQAAAAAUnHenAAACQElEQVR4nL1WzWrcMBgcWVu0l9jnBSUK9CW0sKC8SvsCtdu7f265NH6C9lXqhYD2licIKKtDj7Vz8lKvv+Dc2tMXKPXJCAZ/M99oxoLw50PJXwfAvzrBBOjcQpBpyfRAyUNVpIU3vdVijANNLFSCYQ262d89yGp9jf01e2Y5n+SX7nGgU/0Gpufa4Vshrw6Kj8pGmRy0uH062k3tAhPViPPQXR7VDgeQWPGUJyKa3ZQ7WSuzvPOUL4HcIfNx6HTmufsqETJvZidrG0plmN+ClT1M0yG3RD7yUNRSnJ1sCTmotlxvfLjZidvNr3Vs/LkHzxsrAI/C+Yv95t2PFaC5ynukCtW4kBrYGhZdqLopX1ZmqJNMNYh07sysYkuhYmqYnJN9NE14xo7E9fMbeOmsCyXkbJGNmslL+FCMk/A6VyF1XF6Dh6BQWg0lB2KiptJNqQqwsXdxVkzlqelMQ7Hxsrem9Tz3Jrio7gGd2iC6eyoea96EWSfrZbZQOtlbpuen0sZmjNQtAvZsXrMzM+LdoklsmCmKKbXU21BR7FXImD5MkKsVHgBsr7D7VHHbQRDV0MUiPkrFy6gEF+Jyhsy223MRP+OSqXzqYjtO5XJT5B3Xh1OqIPxiqtyGpSm4t3ISFHIbZ6urjp2HWCJXeOQqFEwfYunKYlyapXe66rhbzpXOvKkRxBigQsnNQ+D01Hby69q09v1vdsMelaZqc8T+aXti7WvpSnw/4ePhZ+vNleUl9quGKXT1msBgOkr8xz+iF+xoRUU25bpbAAAAAElFTkSuQmCC" alt="QR Code 1/2" />
+                    <p>Words 1-12<br/>(1 of 2)</p>
+                </div>
+                
+                <div class="qr-chunk">
+                    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIcAAACHAQAAAAAUnHenAAACZUlEQVR4nL1WsYrbQBB9qzXsNSeZdAd7J8GlD9fJcCD/Qb4h3A9I3VUnKWlSWf6C6/MJ7tZgkDt/QWDxGpIqSJdGAkkTnC6p5iBky4Fh3sx7b2YF4c9H3l8B4F9FMABamJA6VyBsgCdeVk5ho1wTa9G5lgZWlof2As9YzNUpPYzFNmIhnAEY3SZ6t1HkyR+HV3RaPSLFaY2rgj2NnLSvdIqw7SS/r1LgwUDUY3G4ysWMV4uIhqAbgk6nsc2JJlatsdjPPgSgi1PwORFiLLgsu8pYUbtGDSmTZQ9P6h5JUiBa94DSPL7k/G735svJ762/lGH7/ZmHMDMQBj7CKaaqC1nTAK2UzUk28ZDVNgWPrxlE+/bF9LN4Jt5r0Z24itq7I26LvWvi25s9U1G0UmFlXGWGJ1gfPJZBk3JTLCtyjQonaCZf67v7n6Y/bq/nvf1UWybCKaaS3BQPgZGt4c0QNKmwUG5SNqjhJ9y+yLgitpmRjaIGkqd5ILlulEbydYWxNFc8zVOhXKEGxNScKzoewiEzOqPBh86NnGJulg+aYAOyaSIbxeRLNsnsYyKPuJ1vtWh3PB2OXm+DMlpv+9bsaMlzJahQchUj6JAZm3e8yWMQxlGtU0UlyUlZZl/jcuHhW7WJLhd4ie+5+9DYNKay0ylsylXU4CtktfWBvNMAF2HbDc/QD50TF8gND6E3ChHRo7o5jJM6vbzipoQVyfJ8MW3O1mGqdF7LJgnL2p7txr16UjzawOwuF1Fg2JsNyDbAPnpJwmPC85d31tLlMkKPdDuutrxav/8bQe1WZ39privFf/wR/QL5o0ncodV5XQAAAABJRU5ErkJggg==" alt="QR Code 2/2" />
+                    <p>Words 13-24<br/>(2 of 2)</p>
+                </div>
+                
+        </div>
+        
+            <div class="qr-chunk" style="margin-top: 20px;">
+                <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIIAAACCAQAAAACieC1QAAADCUlEQVR4nK1WPWtlRwzVswxhQUGGtGlSuTIIJpBmHjJs5Wr/RCBVqrQpA2n3ByzkNwTSGsaMwc2YeZBqweW2Bj10Ic08FNzlQ4YUud0M4ujoSDpzdwF//+7O/nEB8J9ujrv9/f50cfx8u98d73fnWQwGnA4P24Vf7Oc1qCUx4CggdTpD7QOltH/HnAMg48/b6eqP369YTq8xfP6w//7w8OYK9k8pZ/AoPRzRvGtR9STXzi7KX46PeJvgRHhf3NFQkDUiwQEH9VrRwJqog2YxAYsYAagXqhM4i1muunSuAKpAM80Vq2sMnqQlVjPMYsywWi2GNooWznX+ct0BwLvbt+2xfNjomOEoU6hYsRp1aIYDq8Za3PvqlZhbmmuDHX/1/PAG5OBHeEtpv2i08CrQg/pMcWBFcZq6XMZasLKegsGQF5WN+oCKee36LRF++nh9Cd/5Cb7IZox/avib3GzvG715eoct47wEGoOFl9pf2KWz4e7yUtwMoZnPxnIMm6hsQyU07Wksm8Rl1j7rJJ75jEHBCY5raAXPe2GH+nD0g3wD72l7THfHBGZt3CCwhqUagneXsIVWPJZbNs/nIHsGerDrjze4Ha4k1bAYaCndu3l0e2V3kGlNwdK5tJxPsKP3RRC8fEiqz4qi0aLOVqNiZDi7uAP64fDpZoNf5HCCy8fUW7R3nYVm6V5LzgemFrQqgRLgeU+ZaXZhJOlWKK3d0Gm580Jos3rqG9EQg6yMgqLa071YGGA4p/RiPGqK4x0FsDZkVsCW+4+aBZAF1TEX5TpPqDR5DuWl2nteVyNt1pxq4yqpPq5CHUdA79Rw5p4Ai+XlWWGjMWqaaznq5FlqGW4Fc519ShOr5Ehz2Cv7hdyH+gRQkJL7T5kIc9U6MdZcuT+zuNTewGcNyPlE2IpixWIKl1d8HuqCxl2AAvL39Axjg0K/Qu9lr9aeXnuXQ7GB8aqGeS9QWMBidF1eWlq7oyggLhWKwSv3jXgpfDlgwzE1m7Gz0267+tE+e6rPJJfH268Tzrv/6d/mT7LV+KzrqKrqAAAAAElFTkSuQmCC" alt="Recovery Instructions QR" />
+                <p>📋 Scan for Recovery Instructions</p>
+            </div>
+            
+        <p class="note"><em>Note: Each QR code contains part of your phrase. Scan ALL codes in order.</em></p>
+    </div>
+        
+    
+    
+    
+    
+    
+    
+    
+    <div class="instructions">
+        <h3>📋 Recovery Instructions</h3>
+        <ol>
+            <li>Install Python 3 and required dependencies</li>
+            <li>Run: <code>python recovery.py recover</code></li>
+            <li>Enter your 24-word recovery phrase when prompted</li>
+            <li>The system will restore your access</li>
+            <li><strong>IMMEDIATELY</strong> run <code>python rekey.py</code> to change credentials</li>
+        </ol>
+        <p><strong>Note:</strong> This recovery kit can only be used ONCE. After successful recovery, 
+        you MUST generate a new recovery kit with new credentials.</p>
+    </div>
+    
+    <!-- BUG-20251218-010: Header Restore Guidance Section -->
+    <div class="instructions" style="background: #fff8e1; border-color: #ff9800;">
+        <h3>🔧 VeraCrypt Header Backup Restoration</h3>
+        <p><strong>What is a VeraCrypt header backup?</strong></p>
+        <p>The volume header contains encryption keys and metadata. If it becomes corrupted 
+        (rare disk errors, interrupted operations), the volume becomes inaccessible even with 
+        correct passwords.</p>
+        
+        <p><strong>When do you need header restoration?</strong></p>
+        <ul>
+            <li>VeraCrypt reports "Incorrect password or not a VeraCrypt volume"</li>
+            <li>Volume fails to mount despite correct credentials</li>
+            <li>Disk experienced corruption or bad sectors at the start</li>
+        </ul>
+        
+        <p><strong>How to restore the header (GUI):</strong></p>
+        <ol>
+            <li>Open VeraCrypt</li>
+            <li>Go to <code>Tools → Restore Volume Header</code></li>
+            <li>Select "Restore the volume header from an external backup"</li>
+            <li>Browse to your <code>header.backup</code> file (in your .smartdrive/recovery folder)</li>
+            <li>Enter your volume password when prompted</li>
+            <li>Confirm the restoration</li>
+        </ol>
+        
+        <p><strong>How to restore the header (CLI):</strong></p>
+        <pre style="background: #f5f5f5; padding: 10px; border-radius: 3px; overflow-x: auto;">veracrypt --restore-headers /path/to/volume.vc --backup-file=/path/to/header.backup</pre>
+        
+        <div style="background: #ffebee; padding: 10px; margin-top: 10px; border-radius: 3px;">
+            <strong>⚠️ Important:</strong> Header backup restoration does NOT require your recovery phrase.
+            It only requires the original volume password/keyfile. Only use header restore if the volume 
+            itself is corrupted. For credential recovery (lost password/YubiKey), use the recovery phrase above.
+        </div>
+    </div>
+    
+    <!-- BUG-20251218-011: Critical Files/Folders Preservation Section -->
+    <div class="instructions" style="background: #e8f5e9; border-color: #4caf50;">
+        <h3>💾 Critical Files & Folders to Preserve</h3>
+        <p><strong>Your .smartdrive folder contains essential security artifacts. Understand what to keep:</strong></p>
+        
+        <table style="font-size: 12px; margin: 15px 0;">
+            <thead>
+                <tr style="background: #c8e6c9;">
+                    <th style="padding: 8px; text-align: left;">File/Folder</th>
+                    <th style="padding: 8px; text-align: left;">Purpose</th>
+                    <th style="padding: 8px; text-align: left;">Safe to Back Up?</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>config.json</code></td>
+                    <td>Drive configuration (paths, settings, mode)</td>
+                    <td style="color: green;">✓ Yes - encrypted or non-sensitive</td>
+                </tr>
+                <tr style="background: #f5f5f5;">
+                    <td><code>keys/</code></td>
+                    <td>GPG-encrypted keyfile</td>
+                    <td style="color: green;">✓ Yes - always encrypted</td>
+                </tr>
+                <tr>
+                    <td><code>recovery/</code></td>
+                    <td>Recovery container and header backup</td>
+                    <td style="color: green;">✓ Yes - encrypted container</td>
+                </tr>
+                <tr style="background: #f5f5f5;">
+                    <td><code>seed.gpg</code> (if GPG_PW_ONLY mode)</td>
+                    <td>GPG-encrypted key derivation seed</td>
+                    <td style="color: green;">✓ Yes - always encrypted</td>
+                </tr>
+                <tr>
+                    <td><code>scripts/</code></td>
+                    <td>KeyDrive scripts (can be restored from source)</td>
+                    <td style="color: blue;">◐ Optional - publicly available</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div style="background: #fff3e0; padding: 10px; margin-top: 10px; border-radius: 3px;">
+            <strong>⚠️ What NOT to modify:</strong>
+            <ul style="margin: 5px 0;">
+                <li>Do NOT edit <code>config.json</code> manually - use KeyDrive tools</li>
+                <li>Do NOT rename or move the <code>.smartdrive</code> folder</li>
+                <li>Do NOT delete <code>keys/</code> or <code>recovery/</code> until you've verified backups</li>
+            </ul>
+        </div>
+        
+        <div style="background: #e3f2fd; padding: 10px; margin-top: 10px; border-radius: 3px;">
+            <strong>💡 Backup Recommendation:</strong>
+            <p style="margin: 5px 0;">Back up the entire <code>.smartdrive</code> folder to a secure location (separate from your recovery phrase). 
+            The encrypted files cannot be used without your YubiKey/password, so they're safe to store in cloud backup.</p>
+        </div>
+    </div>
+    
+    <div class="instructions" style="background: #f0f0f0; border-color: #999;">
+        <h3>🔧 Environment Snapshot</h3>
+        <p>This kit was generated with the following environment. For best results, use similar versions:</p>
+        <table style="font-size: 12px;">
+            <tr><td><strong>Python</strong></td><td>3.13.3</td></tr>
+            <tr><td><strong>OS</strong></td><td>Windows 10.0.26100</td></tr>
+            <tr><td><strong>VeraCrypt</strong></td><td>VeraCrypt 1.26.24</td></tr>
+            <tr><td><strong>Requirements Hash</strong></td><td><code>f1af93c1baf91847</code></td></tr>
+        </table>
+    </div>
+    
+    <div class="instructions" style="background: #e8f4e8; border-color: #4a7c4a;">
+        <h3>💾 Device Identification</h3>
+        <p>This recovery kit is bound to the following device:</p>
+        <table style="font-size: 12px;">
+            <tr><td><strong>Device Name</strong></td><td>Unknown</td></tr>
+            <tr><td><strong>Bus Type</strong></td><td>N/A</td></tr>
+            <tr><td><strong>Size</strong></td><td>N/A GB</td></tr>
+            <tr><td><strong>Device Serial</strong></td><td><code>N/A</code></td></tr>
+            <tr><td><strong>Unique ID</strong></td><td><code style="word-break: break-all;">N/A</code></td></tr>
+            <tr><td><strong>Launcher Partition</strong></td><td>F</td></tr>
+            <tr><td><strong>Volume Identity Hash</strong></td><td><code>device-path-skip</code></td></tr>
+        </table>
+        <p><em>⚠️ If this does not match your device, you may be using the wrong recovery kit.</em></p>
+    </div>
+    
+    <div class="footer">
+        <p>KeyDrive Recovery System • This document is CONFIDENTIAL</p>
+        <p>Keep in a secure location separate from your encrypted drive</p>
+        <p style="font-size: 10px; color: #999;">Generated: 2025-12-22 20:37:36 | Version: v0.0.1 | Device: device-path-skip...</p>
+    </div>
+</body>
+</html>

@@ -40,6 +40,7 @@ class Limits:
     GPG_DECRYPT_TIMEOUT = 30
     GPG_ENCRYPT_TIMEOUT = 30
     GPG_SIGN_TIMEOUT = 30
+    GPG_KEY_AUTH_TIMEOUT = 60  # CHG-20251223-032: Hardware key auth needs time for PIN entry
 
     # VeraCrypt operations
     VERACRYPT_MOUNT_TIMEOUT = 60

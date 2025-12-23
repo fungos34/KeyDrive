@@ -8,7 +8,10 @@ Context-aware menu that detects whether it's running from:
 - SYSTEM drive (development/setup) → Setup wizard/Recovery tools
 
 Author: SmartDrive Project
-License: MIT
+License: This project is licensed under a custom non-commercial, no-derivatives license.
+Commercial use and modified versions are not permitted.
+See the LICENSE file for details.
+
 """
 
 import hashlib

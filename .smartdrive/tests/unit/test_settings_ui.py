@@ -281,6 +281,60 @@ class TestSettingsDialogInstantiation:
             pytest.fail(f"SettingsDialog instantiation failed: {e}")
 
 
+class TestSchemaGroupTranslations:
+    """Test that all schema group names have translation keys (BUG-20251224-002 guard)."""
+
+    def test_all_group_names_have_translation_keys(self):
+        """Ensure every group name in SETTINGS_SCHEMA has a corresponding translation key.
+        
+        This test guards against the crash reported in BUG-20251224-002 where the Settings
+        dialog crashed because a group name didn't have a translation key.
+        
+        The GUI converts group names like "Verification Status" to translation keys like
+        "group_verification_status" via: f"group_{group_name.lower().replace(' ', '_')}"
+        """
+        from scripts.gui_i18n import TRANSLATIONS
+        
+        # Collect all unique group names from schema
+        group_names = set()
+        for field in SETTINGS_SCHEMA:
+            if field.group:
+                group_names.add(field.group)
+        
+        # Check each group name has translation in all languages
+        languages = list(TRANSLATIONS.keys())
+        missing = []
+        
+        for group_name in group_names:
+            # Apply same transformation as gui.py line 5783
+            key = f"group_{group_name.lower().replace(' ', '_')}"
+            for lang in languages:
+                if key not in TRANSLATIONS[lang]:
+                    missing.append((group_name, key, lang))
+        
+        assert not missing, (
+            f"Missing translation keys for schema group names:\n"
+            + "\n".join(f"  Group '{g}' -> key '{k}' missing in '{l}'" for g, k, l in missing)
+        )
+
+    def test_all_label_keys_have_translations(self):
+        """Ensure every label_key in SETTINGS_SCHEMA has a translation."""
+        from scripts.gui_i18n import TRANSLATIONS
+        
+        languages = list(TRANSLATIONS.keys())
+        missing = []
+        
+        for field in SETTINGS_SCHEMA:
+            for lang in languages:
+                if field.label_key not in TRANSLATIONS[lang]:
+                    missing.append((field.key, field.label_key, lang))
+        
+        assert not missing, (
+            f"Missing translation keys for schema labels:\n"
+            + "\n".join(f"  Field '{f}' -> label '{l}' missing in '{la}'" for f, l, la in missing)
+        )
+
+
 class TestSecureLogging:
     """Test that sensitive config values are not logged."""
 

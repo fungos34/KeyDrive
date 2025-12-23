@@ -541,7 +541,7 @@ def create_secret_provider(config: dict, smartdrive_dir: Path = None) -> "Secret
         return None
 
     try:
-        return SecretProvider.from_config(config, smartdrive_dir=smartdrive_dir)
+        return SecretProvider.from_config(config, smartdrive_dir)
     except Exception as e:
         warn(f"Could not create SecretProvider: {e}")
         return None

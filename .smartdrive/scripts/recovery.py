@@ -265,6 +265,7 @@ from recovery_container import (
     save_container,
 )
 from veracrypt_cli import (
+    CLICapabilityError,
     HeaderCorruptionError,
     InvalidCredentialsError,
     VeraCryptError,
@@ -454,13 +455,15 @@ def open_html_in_browser(html_path: Path) -> bool:
     """
     Open an HTML file in the default browser using platform-appropriate method.
 
-    BUG-20251221-001 FIX: Replaces webbrowser.open() to prevent Windows
-    "syntax error in command line" popups.
+    BUG-20251223-004 FIX: Uses webbrowser.open() with file:// URI on Windows.
+    Previous approaches (cmd /c start, os.startfile()) caused "Syntaxfehler in
+    der Kommandozeile" dialogs on some Windows configurations.
 
-    On Windows, webbrowser.open() internally uses os.startfile() or subprocess
-    calls that may trigger command-line parsing errors. This function uses
-    explicit subprocess calls with CREATE_NO_WINDOW flag on Windows to prevent
-    popups and ensure silent execution.
+    webbrowser.open() with Path.as_uri():
+    - Properly encodes the path as file:///C:/path/to/file.html
+    - Uses ShellExecute internally (via WindowsDefault handler)
+    - Handles special characters in paths correctly
+    - No cmd.exe involvement
 
     Args:
         html_path: Path to HTML file to open
@@ -469,22 +472,32 @@ def open_html_in_browser(html_path: Path) -> bool:
         True if browser opened successfully, False on error
 
     Platform-specific behavior:
-        - Windows: Uses 'cmd /c start ""' with CREATE_NO_WINDOW flag
+        - Windows: Uses webbrowser.open(path.as_uri())
         - macOS: Uses 'open' command
         - Linux: Uses 'xdg-open' command
     """
     try:
+        # Validate path exists and is a file
+        html_path = Path(html_path).resolve()  # Resolve to absolute path
+        if not html_path.exists():
+            warn(f"HTML file does not exist: {html_path}")
+            return False
+        if not html_path.is_file():
+            warn(f"HTML path is not a file: {html_path}")
+            return False
+
         system = platform.system().lower()
 
         if system == "windows":
-            # Use 'cmd /c start ""' with CREATE_NO_WINDOW to prevent popup
-            # Empty string "" is required as window title for start command
-            subprocess.run(
-                ["cmd", "/c", "start", "", str(html_path)],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                check=False,
-                timeout=5,
-            )
+            # BUG-20251223-004 FIX: Use webbrowser module with file URI
+            # webbrowser.open() with .as_uri() handles Windows paths correctly
+            # and uses ShellExecute internally without cmd.exe involvement.
+            # Previous approach using os.startfile() still caused errors on some systems.
+            # Note: Path must be absolute for .as_uri() to work
+            import webbrowser
+
+            file_uri = html_path.as_uri()  # Converts to file:///C:/path/to/file.html
+            webbrowser.open(file_uri)
         elif system == "darwin":  # macOS
             subprocess.run(
                 ["open", str(html_path)],
@@ -501,6 +514,10 @@ def open_html_in_browser(html_path: Path) -> bool:
         log(f"Opened HTML in browser: {html_path}")
         return True
 
+    except OSError as e:
+        # os.startfile() raises OSError on failure (e.g., no associated application)
+        warn(f"Could not open browser (OS error): {e}")
+        return False
     except Exception as e:
         warn(f"Could not open browser: {e}")
         return False
@@ -3498,21 +3515,50 @@ def cmd_generate_non_interactive(args):
         log(f"[3/5] Container created: {container_path}")
 
         # Export VeraCrypt header
+        # BUG-20251222-006 FIX: Use export_header() with allow_gui_fallback=False
+        # Non-interactive mode runs as subprocess from GUI - GUI fallback has input() loop
+        # that blocks forever waiting for stdin. Header backup is optional; skip if unsupported.
         log("[4/5] Exporting VeraCrypt header backup...")
         header_path = recovery_dir / FileNames.RECOVERY_HEADER_HDR
-        export_header_backup(
-            volume_path=volume_path,
-            header_path=header_path,
-            password=password,
-            keyfile_bytes=keyfile_bytes,
-        )
-        log(f"[4/5] Header exported: {header_path}")
+        header_backup_success = False
+
+        # Create temp keyfile if needed (export_header expects keyfile_path, not bytes)
+        temp_keyfile = None
+        if keyfile_bytes:
+            temp_dir = get_ram_temp_dir()
+            temp_keyfile = temp_dir / f"kf_{secrets.token_hex(8)}.tmp"
+            temp_keyfile.write_bytes(keyfile_bytes)
+
+        try:
+            from veracrypt_cli import CLICapabilityError
+
+            success, used_gui = export_header(
+                volume_path=volume_path,
+                output_path=header_path,
+                password=password,
+                keyfile_path=temp_keyfile,
+                allow_gui_fallback=False,  # BUG-20251222-006: Prevent blocking input() loop
+                security_mode=mode,
+            )
+            header_backup_success = success
+            log(f"[4/5] Header exported: {header_path}")
+        except CLICapabilityError:
+            # BUG-20251222-006: CLI doesn't support header backup, skip gracefully
+            log("[4/5] Header backup skipped (CLI unsupported on this platform)")
+            log("[4/5] WARNING: Generate header backup manually via: VeraCrypt GUI -> Tools -> Backup Volume Header")
+        except VeraCryptError as e:
+            log(f"[4/5] Header backup failed: {e}")
+            log("[4/5] WARNING: Generate header backup manually via: VeraCrypt GUI -> Tools -> Backup Volume Header")
+        finally:
+            if temp_keyfile and temp_keyfile.exists():
+                secure_delete(temp_keyfile)
 
         # Update config
         log("[5/5] Updating configuration...")
+        # BUG-20251222-010 FIX: Use constant value, not string literal
         recovery_config = {
             "enabled": True,
-            "state": "RECOVERY_STATE_ENABLED",
+            "state": RECOVERY_STATE_ENABLED,  # "enabled" - not "RECOVERY_STATE_ENABLED"
             "created_at": utc_timestamp_iso(),
             "phrase_hash": phrase_hash,
             "container_path": str(container_path),

@@ -2553,7 +2553,9 @@ Verification results are logged to `.KeyDrive/logs/e2e-<timestamp>.log`:
 
 ## 📝 License
 
-This project is provided as-is for personal use. Modify and distribute freely.
+This project is licensed under a custom non-commercial, no-derivatives license.
+Commercial use and modified versions are not permitted.
+See the LICENSE file for details.
 
 ## 🤝 Contributing
 

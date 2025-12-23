@@ -1,0 +1,134 @@
+ROLE & AUTHORITY
+
+You are an implementation-grade AI agent operating under AGENT_ARCHITECTURE.md and FEATURE_FLOWS.md.
+I am the product owner and highest authority on desired end behavior.
+
+What follows below this prompt is RAW INPUT:
+- unstructured thoughts
+- partial observations
+- UX impressions
+- incomplete or imprecise instructions
+- possibly incorrect assumptions about the codebase
+- possibly conflicting or unaware of architectural constraints
+
+Treat it as experiential truth and intent, not as a technical specification.
+
+
+CORE RESPONSIBILITY
+
+Your job is NOT to reflect, summarize, or question the raw input.
+Your job is to TRANSLATE it into a correct, consistent, and fully implemented solution.
+
+
+MANDATORY OPERATING MODE
+
+1. CONTEXTUALIZATION (NON-OPTIONAL)
+   - Map the raw input onto the actual codebase.
+   - Identify which parts are feasible as-is, which require reinterpretation, and which conflict with architecture.
+   - Resolve conflicts in favor of:
+     a) security
+     b) correctness
+     c) AGENT_ARCHITECTURE.md
+     d) stated user intent (in that order).
+
+2. SPECIFICATION UPLIFT
+   - Convert the raw input into:
+     - proper FEATURE_FLOWS.md sections (correct headings, phases, and transitions)
+     - BUG / CHANGE entries where applicable
+   - Do NOT invent features beyond intent.
+   - Do NOT silently drop requirements.
+
+3. EXECUTION WITHOUT PAUSE
+   - From the derived specification, immediately create a concrete TODO list.
+   - Execute the TODO list fully.
+   - Do not stop after planning.
+   - Do not ask for confirmation unless a decision would violate security or architecture.
+
+4. IMPLEMENTATION STANDARD
+   - All code must comply with AGENT_ARCHITECTURE.md:
+     - SSOT
+     - path purity
+     - explicit failure
+     - deterministic behavior
+     - no silent fallbacks
+   - Any workaround must be documented and justified.
+
+5. TESTING (HARD REQUIREMENT)
+   - Implement non-trivial new tests covering:
+     - the full end-to-end flow relevant to this issue
+     - edge cases implied by the raw input
+     - regression risks
+   - All existing tests must pass.
+   - If tests fail, fix the implementation — never weaken tests.
+
+6. COMPLETION CRITERIA
+   You are NOT done until:
+   - the described problem is fully resolved in behavior, not just code
+   - documentation is updated
+   - tests are added and passing
+   - no architectural rules are violated
+
+Silence is not completion.
+Partial fixes are not completion.
+Explanations without code are not completion.
+
+
+ERROR HANDLING PHILOSOPHY
+
+- If the raw input is ambiguous: decide.
+- If it is contradictory: reconcile.
+- If it is wrong: correct it while preserving intent.
+- If it is dangerous: hard-stop and explain precisely why.
+
+
+BEGIN PROCESSING THE FOLLOWING RAW INPUT AS AUTHORITATIVE INTENT:
+"""
+
+
+
+Launching KeyDrive GUI from .smartdrive\scripts\gui.py
+Current directory: C:\Users\accou\Code\VeraCrypt_Yubikey_2FA
+
+Traceback (most recent call last):
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui.py", line 4217, in _on_settings_action
+    self.show_settings()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui.py", line 4125, in show_settings
+    dialog = SettingsDialog(self.settings, self)
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui.py", line 5550, in __init__
+    self._build_ui()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui.py", line 5576, in _build_ui
+    tab_widget = self._create_tab(tab_name)
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui.py", line 5783, in _create_tab
+    translated_group_name = tr(group_key, lang=get_lang())
+  File "C:\Users\accou\Code\VeraCrypt_Yubikey_2FA\.smartdrive\scripts\gui_i18n.py", line 3075, in tr
+    raise KeyError(
+    ...<2 lines>...
+    )
+KeyError: "Translation key 'group_verification_status' not found in language 'de' nor in fallback language 'en'. This is a programming error."
+Drücken Sie eine beliebige Taste . . .
+"""
+
+
+"""
+i) after the recovery kit generation, (this is working now, i can confirm) the recovery kit status in the recovery tab of the settings window in the GUI still says "No Recovery Kit Configured" and i think this might be an inconsistency how this is actually evaluated. it might be done via the config.json or via the actual recovery kit files being in the expected directory. however, the recovery kit state must be properly maintained when it was created. otherwise it would be missleading.
+ii) ensure that there is a flow depending on the security mode, no matter if pw only, gpg derived pw, gppg derived keyfile + pw (or what other modes there might be now or in future). the flow must allow to enter current valid credentials. credentials derived from authorisation via hardware key or whatever must be considered and passed automatically (since their idea is to avoid being handled by human and hence avoid human errors in pw handling - short pw, forgotten, missspelled, shoulder surfing, written on the computer, etc, etc, etc)
+iii) there is some redundancy in the settings window overyl. ther are for eample at least two different sites where the version and stuff is denoted (General tab and advanced tab). The same is true for the Integrity state, checks and dates (Advanced, Integrity, General). 
+iv) the update section is more missleading then ever. the current code implementation undoubtably is written to expect the user to select a source of the update being a .smartdrive/ directory, not its root. but the Hint clearly states to select a root directory. furthermore the update should be run from this tab too. in general running an update from the GUI > Gear Symbol > Updates ... > Fail due to missing settings > direct to Update Tab in Settings. Also the update tab should tell the datetime the last update has been made and its source (local: dir, server: URL).
+v) ensure the SSOT constraint is followed through the settings, as it seems to become increasingly mesy how these are handled and maintained. 
+vi) the settings in config.json might conain diretory pahts. hence this software is according to all instructions so far meant to be OS independent, these paths must be available on every OS, potentiall even splitting parts (where it absolutely must be, due to OS specific entries) for each OS. ensure it covers WINdows, linu, macOS.
+vii) the seed.gpg path seems not to be configured. when rekey is done it has to be picked manually, this might be avoidable.
+viii) depending on the current OS, the tabs concerning other OS might be disabled.
+ix) when the recovery is active (the kit has been used) i'd love to see the Security tab (where the rekey must be done) blinking.
+x) you might want to condense the tabs a bit, some might not be necessary or need a different name by now, but this is up to you.
+xi) remove the "Change Drive" option in the Gear Menu from the main window of the GUI. What might still be a good idea is to maintain the difference between four volumes: the launcher volume where the curernt referred installation is located, the instance volume where the currently running instance was started from, the veracrypt volume which is currently handled and the veracrypt volume which the instance running is pointing to by default. this issue might be available in the FEATURE_FLOWS.md already in some way. 
+xii) during rekey, there might be a slightly uncertainty, when copying the old credentials derived from a gpg method, what seed they refer, vs the seed which is to be entered in the input fields, also there must be a working flow for handling keyfiles during rekey. this could be a bit clearer denoted in the corresponding tab to avoid confusion. 
+xiii) it makes sense to me disabling some functionality when the recovery kit has been used until the rekey is done. one of course is the blocking of mount actions, but also it might be make sense to have a dedicated experience in the rekey methodology. e.g. when i just used my recovery kit, the tab allows me to copy it, but switching tabs to Security (which might blink by then) there are a lot of buttons and since i would only recover (at least in gpg pw only mode) when my encrypted seed got missing, if the rekey process now would allow me to get the current password decrypting an expectedly encrypted seed automatically will fail. i recovered and hence the plain text passwrod is what i got from the passphrase decryption.
+xiv) this might be a high priority, but we must clarify the available security modes immediately. i Think there might me now:
+    1) pw only: resembles VeraCrypt is locked with solely a plain text password. KeyDrive hands over solely a password which is known only by the user himself. the KeyDrive must not know what it is at all. no storage of it nowhere. The user logs in with his password, nothing else (later BitWarden intergation would be nice to handle it simply) - this mode works without GPG hassle, no identity verification than the expected knowledge of the owner.
+    2) pw + keyfile: resembles VeraCrypt is locked using a plain text password and any file the user chose (might be generated by VeraCrypt or not). the password is again solely known by the user, no trace of it in the software, KeyDrive does not know nothing about it and as in the first case must not store it, not even temporarily (again Bitwarden integration in future). the keyfile can be in place on the USB drive in the keys directory (might simplify the flow for users which currently use VeraCrypt with a keyfile and want to get rid of the hassle handling it) or manually provided by the user during mount each time. The keyfile is a second authentication factor indicating ownership, the password as be fore mentioned indicates relation to the owners brain. 
+    3) pw + gpg derived keyfile: resembles VeraCrypt is locked using a plain text password and any file the user chose. Only for KeyDrive this Keyfile is encrypted by GPG identity. this moves the keyfile as a second weak factor to an external hardware factor, since it can only be decrypted by providing the secret key (whatever else might exist besides a hardware key - maybe even a certificate server or so). hence the encrypted keyfile can be stolen digitally, but its worthless without an additioal hardware key decrypting it to be accepted by veracrypt, and of course the password only known by the owner. the hardware key though can be separated from the owner, hence the access can be handed over without an secret copy, even before the pw has been changed the access end by passing the hardware key away. since its not dicitally fishable it mitigates also online threats, but its composed to deal with a different security threat though.
+    4) gpg derived pw only: resembles VeraCrypt is locked using solely a plain text password. Only for KeyDrive there exists a seed.gpg which can solely been decrypted by GPG identity and only then it can be used as plain text pw to authenticate VeraCrypt. KeyDrive can unlock by starting the software without user input, solely the hardware key has to be inserted and gpg active. this removes all human factors of pw handling (writing it down, shoulder surfing, forgetting, unsecure pw, etc.). it all is handled then by KeyDrive under the hood. the drawback: if the seed.gpg is gone forever, noone can ever mount veracrypt again. the seed itself can be duplicated since without the key its worthless.
+    5) future: server + gpg derived pw: resembles VeraCrypt is locked using solely a plain tet password. the seed.gpg is provided by a server after receiving the ID of the drive, where it registers durign setup. any IP can send the request, the seed is worthless without the key, but it can be rate limited by the server and honeycomb mechanisms can be used to hint the user whether another IP/device tried to mount, how many failures and furthermore when the hardware key got lost, one can easily block access on all drives locked by it, it can show the exact devices which are to rekey, and it can be undone immediately when the key got returned. (its simply more realistic to lock via server immediately than actually stop doing everything right now and rekey everything). of course the seed can be stolen easily too (still worthless without the hardware key). the seed cannot easily get lost. each server request can be a breadcrumb in forensics and even trigger a forced rekey mechanism before next login. possibly the server provides an authentication seed first, when solved by the owner of the hardware key, the server responds the actual volume seed.
+"""
