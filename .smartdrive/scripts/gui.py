@@ -3815,11 +3815,16 @@ QPushButton:pressed {{
         if hasattr(self, "btn_open_vc"):
             self.btn_open_vc.setEnabled(vc_enabled)
 
-    def _check_post_recovery_rekey_required(self) -> bool:
+    def _check_post_recovery_rekey_required(self, for_rekey_verification: bool = False) -> bool:
         """
         Check if post-recovery rekey is required before mounting.
 
         BUG-20251220-007 FIX: Enforces rekey after recovery in GUI mount flow.
+        BUG-20251225-001 FIX: Allow mount when rekey is in-progress (for verification).
+
+        Args:
+            for_rekey_verification: If True, this mount is for rekey verification.
+                                   Allows mount even if rekey not completed.
 
         Returns:
             True if mount can proceed, False if blocked
@@ -3832,6 +3837,12 @@ QPushButton:pressed {{
             ConfigKeys.POST_RECOVERY_REKEY_COMPLETED
         ):
             return True  # No rekey needed or already completed
+
+        # BUG-20251225-001: Allow mount when rekey is in progress (for verification)
+        rekey_in_progress = post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS, False)
+        if rekey_in_progress or for_rekey_verification:
+            _gui_logger.info("BUG-20251225-001: Allowing mount during rekey in-progress for verification")
+            return True
 
         recovery_time = post_recovery.get(ConfigKeys.POST_RECOVERY_COMPLETED_AT, "unknown")
         policy = self.config.get(ConfigKeys.POST_RECOVERY_POLICY, "mandatory_rekey")
@@ -4944,7 +4955,11 @@ QPushButton:pressed {{
         return plan
 
     def run_update(self):
-        """Run deterministic external-drive update with confirmation dialog."""
+        """
+        Run deterministic external-drive update with confirmation dialog.
+
+        BUG-20251225-004 FIX: Show scrollable confirmation dialog with clear information.
+        """
         from pathlib import Path
 
         # Step 1: Build the update plan
@@ -4956,31 +4971,123 @@ QPushButton:pressed {{
             QMessageBox.warning(self, tr("popup_update_not_possible_title", lang=get_lang()), error_msg)
             return
 
-        # Step 3: Show confirmation dialog
-        items_str = "\n  - ".join(plan["items"]) if plan["items"] else "(no items)"
-        msg = tr(
-            "popup_update_confirm_message",
-            lang=get_lang(),
-            direction=plan["direction"],
-            src_root=plan["src_root"],
-            dst_root=plan["dst_root"],
-            items=items_str,
-            method=plan["method"],
-        )
-
-        btn = QMessageBox.question(
-            self,
-            tr("popup_update_confirm_title", lang=get_lang()),
-            msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,  # Default to No for safety
-        )
-
-        if btn != QMessageBox.StandardButton.Yes:
+        # BUG-20251225-004 FIX: Use custom dialog with scrollable content
+        # Step 3: Show custom confirmation dialog
+        if not self._show_update_confirmation_dialog(plan):
             return
 
         # Step 4: Execute the update
         self._execute_update(plan)
+
+    def _show_update_confirmation_dialog(self, plan: dict) -> bool:
+        """
+        Show custom scrollable update confirmation dialog.
+
+        BUG-20251225-004 FIX: Replace QMessageBox with custom QDialog for scrollability.
+
+        Args:
+            plan: Update plan dictionary
+
+        Returns:
+            True if user confirmed, False if cancelled
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("popup_update_confirm_title", lang=get_lang()))
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(500)
+
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        # Header with direction and paths
+        header = QLabel(
+            f"<b>{tr('popup_update_direction', lang=get_lang())}</b>: {plan['direction']}<br><br>"
+            f"<b>{tr('popup_update_source', lang=get_lang())}</b>:<br>"
+            f"&nbsp;&nbsp;{plan['src_root']}<br><br>"
+            f"<b>{tr('popup_update_destination', lang=get_lang())}</b>:<br>"
+            f"&nbsp;&nbsp;{plan['dst_root']}/.smartdrive/"
+        )
+        header.setWordWrap(True)
+        header.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(header)
+
+        # Scrollable file list section
+        files_label = QLabel(f"<b>{tr('popup_update_files_to_update', lang=get_lang())}</b>:")
+        files_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(files_label)
+
+        # Scrollable text edit for file list
+        files_text = QTextEdit()
+        files_text.setReadOnly(True)
+        files_text.setPlainText("\n".join(f"  • {item}" for item in plan["items"]))
+        files_text.setMaximumHeight(200)
+        files_text.setStyleSheet(
+            f"background-color: {COLORS.get('background_secondary', COLORS['surface'])}; "
+            f"color: {COLORS.get('text_primary', COLORS['text'])}; border: 1px solid {COLORS.get('border', '#555')}; "
+            f"border-radius: 4px; padding: 8px;"
+        )
+        layout.addWidget(files_text)
+
+        # Protected items section
+        protected_label = QLabel(f"<b>{tr('popup_update_protected_items', lang=get_lang())}</b>:")
+        protected_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(protected_label)
+
+        protected_text = QLabel(
+            tr(
+                "popup_update_protected_list",
+                lang=get_lang(),
+                items="recovery/, keys/, integrity/, config.json (user data)",
+            )
+        )
+        protected_text.setWordWrap(True)
+        protected_text.setStyleSheet(
+            f"color: {COLORS.get('success', COLORS['text_secondary'])}; "
+            f"background-color: {COLORS.get('background_secondary', COLORS['surface'])}; "
+            f"border: 1px solid {COLORS.get('success', '#555')}; border-radius: 4px; padding: 8px;"
+        )
+        layout.addWidget(protected_text)
+
+        # Warning message
+        warning = QLabel(
+            f"<b>{tr('popup_update_warning', lang=get_lang())}</b>: "
+            f"{tr('popup_update_warning_body', lang=get_lang())}"
+        )
+        warning.setWordWrap(True)
+        warning.setTextFormat(Qt.TextFormat.RichText)
+        warning.setStyleSheet(f"color: {COLORS.get('warning', COLORS['text_secondary'])};")
+        layout.addWidget(warning)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        cancel_btn = QPushButton(tr("btn_cancel", lang=get_lang()))
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        confirm_btn = QPushButton(tr("btn_confirm", lang=get_lang()))
+        confirm_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS.get('primary_dark', COLORS['primary'])};
+            }}
+            """
+        )
+        confirm_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(confirm_btn)
+
+        layout.addLayout(button_layout)
+
+        dialog.setLayout(layout)
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def _execute_update(self, plan: dict):
         """Execute the actual update after user confirmation."""
@@ -7154,6 +7261,15 @@ class SettingsDialog(QDialog):
             self.verify_rekey_btn.setVisible(True)
             self.cancel_rekey_btn.setVisible(True)
 
+            # BUG-20251225-001: Mark rekey as in-progress to allow verification mount
+            # This lifts the mount blocking so credential verification can work
+            post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+            if post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_REQUIRED):
+                post_recovery[ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS] = True
+                self.config[ConfigKeys.POST_RECOVERY] = post_recovery
+                self._save_config_atomic()
+                _gui_logger.info("BUG-20251225-001: Set rekey_in_progress=True to allow verification mount")
+
             _gui_logger.info("Rekey flow started - VeraCrypt GUI opened, awaiting user verification")
 
         except Exception as e:
@@ -7236,6 +7352,15 @@ class SettingsDialog(QDialog):
                 self._temp_keyfile_path = None
             except Exception as e:
                 _gui_logger.warning(f"Failed to clean up temp keyfile: {e}")
+
+        # BUG-20251225-001: Clear rekey_in_progress flag on cancel
+        # Mount blocking should be restored since rekey was not completed
+        post_recovery = self.config.get(ConfigKeys.POST_RECOVERY, {})
+        if post_recovery.get(ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS):
+            del post_recovery[ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS]
+            self.config[ConfigKeys.POST_RECOVERY] = post_recovery
+            self._save_config_atomic()
+            _gui_logger.info("BUG-20251225-001: Cleared rekey_in_progress flag after cancel")
 
         # Reset stored state
         self._rekey_target_mode = None
@@ -7709,6 +7834,10 @@ class SettingsDialog(QDialog):
         if ConfigKeys.POST_RECOVERY in self.config:
             self.config[ConfigKeys.POST_RECOVERY][ConfigKeys.POST_RECOVERY_REKEY_COMPLETED] = True
             self.config[ConfigKeys.POST_RECOVERY][ConfigKeys.POST_RECOVERY_REKEY_COMPLETED_AT] = timestamp
+            # BUG-20251225-001: Clear rekey_in_progress flag now that rekey is completed
+            if ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS in self.config[ConfigKeys.POST_RECOVERY]:
+                del self.config[ConfigKeys.POST_RECOVERY][ConfigKeys.POST_RECOVERY_REKEY_IN_PROGRESS]
+                _gui_logger.info("BUG-20251225-001: Cleared rekey_in_progress flag after rekey completion")
 
         # CHG-20251221-001: Handle mode changes
         # BUG-20251221-040: ALWAYS update mode to target_mode to ensure consistency
@@ -8697,28 +8826,26 @@ class SettingsDialog(QDialog):
         QApplication.processEvents()
 
         # ═══════════════════════════════════════════════════════════════════
-        # SECURITY CHECK: Is recovery kit already used?
-        # BUG-20251223-066: Also check for "recovery_active" state (recovery started, rekey pending)
+        # SECURITY CHECK: Is recovery kit already fully consumed?
+        # BUG-20251225-002 FIX: Allow re-extraction when recovery_active
+        # The user may have closed Settings and needs to access the password again.
+        # Container should only be deleted after rekey+mount verified.
         # ═══════════════════════════════════════════════════════════════════
         recovery_config = self.config.get("recovery", {})
         state = recovery_config.get("state", "enabled")
 
-        # Check if recovery is already in progress or completed
+        # ONLY block if recovery is FULLY consumed (used state) - not just active
         if state == "used" or recovery_config.get("used"):
             self.recovery_status_label.setText(tr("recovery_already_used", lang=get_lang()))
             self.recovery_status_label.setStyleSheet(f"color: {COLORS['error']}; font-size: 11px;")
             self._gui_audit_log("RECOVERY_BLOCKED", "already_used")
             return
 
-        # BUG-20251223-066: If recovery is already active (credentials extracted, rekey pending)
-        # inform user they need to complete rekey, not start recovery again
+        # BUG-20251225-002 FIX: If recovery_active, allow re-extraction but inform user
+        # User may have closed Settings and needs to copy password again
         if state == "recovery_active" or state == "consuming":
-            self.recovery_status_label.setText(
-                "⚠️ Recovery already in progress. Complete the rekey in Security tab first."
-            )
-            self.recovery_status_label.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
-            self._gui_audit_log("RECOVERY_BLOCKED", "recovery_already_active")
-            return
+            _gui_logger.info("BUG-20251225-002: Re-extracting credentials during recovery_active state")
+            # Show info but continue - don't block
 
         try:
             # Try to find container path
@@ -8928,7 +9055,12 @@ class SettingsDialog(QDialog):
             raise
 
     def _prompt_mandatory_rekey(self):
-        """Prompt user to rekey immediately after recovery."""
+        """
+        Prompt user to rekey immediately after recovery.
+
+        BUG-20251225-002 FIX: Instead of launching CLI rekey, navigate to Security tab
+        where the user can use the existing GUI rekey functionality.
+        """
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle(tr("recovery_rekey_required_title", lang=get_lang()))
         msg_box.setText(tr("recovery_rekey_required_body", lang=get_lang()))
@@ -8940,10 +9072,11 @@ class SettingsDialog(QDialog):
         msg_box.exec()
 
         if msg_box.clickedButton() == rekey_btn:
-            # Launch rekey process
-            self._launch_rekey()
+            # BUG-20251225-002 FIX: Navigate to Security tab instead of launching CLI
+            # The GUI has a built-in rekey button in the Security tab
+            self._navigate_to_security_tab_for_rekey()
         else:
-            # User skipped - show warning
+            # User skipped - show warning that rekey is still required
             QMessageBox.warning(
                 self,
                 tr("recovery_rekey_required_title", lang=get_lang()),
@@ -8951,8 +9084,34 @@ class SettingsDialog(QDialog):
             )
             self._gui_audit_log("REKEY_SKIPPED")
 
+    def _navigate_to_security_tab_for_rekey(self):
+        """
+        Navigate to Security tab to use GUI rekey functionality.
+
+        BUG-20251225-002 FIX: Use GUI rekey instead of CLI.
+        """
+        # Find the Security tab index
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == tr("settings_tab_security", lang=get_lang()):
+                self.tabs.setCurrentIndex(i)
+                _gui_logger.info("BUG-20251225-002: Navigated to Security tab for rekey")
+                self._gui_audit_log("REKEY_NAVIGATED_TO_SECURITY_TAB")
+
+                # Show informational message about using the Rekey button
+                QMessageBox.information(
+                    self,
+                    tr("recovery_rekey_required_title", lang=get_lang()),
+                    "Use the 'Rekey Volume' button below to change your password.\n\n"
+                    "Your recovered password has been copied to your clipboard.",
+                )
+                return
+
+        # Fallback if Security tab not found (shouldn't happen)
+        _gui_logger.warning("Security tab not found, falling back to CLI rekey")
+        self._launch_rekey()
+
     def _launch_rekey(self):
-        """Launch the rekey script."""
+        """Launch the rekey script (CLI fallback only)."""
         import subprocess
 
         try:

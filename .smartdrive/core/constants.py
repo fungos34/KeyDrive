@@ -407,6 +407,8 @@ class ConfigKeys:
     POST_RECOVERY_REKEY_COMPLETED_AT = "rekey_completed_at"
     POST_RECOVERY_COMPLETED_AT = "recovery_completed_at"
     POST_RECOVERY_POLICY = "post_recovery_policy"
+    # BUG-20251225-001: Track when rekey is in progress to allow verification mount
+    POST_RECOVERY_REKEY_IN_PROGRESS = "rekey_in_progress"
 
     # YubiKey configuration (CHG-20251222-017: SSOT key)
     YUBIKEY_SLOT = "yubikey_slot"
@@ -655,10 +657,12 @@ class FileNames:
         "*.py",
         REQUIREMENTS_TXT,
     ]
+    # BUG-20251225-003 FIX: Files/folders NEVER overwritten during update (user data)
+    # Note: "recovery" matches Paths.RECOVERY_SUBDIR (was incorrectly "recovery_kits")
     FILES_PROTECTED_FROM_UPDATE = {
         "keys",  # Keyfiles directory
         "integrity",  # Signatures directory
-        "recovery_kits",  # Recovery documents
+        "recovery",  # Recovery container and artifacts (Paths.RECOVERY_SUBDIR)
         CONFIG_JSON,  # User configuration (version field updated separately)
     }
 

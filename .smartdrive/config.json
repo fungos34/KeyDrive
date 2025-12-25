@@ -1,24 +1,26 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "version": "0.0.1",
-  "drive_name": null,
+  "drive_name": "",
   "mode": "gpg_pw_only",
   "setup_date": "2025-12-23",
   "last_password_change": "2025-12-23",
   "windows": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
     "mount_letter": "P",
-    "veracrypt_path": ""
+    "veracrypt_path": "",
+    "allow_mount_fallback": true
   },
   "unix": {
     "volume_path": "\\Device\\Harddisk1\\Partition2",
-    "mount_point": "~/veradrive"
+    "mount_point": "~/veradrive",
+    "allow_mount_fallback": true
   },
   "seed_gpg_path": "keys\\seed.gpg",
-  "kdf": "hkdf-sha256",
+  "kdf": "scrypt",
   "salt_b64": "TM2g2RBJgWELwff7e5MAIw==",
   "hkdf_info": "smartdrive-vc-pw-v1",
-  "pw_encoding": "base64url_nopad",
+  "pw_encoding": "utf-8",
   "keyfile_fingerprints": [
     "AC8D308F14F53C963811B89E9FA66E6E9DDEDE55"
   ],
@@ -46,13 +48,28 @@
     "launcher_partition": "E"
   },
   "recovery": {
-    "enabled": true,
+    "enabled": false,
     "used": false,
     "state": "enabled",
     "phrase_hash": "c9ad0d14b273eeeb",
     "container_path": "E:\\.smartdrive\\recovery\\recovery_container.bin",
     "header_path": "E:\\.smartdrive\\recovery\\header_backup.hdr",
     "volume_identity": "device-path-skip",
-    "created_at": "2025-12-23T21:59:13.789191Z"
-  }
+    "created_at": "2025-12-23T21:59:13.789191Z",
+    "share_count": 5,
+    "threshold": 3
+  },
+  "drive_id": "2fd878b8-af87-47dd-a830-181081a34d48",
+  "lost_and_found": {
+    "enabled": false,
+    "message": ""
+  },
+  "gui_theme": "slate",
+  "gui_lang": "en",
+  "keyfile": "C:\\Users\\accou\\Code\\VeraCrypt_Yubikey_2FA\\.smartdrive\\keys\\keyfile.vc",
+  "update_source_type": "local",
+  "update_url": "http://server:8000/api/update/download/latest",
+  "update_local_root": "",
+  "integrity_server_url": "http://127.0.0.1:8000/api/check",
+  "last_updated": "2025-12-24 02:33:58"
 }

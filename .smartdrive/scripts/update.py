@@ -832,27 +832,52 @@ if __name__ == "__main__":
                 # This eliminates redundant full directory tree copies
                 _log_update("update.overlay.start", target=str(deploy_root))
 
+                # BUG-20251225-003 FIX: Backup config.json before overlay
+                cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
+                cfg_backup_path = None
+                if cfg_path.exists():
+                    try:
+                        cfg_backup_path = cfg_path.with_suffix(".json.backup")
+                        shutil.copy2(cfg_path, cfg_backup_path)
+                        _log_update("update.config.backup_created", path=str(cfg_backup_path))
+                    except Exception as e:
+                        warn(f"Could not backup config.json: {e}")
+                        _log_update("update.config.backup_failed", error=str(e))
+                        cfg_backup_path = None
+
                 # Copy payload directly to deploy_root
                 # dirs_exist_ok=True allows overlay without removing existing files
                 # BUG-20251224-003 FIX: Skip protected user data files during overlay
+                # BUG-20251225-003 FIX: Add explicit filename check for config.json
                 skipped_protected = 0
                 for item in payload_dir.rglob("*"):
                     if item.is_file():
                         # Compute relative path from payload root
                         rel_path = item.relative_to(payload_dir)
-                        
+
+                        # BUG-20251225-003: EXPLICIT filename check for config.json
+                        # NEVER overwrite config.json regardless of path structure
+                        if item.name == FileNames.CONFIG_JSON:
+                            skipped_protected += 1
+                            _log_update(
+                                "update.config.skipped",
+                                path=str(rel_path),
+                                reason="explicit_protection",
+                            )
+                            continue
+
                         # BUG-20251224-003: Check if any path component is protected
-                        # Protected items: config.json, keys/, integrity/, recovery_kits/
+                        # Protected items: config.json, keys/, integrity/, recovery/
                         is_protected = False
                         for part in rel_path.parts:
                             if part in PROTECTED:
                                 is_protected = True
                                 break
-                        
+
                         if is_protected:
                             skipped_protected += 1
                             continue  # NEVER overwrite user data
-                        
+
                         dst = deploy_root / rel_path
 
                         # Ensure parent directory exists
@@ -863,23 +888,54 @@ if __name__ == "__main__":
 
                 _log_update("update.overlay.complete", skipped_protected=skipped_protected)
 
-                # Update version in config.json
-                cfg_path = deploy_root / Paths.SCRIPTS_SUBDIR / FileNames.CONFIG_JSON
+                # BUG-20251225-003 FIX: Update config.json metadata with validation and restore
                 if cfg_path.exists():
                     try:
+                        # Load current config
                         with open(cfg_path, "r", encoding="utf-8") as f:
                             cfg = json.load(f)
+
+                        # Preserve original for validation
+                        original_keys = set(cfg.keys())
+
+                        # Update only metadata fields
                         cfg[ConfigKeys.LAST_UPDATED] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
                         # Use atomic write if available
                         if write_config_atomic:
                             write_config_atomic(cfg_path, cfg)
                         else:
                             with open(cfg_path, "w", encoding="utf-8") as f:
                                 json.dump(cfg, f, indent=2)
+
+                        # BUG-20251225-003: Validate config.json after update
+                        with open(cfg_path, "r", encoding="utf-8") as f:
+                            validated_cfg = json.load(f)
+
+                        # Check no keys were lost
+                        if set(validated_cfg.keys()) != original_keys:
+                            raise ValueError("Config keys mismatch after update")
+
                         _log_update("update.config.updated", timestamp=cfg[ConfigKeys.LAST_UPDATED])
+
+                        # BUG-20251225-003: Remove backup after successful update
+                        if cfg_backup_path and cfg_backup_path.exists():
+                            cfg_backup_path.unlink()
+                            _log_update("update.config.backup_removed")
+
                     except Exception as e:
-                        warn(f"Could not update last_updated: {e}")
+                        warn(f"Config.json update failed: {e}")
                         _log_update("update.config.error", error=str(e))
+
+                        # BUG-20251225-003: Restore from backup on failure
+                        if cfg_backup_path and cfg_backup_path.exists():
+                            try:
+                                shutil.copy2(cfg_backup_path, cfg_path)
+                                warn("Restored config.json from backup")
+                                _log_update("update.config.restored_from_backup")
+                            except Exception as restore_error:
+                                error(f"Failed to restore config.json: {restore_error}")
+                                _log_update("update.config.restore_failed", error=str(restore_error))
 
                 print("Update overlay complete.")
                 _log_update("update.external_drive.success")

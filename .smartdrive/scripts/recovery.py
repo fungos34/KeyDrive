@@ -308,6 +308,62 @@ RECOVERY_STATE_USED = "used"
 # Recovery audit log
 RECOVERY_LOG_FILE = SCRIPT_DIR / "recovery.log"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEVICE INFO NORMALIZATION (BUG-20251225-002)
+# ─────────────────────────────────────────────────────────────────────────────
+def normalize_device_info(device_info: dict) -> dict:
+    """
+    Normalize device_info keys from config format to HTML generator format.
+
+    BUG-20251225-002: Config stores device_info using ConfigKeys constants
+    (e.g., "device_name", "device_bus"), but generate_recovery_html() expects
+    simple lowercase keys (e.g., "name", "bus").
+
+    This function maps:
+        ConfigKeys.DEVICE_NAME ("device_name") -> "name"
+        ConfigKeys.DEVICE_BUS ("device_bus") -> "bus"
+        ConfigKeys.DEVICE_SIZE_GB ("device_size_gb") -> "size_gb"
+        ConfigKeys.DEVICE_UNIQUE_ID ("device_unique_id") -> "unique_id"
+        ConfigKeys.DEVICE_SERIAL ("device_serial") -> "serial_number"
+        ConfigKeys.DEVICE_PARTITIONS ("device_partitions") -> "partitions"
+        ConfigKeys.LAUNCHER_PARTITION ("launcher_partition") -> "launcher_partition"
+
+    Args:
+        device_info: Dict from config with ConfigKeys-style keys, or None
+
+    Returns:
+        Dict with simple keys for HTML generator, or None if input is None
+    """
+    if not device_info:
+        return None
+
+    # Map from ConfigKeys constants (string values) to HTML generator keys
+    key_mapping = {
+        ConfigKeys.DEVICE_NAME: "name",  # "device_name" -> "name"
+        ConfigKeys.DEVICE_BUS: "bus",  # "device_bus" -> "bus"
+        ConfigKeys.DEVICE_SIZE_GB: "size_gb",  # "device_size_gb" -> "size_gb"
+        ConfigKeys.DEVICE_UNIQUE_ID: "unique_id",  # "device_unique_id" -> "unique_id"
+        ConfigKeys.DEVICE_SERIAL: "serial_number",  # "device_serial" -> "serial_number"
+        ConfigKeys.DEVICE_PARTITIONS: "partitions",  # "device_partitions" -> "partitions"
+        ConfigKeys.LAUNCHER_PARTITION: "launcher_partition",  # stays same
+    }
+
+    normalized = {}
+    for config_key, html_key in key_mapping.items():
+        if config_key in device_info:
+            normalized[html_key] = device_info[config_key]
+
+    # Also check if device_info already has simple keys (direct from setup state)
+    # This handles the case where device_info comes directly from selected_drive dict
+    simple_keys = ["name", "bus", "size_gb", "unique_id", "serial_number", "partitions", "launcher_partition"]
+    for key in simple_keys:
+        if key in device_info and key not in normalized:
+            normalized[key] = device_info[key]
+
+    return normalized if normalized else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RECOVERY OUTCOME CLASSIFICATION (P0)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3098,7 +3154,8 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             volume_identity = compute_volume_identity(volume_path)
 
             # BUG-20251221-042: Get device_info and recovery_version from config
-            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            # BUG-20251225-002: Normalize device_info keys for HTML generator
+            device_info = normalize_device_info(config.get(ConfigKeys.DEVICE_INFO))
             recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
 
             # Build GPG_PW_ONLY info if applicable
@@ -3357,7 +3414,8 @@ def generate_recovery_kit_from_setup(config_path: Path, password: str, keyfile_b
             drive_name = config.get(ConfigKeys.DRIVE_NAME, Branding.PRODUCT_NAME)
 
             # BUG-20251221-042: Get device_info and recovery_version from config
-            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            # BUG-20251225-002: Normalize device_info keys for HTML generator
+            device_info = normalize_device_info(config.get(ConfigKeys.DEVICE_INFO))
             recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
 
             gpg_pw_only_info = None
@@ -3574,7 +3632,8 @@ def cmd_generate_non_interactive(args):
             volume_identity = compute_volume_identity(volume_path)
 
             # BUG-20251221-042: Get device_info and recovery_version from config
-            device_info = config.get(ConfigKeys.DEVICE_INFO)
+            # BUG-20251225-002: Normalize device_info keys for HTML generator
+            device_info = normalize_device_info(config.get(ConfigKeys.DEVICE_INFO))
             recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
 
             gpg_pw_only_info = None
@@ -3742,7 +3801,8 @@ def cmd_generate(args):
         mode = config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value)
 
         # BUG-20251221-042: Get device_info and recovery_version from config
-        device_info = config.get(ConfigKeys.DEVICE_INFO)
+        # BUG-20251225-002: Normalize device_info keys for HTML generator
+        device_info = normalize_device_info(config.get(ConfigKeys.DEVICE_INFO))
         recovery_version = config.get(ConfigKeys.RECOVERY_VERSION, 1)
 
         # Build GPG_PW_ONLY info if applicable
@@ -4169,7 +4229,8 @@ def cmd_generate(args):
             else None
         ),
         artifact_qr_chains=artifact_qr_chains if artifact_qr_chains else None,
-        device_info=config.get(ConfigKeys.DEVICE_INFO),
+        # BUG-20251225-002: Normalize device_info keys for HTML generator
+        device_info=normalize_device_info(config.get(ConfigKeys.DEVICE_INFO)),
         recovery_version=config.get(ConfigKeys.RECOVERY_VERSION, 1),
     )
 
