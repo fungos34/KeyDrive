@@ -14,19 +14,39 @@ echo "Starting KeyDrive..."
 echo
 
 # ============================================================
-# VENV Detection and Activation
+# VENV Detection and Activation (BUG-20260102-012)
 # ============================================================
 # Priority:
-#   1. Bundled venv at .smartdrive/.venv (portable deployment)
-#   2. System Python in PATH (fallback)
+#   1. OS-specific venv: .smartdrive/.venv-linux or .smartdrive/.venv-mac
+#   2. Legacy venv: .smartdrive/.venv (backward compatibility)
+#   3. System Python in PATH (fallback)
 # ============================================================
 
 PYTHON_CMD=""
 VENV_ACTIVATE=""
+VENV_NAME=""
 
-# Check for bundled venv in .smartdrive/.venv
-if [ -f ".smartdrive/.venv/bin/python" ]; then
-    echo "Found bundled venv at .smartdrive/.venv"
+# Detect OS for venv selection
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    VENV_NAME=".venv-mac"
+else
+    VENV_NAME=".venv-linux"
+fi
+
+# Check for OS-specific venv first
+if [ -f ".smartdrive/${VENV_NAME}/bin/python" ]; then
+    echo "Found bundled venv at .smartdrive/${VENV_NAME}"
+    VENV_ACTIVATE=".smartdrive/${VENV_NAME}/bin/activate"
+    PYTHON_CMD=".smartdrive/${VENV_NAME}/bin/python"
+    
+    # Activate the venv
+    if [ -f "$VENV_ACTIVATE" ]; then
+        source "$VENV_ACTIVATE"
+        echo "Venv activated"
+    fi
+# Fallback to legacy .venv for backward compatibility
+elif [ -f ".smartdrive/.venv/bin/python" ]; then
+    echo "Found legacy venv at .smartdrive/.venv"
     VENV_ACTIVATE=".smartdrive/.venv/bin/activate"
     PYTHON_CMD=".smartdrive/.venv/bin/python"
     
@@ -47,7 +67,7 @@ else
         echo ""
         echo "ERROR: Python not found"
         echo ""
-        echo "No bundled venv found at .smartdrive/.venv"
+        echo "No bundled venv found at .smartdrive/${VENV_NAME}"
         echo "and Python is not available in system PATH."
         echo ""
         echo "Please install Python 3.10+ using your package manager:"
@@ -55,7 +75,7 @@ else
         echo "  macOS:         brew install python3"
         echo "  Fedora:        sudo dnf install python3"
         echo ""
-        echo "Or copy a pre-configured .venv to .smartdrive/.venv"
+        echo "Or copy a pre-configured venv to .smartdrive/${VENV_NAME}"
         echo ""
         exit 1
     fi

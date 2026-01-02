@@ -124,6 +124,9 @@ def is_excluded(filepath: Path, repo_root: Path) -> bool:
     excluded_dirs = [
         "venv/",
         ".venv/",
+        ".venv-win/",  # BUG-20260102-012: OS-specific venv
+        ".venv-linux/",  # BUG-20260102-012: OS-specific venv
+        ".venv-mac/",  # BUG-20260102-012: OS-specific venv
         "env/",
         ".env/",
         "__pycache__",

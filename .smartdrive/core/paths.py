@@ -70,6 +70,35 @@ class Paths:
     VERACRYPT_FORMAT_EXE_NAME = "VeraCrypt Format.exe"
 
     # ==========================================================================
+    # Cross-platform path normalization
+    # ==========================================================================
+
+    @staticmethod
+    def normalize_config_path(path_str: str) -> str:
+        """
+        Normalize a relative path string from config to the current OS format.
+
+        BUG-20260102-013: Config files may contain Windows-style paths (backslash)
+        that need to be converted to forward slashes for cross-platform compatibility.
+        Path() on all platforms handles forward slashes correctly.
+
+        Args:
+            path_str: Relative path string from config (may contain \\ or /)
+
+        Returns:
+            Path string with forward slashes (works on all platforms)
+
+        Example:
+            >>> Paths.normalize_config_path("keys\\\\seed.gpg")
+            'keys/seed.gpg'
+        """
+        if not path_str:
+            return path_str
+        # Replace Windows backslashes with forward slashes
+        # Forward slashes work on Windows, Linux, and macOS
+        return path_str.replace("\\", "/")
+
+    # ==========================================================================
     # VeraCrypt installation paths (platform-specific)
     # ==========================================================================
 

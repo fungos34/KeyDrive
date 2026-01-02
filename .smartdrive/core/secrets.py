@@ -176,13 +176,26 @@ def require_yubikey_or_fail(operation: str) -> None:
 # GPG Decryption Helpers
 # =============================================================================
 
+# Track if we've already retried GPG startup (to avoid infinite retries)
+_gpg_startup_retry_attempted = False
 
-def _decrypt_gpg_file_to_bytes(gpg_file_path: Path) -> bytes:
+
+def _decrypt_gpg_file_to_bytes(
+    gpg_file_path: Path,
+    retry_on_startup: bool = True,
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> bytes:
     """
     Decrypt a GPG-encrypted file to bytes in memory.
 
+    BUG-20260102-014: Added retry logic for GPG startup issues on Windows.
+    On first boot, GPG agent may not be fully initialized, causing the first
+    mount attempt to fail. This function will retry once after a short delay.
+
     Args:
         gpg_file_path: Path to .gpg file
+        retry_on_startup: If True, retry once on IPC/connection errors (GPG starting up)
+        status_callback: Optional callback to report status messages to UI
 
     Returns:
         Decrypted bytes
@@ -190,23 +203,84 @@ def _decrypt_gpg_file_to_bytes(gpg_file_path: Path) -> bytes:
     Raises:
         DecryptionError: If decryption fails
     """
+    global _gpg_startup_retry_attempted
+
     if not gpg_file_path.exists():
         raise DecryptionError(f"GPG file not found: {gpg_file_path}")
 
-    try:
+    def attempt_decrypt() -> subprocess.CompletedProcess:
         # BUG-20251219-001 FIX: Add --no-tty to prevent terminal hang
-        result = subprocess.run(
-            ["gpg", "--no-tty", "--decrypt", str(gpg_file_path)], capture_output=True, timeout=GPG_DECRYPT_TIMEOUT
+        return subprocess.run(
+            ["gpg", "--no-tty", "--decrypt", str(gpg_file_path)],
+            capture_output=True,
+            timeout=GPG_DECRYPT_TIMEOUT,
         )
+
+    try:
+        result = attempt_decrypt()
+
         if result.returncode == 0:
+            _gpg_startup_retry_attempted = False  # Reset for next time
             return result.stdout
-        else:
+
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        stderr_lower = stderr.lower()
+
+        # BUG-20260102-014: Check for startup-related errors and retry
+        is_startup_error = (
+            "ipc connect" in stderr_lower
+            or "can't connect" in stderr_lower
+            or "no smartcard daemon" in stderr_lower
+            or "agent" in stderr_lower and "not running" in stderr_lower
+        )
+
+        if is_startup_error and retry_on_startup and not _gpg_startup_retry_attempted:
+            _gpg_startup_retry_attempted = True
+
+            if status_callback:
+                status_callback("⏳ GPG services starting up, please wait...")
+
+            # Wait for GPG to initialize
+            import time
+            time.sleep(3)
+
+            if status_callback:
+                status_callback("🔄 Retrying GPG decryption...")
+
+            # Retry the decryption
+            result = attempt_decrypt()
+
+            if result.returncode == 0:
+                return result.stdout
+
+            # Still failed - get updated error
             stderr = result.stderr.decode("utf-8", errors="replace")
-            raise DecryptionError(f"GPG decryption failed: {stderr}")
+
+        # Generate user-friendly error message
+        from core.dependencies import format_gpg_error_with_guidance
+
+        friendly_error = format_gpg_error_with_guidance(stderr, is_startup_issue=is_startup_error)
+        raise DecryptionError(friendly_error)
+
     except subprocess.TimeoutExpired:
-        raise DecryptionError("GPG decryption timed out (check YubiKey)")
+        raise DecryptionError(
+            "🔴 GPG Decryption Timed Out\n\n"
+            "GPG did not respond in time.\n\n"
+            "SOLUTIONS:\n"
+            "1. Check if YubiKey is inserted and responding (LED should blink)\n"
+            "2. Try unplugging and replugging the YubiKey\n"
+            "3. Restart GPG agent: gpgconf --kill gpg-agent\n"
+            "4. Check if another application is using the YubiKey"
+        )
     except FileNotFoundError:
-        raise DecryptionError("GPG not installed or not in PATH")
+        raise DecryptionError(
+            "🔴 GPG Not Found\n\n"
+            "GnuPG (gpg) is not installed or not in PATH.\n\n"
+            "INSTALL:\n"
+            "• Windows: Download Gpg4win from https://gpg4win.org/\n"
+            "• Linux: sudo apt install gnupg\n"
+            "• macOS: brew install gnupg"
+        )
 
 
 # =============================================================================
@@ -391,7 +465,8 @@ class SecretProvider:
             else:
                 seed_path = config.get(ConfigKeys.SEED_GPG_PATH, "")
                 if seed_path and smartdrive_dir:
-                    provider.seed_gpg_path = smartdrive_dir / seed_path
+                    # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+                    provider.seed_gpg_path = smartdrive_dir / Paths.normalize_config_path(seed_path)
 
             # Salt and HKDF info
             provider.salt_b64 = overrides.get("salt_b64", config.get(ConfigKeys.SALT_B64, ""))
@@ -407,13 +482,15 @@ class SecretProvider:
             else:
                 kf_path = config.get(ConfigKeys.ENCRYPTED_KEYFILE, "")
                 if kf_path and smartdrive_dir:
-                    provider.keyfile_gpg_path = smartdrive_dir / kf_path
+                    # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+                    provider.keyfile_gpg_path = smartdrive_dir / Paths.normalize_config_path(kf_path)
 
         elif security_mode == SecurityMode.PW_KEYFILE:
             # Plain keyfile
             kf_path = config.get(ConfigKeys.KEYFILE, "")
             if kf_path and smartdrive_dir:
-                provider.keyfile_plain_path = smartdrive_dir / kf_path
+                # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+                provider.keyfile_plain_path = smartdrive_dir / Paths.normalize_config_path(kf_path)
 
         return provider
 

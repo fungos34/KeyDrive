@@ -600,6 +600,8 @@ def resolve_encrypted_seed(script_root: Path, cfg: dict) -> Path | None:
     # Fallback to config-specified path (legacy support)
     rel = (cfg.get(ConfigKeys.SEED_GPG_PATH) or "").strip()
     if rel:
+        # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+        rel = Paths.normalize_config_path(rel)
         # Handle legacy "../keys/..." paths by converting to SSOT
         if rel.startswith("../keys/"):
             rel = "keys/" + rel[8:]  # Convert "../keys/x" to "keys/x"
@@ -1944,7 +1946,25 @@ def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) 
     mount_point.mkdir(parents=True, exist_ok=True)
 
     log(f"Mounting VeraCrypt volume on Unix at {mount_point}:")
-    base_cmd = [
+
+    # BUG-20260102-020: VeraCrypt on Linux requires root privileges for mount.
+    # Use pkexec (PolicyKit) to elevate just the VeraCrypt command.
+    # NOTE: pkexec doesn't forward stdin, so we must use --password flag
+    # instead of --stdin when elevation is needed.
+    # BUG-20260102-026: When mounting with pkexec, the mounted filesystem is owned
+    # by root and inaccessible to regular users. Pass uid/gid fs-options to fix.
+    real_uid = os.getuid()
+    real_gid = os.getgid()
+    needs_elevation = os.geteuid() != 0
+    elevation_prefix = []
+    if needs_elevation:
+        if shutil.which("pkexec"):
+            elevation_prefix = ["pkexec"]
+            log("Using pkexec for privilege elevation")
+        else:
+            log("WARNING: pkexec not found, mount may fail without root privileges")
+
+    base_cmd = elevation_prefix + [
         "veracrypt",
         "--text",
         "--non-interactive",
@@ -1953,22 +1973,44 @@ def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) 
         str(mount_point),
     ]
 
+    # BUG-20260102-026: Pass uid/gid so mounted volume is accessible to launching user
+    # This works for FAT/exFAT/NTFS filesystems that support these mount options
+    if needs_elevation:
+        fs_options = f"uid={real_uid},gid={real_gid}"
+        base_cmd.extend(["--fs-options", fs_options])
+        log(f"Using fs-options: {fs_options}")
+
     # Add keyfiles if provided
     if tmp_keys and len(tmp_keys) > 0:
         for tmp_key in tmp_keys:
             base_cmd.extend(["--keyfiles", str(tmp_key)])
 
     if password:
-        # Avoid putting password on command line; feed via stdin
-        base_cmd.append("--stdin")
-        proc = subprocess.Popen(
-            base_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        stdout, stderr = proc.communicate(input=password + "\n")
+        if needs_elevation and elevation_prefix:
+            # BUG-20260102-020: pkexec doesn't forward stdin, use --password flag
+            # This is slightly less secure (password briefly visible in process list)
+            # but necessary for PolicyKit elevation
+            base_cmd.extend(["--password", password])
+            proc = subprocess.Popen(
+                base_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = proc.communicate()
+        else:
+            # No elevation needed - safe to use stdin
+            base_cmd.append("--stdin")
+            proc = subprocess.Popen(
+                base_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = proc.communicate(input=password + "\n")
+
         if proc.returncode != 0:
             raise RuntimeError(
                 f"VeraCrypt mount failed (exit {proc.returncode}).\n" f"stdout: {stdout}\n" f"stderr: {stderr}"

@@ -15,20 +15,30 @@ echo Starting KeyDrive...
 echo.
 
 REM ============================================================
-REM VENV Detection and Activation
+REM VENV Detection and Activation (BUG-20260102-012)
 REM ============================================================
 REM Priority:
-REM   1. Bundled venv at .smartdrive\.venv (portable deployment)
-REM   2. System Python in PATH (fallback)
+REM   1. OS-specific venv at .smartdrive\.venv-win
+REM   2. Legacy venv at .smartdrive\.venv (backward compatibility)
+REM   3. System Python in PATH (fallback)
 REM ============================================================
 
 set "VENV_ACTIVATE="
 set "PYTHON_CMD="
 set "PYTHONW_CMD="
 
-REM Check for bundled venv in .smartdrive\.venv
+REM Check for Windows-specific venv first (.venv-win)
+if exist ".smartdrive\.venv-win\Scripts\python.exe" (
+    echo Found bundled venv at .smartdrive\.venv-win
+    set "VENV_ACTIVATE=%~dp0.smartdrive\.venv-win\Scripts\activate.bat"
+    set "PYTHON_CMD=%~dp0.smartdrive\.venv-win\Scripts\python.exe"
+    set "PYTHONW_CMD=%~dp0.smartdrive\.venv-win\Scripts\pythonw.exe"
+    goto :venv_found
+)
+
+REM Fallback to legacy .venv for backward compatibility
 if exist ".smartdrive\.venv\Scripts\python.exe" (
-    echo Found bundled venv at .smartdrive\.venv
+    echo Found legacy venv at .smartdrive\.venv
     set "VENV_ACTIVATE=%~dp0.smartdrive\.venv\Scripts\activate.bat"
     set "PYTHON_CMD=%~dp0.smartdrive\.venv\Scripts\python.exe"
     set "PYTHONW_CMD=%~dp0.smartdrive\.venv\Scripts\pythonw.exe"
@@ -42,13 +52,13 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo ERROR: Python not found
     echo.
-    echo No bundled venv found at .smartdrive\.venv
+    echo No bundled venv found at .smartdrive\.venv-win
     echo and Python is not available in system PATH.
     echo.
     echo Please either:
     echo   1. Install Python 3.10+ from https://www.python.org/
     echo      (Check "Add Python to PATH" during installation)
-    echo   2. Copy a pre-configured .venv to .smartdrive\.venv
+    echo   2. Copy a pre-configured .venv to .smartdrive\.venv-win
     echo.
     pause
     exit /b 1

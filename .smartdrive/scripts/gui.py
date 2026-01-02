@@ -16,6 +16,7 @@ See the LICENSE file for details.
 import json
 import logging
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -494,6 +495,7 @@ try:
         QProgressBar,
         QPushButton,
         QSizePolicy,
+        QSlider,
         QSpinBox,
         QTabWidget,
         QTextEdit,
@@ -645,9 +647,16 @@ from smartdrive import check_mount_status, detect_context
 
 
 def check_mount_status_veracrypt() -> bool:
-    """Check if volume is mounted using filesystem check (more reliable than VeraCrypt CLI)."""
+    """Check if volume is mounted using filesystem check (more reliable than VeraCrypt CLI).
+
+    BUG-20260102-014: Now handles both Windows and Linux/macOS mount detection.
+    - Windows: Checks configured mount letter (e.g., V:/)
+    - Linux/macOS: Checks configured mount point using mountpoint command or directory iteration
+    """
     try:
         import json
+        import platform
+        import subprocess
         from pathlib import Path
 
         if not CONFIG_FILE.exists():
@@ -656,20 +665,50 @@ def check_mount_status_veracrypt() -> bool:
         with open(CONFIG_FILE, "r") as f:
             cfg = json.load(f)
 
-        mount_letter = (cfg.get(ConfigKeys.WINDOWS) or {}).get(ConfigKeys.MOUNT_LETTER, "V").upper()
-        drive_path = Path(f"{mount_letter}:/")
+        system = platform.system().lower()
 
-        # Check if drive exists and is accessible
-        if drive_path.exists() and drive_path.is_dir():
-            # Additional check: try to list directory contents to verify it's really mounted
-            try:
-                list(drive_path.iterdir())
-                return True
-            except (OSError, PermissionError):
-                # If we can't list contents, it might not be properly mounted
+        if system == "windows":
+            # Windows: Check mount letter (e.g., V:/)
+            mount_letter = (cfg.get(ConfigKeys.WINDOWS) or {}).get(ConfigKeys.MOUNT_LETTER, "V").upper()
+            drive_path = Path(f"{mount_letter}:/")
+
+            # Check if drive exists and is accessible
+            if drive_path.exists() and drive_path.is_dir():
+                # Additional check: try to list directory contents to verify it's really mounted
+                try:
+                    list(drive_path.iterdir())
+                    return True
+                except (OSError, PermissionError):
+                    # If we can't list contents, it might not be properly mounted
+                    return False
+            return False
+        else:
+            # Linux/macOS: Check mount point
+            mount_point = (cfg.get(ConfigKeys.UNIX) or {}).get(ConfigKeys.MOUNT_POINT, "")
+            if not mount_point:
                 return False
 
-        return False
+            mount_path = Path(mount_point).expanduser()
+
+            if not mount_path.exists():
+                return False
+
+            # On Unix, check if it's a mount point using mountpoint command
+            try:
+                result = subprocess.run(
+                    ["mountpoint", "-q", str(mount_path)],
+                    capture_output=True,
+                    timeout=5,
+                )
+                return result.returncode == 0
+            except FileNotFoundError:
+                # mountpoint command not available, check if dir has content
+                try:
+                    return any(mount_path.iterdir())
+                except (OSError, PermissionError):
+                    return False
+            except subprocess.TimeoutExpired:
+                return False
 
     except Exception as e:
         log_exception("Error checking mount status", e, level="debug")
@@ -1540,6 +1579,11 @@ class RemoteBannerLabel(QLabel):
 class SmartDriveGUI(QWidget):
     """Main KeyDrive GUI window."""
 
+    # BUG-20260102-027: Non-interactive widget types that should allow window dragging
+    # When mouse press lands on these widgets, we initiate drag instead of blocking
+    _DRAG_THROUGH_WIDGETS = (QLabel, QWidget)
+    _INTERACTIVE_WIDGETS = (QPushButton, QLineEdit, QComboBox, QCheckBox, QSlider, QSpinBox)
+
     def __init__(self, instance_manager: Optional["SingleInstanceManager"] = None):
         super().__init__()
         self.setObjectName("mainWindow")
@@ -1550,6 +1594,8 @@ class SmartDriveGUI(QWidget):
         self._drag_in_progress = False
         self.drag_position = None  # Initialize for window dragging
         self._launcher_root = self._detect_launcher_root()
+        # BUG-20260102-027: Install event filter on self for drag-through on Linux
+        self.installEventFilter(self)
 
         # Single instance manager (for cleanup on exit)
         self._instance_manager = instance_manager
@@ -1589,6 +1635,8 @@ class SmartDriveGUI(QWidget):
         self.settings = QSettings(Branding.PRODUCT_NAME, f"{Branding.PRODUCT_NAME}GUI")
 
         self.init_ui()
+        # BUG-20260102-027: Install event filter on all child widgets for drag-through
+        self._install_drag_filter_recursive(self)
         self.position_window(force=True)
 
         # Apply branding with current product name
@@ -1603,6 +1651,11 @@ class SmartDriveGUI(QWidget):
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.refresh_status)
         self.status_timer.start(2000)
+
+        # CHG-20260102-013: Loading animation state for mount/unmount operations
+        self._loading_timer: Optional[QTimer] = None
+        self._loading_dots_state = 0
+        self._loading_base_status_key: Optional[str] = None
 
         # Initialize tray icon
         self._setup_tray_icon()
@@ -1964,6 +2017,80 @@ QPushButton:pressed {{
             if hasattr(self, "status_timer") and self.status_timer:
                 self.status_timer.stop()
             event.accept()
+
+    # BUG-20260102-027: Window dragging handlers for frameless window
+    # Qt frameless windows don't have native title bar, so we implement custom drag
+    def _install_drag_filter_recursive(self, widget):
+        """Install event filter on widget and all its children for drag-through."""
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press for window dragging."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Only start drag if clicking on non-interactive area
+            # The widget under cursor will receive the event first if it handles it
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._drag_in_progress = True
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for window dragging."""
+        if self._drag_in_progress and (event.buttons() & Qt.MouseButton.LeftButton) and self.drag_position is not None:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release for window dragging."""
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_in_progress:
+            self._drag_in_progress = False
+            self._user_moved = True  # Prevent auto-repositioning after manual move
+            event.accept()
+
+    def eventFilter(self, obj, event):
+        """BUG-20260102-027: Event filter to enable window dragging on Linux.
+
+        On Linux with frameless windows, child widgets consume mouse events before
+        they reach the parent. This filter intercepts mouse events on non-interactive
+        child widgets (labels, frames) and initiates window drag.
+        """
+        from PyQt6.QtCore import QEvent
+
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                # Check if the widget under cursor is interactive (button, input, etc.)
+                widget = obj
+                # Walk up the widget tree to find if any ancestor is interactive
+                is_interactive = False
+                while widget is not None and widget is not self:
+                    if isinstance(widget, self._INTERACTIVE_WIDGETS):
+                        is_interactive = True
+                        break
+                    widget = widget.parent() if hasattr(widget, "parent") else None
+
+                if not is_interactive:
+                    # Start drag from non-interactive area
+                    self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    self._drag_in_progress = True
+                    return True  # Consume event
+
+        elif event.type() == QEvent.Type.MouseMove:
+            if (
+                self._drag_in_progress
+                and (event.buttons() & Qt.MouseButton.LeftButton)
+                and self.drag_position is not None
+            ):
+                self.move(event.globalPosition().toPoint() - self.drag_position)
+                return True  # Consume event
+
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton and self._drag_in_progress:
+                self._drag_in_progress = False
+                self._user_moved = True
+                return True  # Consume event
+
+        return super().eventFilter(obj, event)
 
     def showEvent(self, event):
         """Ensure proper layout after the window becomes visible."""
@@ -2463,10 +2590,15 @@ QPushButton:pressed {{
         }
 
         # Get VeraCrypt volume info (if mounted)
+        # BUG-20260102-018: Use platform-appropriate mount path
         if self.is_mounted and self.config:
-            mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
-            if mount_letter:
-                vc_path = f"{mount_letter}:\\"
+            if platform.system() == "Windows":
+                mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "")
+                vc_path = f"{mount_letter}:\\" if mount_letter else ""
+            else:
+                vc_path = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+
+            if vc_path:
                 try:
                     vc_total, vc_used, vc_free = self.get_disk_usage(vc_path)
                     # Validate data makes sense
@@ -2528,8 +2660,15 @@ QPushButton:pressed {{
         # the auth_frame is shown/hidden because the layout can't expand/contract properly.
         # Instead, update_window_size() clamps geometry whenever content visibility changes.
 
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # BUG-20260102-027: On Linux, use normal window with title bar for native dragging
+        # Frameless windows on Linux/X11/Wayland don't drag properly without complex workarounds
+        if platform.system() == "Linux":
+            # Normal window with title bar - draggable by default
+            self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        else:
+            # Windows/macOS: frameless + custom styling
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         # Main layout
         layout = QVBoxLayout()
@@ -3210,6 +3349,49 @@ QPushButton:pressed {{
         if style:
             self.status_label.setStyleSheet(style)
 
+    # CHG-20260102-013: Loading animation methods for mount/unmount operations
+    def _start_loading_animation(self, status_key: str) -> None:
+        """
+        Start animated loading indicator for long-running operations.
+
+        Displays the base status message with animated dots (·, ··, ···)
+        cycling every 400ms to indicate the application is working.
+
+        Args:
+            status_key: Translation key for base status message
+        """
+        self._loading_base_status_key = status_key
+        self._loading_dots_state = 0
+        self._update_loading_dots()
+
+        if self._loading_timer is None:
+            self._loading_timer = QTimer()
+            self._loading_timer.timeout.connect(self._update_loading_dots)
+        self._loading_timer.start(400)  # Update every 400ms
+
+    def _stop_loading_animation(self) -> None:
+        """Stop the loading animation timer."""
+        if self._loading_timer is not None:
+            self._loading_timer.stop()
+        self._loading_base_status_key = None
+        self._loading_dots_state = 0
+
+    def _update_loading_dots(self) -> None:
+        """
+        Update the status label with animated dots.
+
+        Cycles through: base_text ·, base_text ··, base_text ···
+        """
+        if self._loading_base_status_key is None:
+            return
+
+        # Cycle through 0, 1, 2 for 1-3 dots
+        dots = "·" * (self._loading_dots_state + 1)
+        base_text = tr(self._loading_base_status_key, lang=get_lang())
+        self.status_label.setText(f"{base_text} {dots}")
+
+        self._loading_dots_state = (self._loading_dots_state + 1) % 3
+
     def update_storage_labels(self, lang: str = None) -> None:
         """
         Update storage 'Free: X GB' labels using specified language.
@@ -3638,11 +3820,21 @@ QPushButton:pressed {{
 
         try:
             # Get VeraCrypt volume info if mounted
+            # BUG-20260102-018: Use platform-appropriate mount path (Windows vs Linux/macOS)
             if self.config and self.is_mounted:
-                mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
-                mount_path = Path(f"{mount_letter}:\\")
+                if platform.system() == "Windows":
+                    mount_letter = self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V")
+                    mount_path = Path(f"{mount_letter}:\\")
+                else:
+                    # Linux/macOS: Use unix.mount_point from config
+                    mount_point_str = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
+                    if mount_point_str:
+                        # Expand ~ and resolve to absolute path
+                        mount_path = Path(os.path.expanduser(mount_point_str)).resolve()
+                    else:
+                        mount_path = None
 
-                if mount_path.exists():
+                if mount_path and mount_path.exists():
                     stat = shutil.disk_usage(str(mount_path))
                     storage_info["veracrypt"] = {"total": stat.total, "used": stat.used, "free": stat.free}
         except Exception as e:
@@ -3661,30 +3853,64 @@ QPushButton:pressed {{
             # Store for tooltip access
             self.storage_info = storage_info
 
-            # Get mount letter
-            mount_letter = (
-                self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V") if self.config else "V"
-            )
+            # BUG-20260102-018/024: Get mount identifier (Windows letter or Linux path)
+            # BUG-20260102-024: User wants full mount path on Linux, not just folder name
+            # BUG-20260102-028: Abbreviate home directory with ~ to shorten paths
 
-            # Get drive letter for launch drive
+            def abbreviate_home(path_str: str) -> str:
+                """Replace home directory prefix with ~ for brevity."""
+                home = os.path.expanduser("~")
+                if path_str.startswith(home):
+                    return "~" + path_str[len(home) :]
+                return path_str
+
+            if platform.system() == "Windows":
+                mount_label = (
+                    self.config.get(ConfigKeys.WINDOWS, {}).get(ConfigKeys.MOUNT_LETTER, "V") if self.config else "V"
+                )
+                # Add colon for Windows drive letter format
+                mount_label = f"{mount_label}:"
+            else:
+                # Linux/macOS: Show mount point path, abbreviated with ~
+                mount_point_str = (
+                    self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "") if self.config else ""
+                )
+                if mount_point_str:
+                    # Expand ~ for processing, then re-abbreviate for display
+                    expanded_path = Path(os.path.expanduser(mount_point_str))
+                    mount_label = abbreviate_home(str(expanded_path))
+                else:
+                    mount_label = "VC"
+
+            # Get drive label for launch drive
             # BUG-20251221-027: Use _launcher_root instead of sys.executable
             # sys.executable points to Python install, not KeyDrive deployment
             # CHG-20251221-042: Use remote drive letter when in remote mode
+            # BUG-20260102-024/028: Show abbreviated path on Linux, drive letter with colon on Windows
             try:
-                if self._app_mode == AppMode.REMOTE and self._remote_profile:
-                    # Remote mode: use remote drive letter
-                    drive_letter = self._remote_profile.original_drive_letter
+                if platform.system() == "Windows":
+                    if self._app_mode == AppMode.REMOTE and self._remote_profile:
+                        # Remote mode: use remote drive letter
+                        drive_letter = self._remote_profile.original_drive_letter
+                        if not drive_letter:
+                            drive_letter = str(self._remote_profile.remote_root.drive).upper().rstrip(":")
+                    elif hasattr(self, "_launcher_root") and self._launcher_root:
+                        drive_letter = str(self._launcher_root.drive).upper().rstrip(":")
+                    else:
+                        # Fallback to sys.executable only if _launcher_root not set
+                        drive_path = Path(sys.executable).parent
+                        drive_letter = drive_path.drive.upper().rstrip(":")
                     if not drive_letter:
-                        drive_letter = str(self._remote_profile.remote_root.drive).upper().rstrip(":")
-                elif hasattr(self, "_launcher_root") and self._launcher_root:
-                    drive_letter = str(self._launcher_root.drive).upper().rstrip(":")
+                        # Fallback for network/UNC paths
+                        drive_letter = "Local"
                 else:
-                    # Fallback to sys.executable only if _launcher_root not set
-                    drive_path = Path(sys.executable).parent
-                    drive_letter = drive_path.drive.upper().rstrip(":")
-                if not drive_letter:
-                    # Fallback for network/UNC paths
-                    drive_letter = "Local"
+                    # Linux/macOS: Show abbreviated path to launcher drive
+                    if self._app_mode == AppMode.REMOTE and self._remote_profile:
+                        drive_letter = abbreviate_home(str(self._remote_profile.remote_root))
+                    elif hasattr(self, "_launcher_root") and self._launcher_root:
+                        drive_letter = abbreviate_home(str(self._launcher_root))
+                    else:
+                        drive_letter = abbreviate_home(str(Path(sys.executable).parent))
             except Exception as e:
                 log_exception("Error getting drive letter", e, level="debug")
                 drive_letter = "Local"
@@ -3710,8 +3936,13 @@ QPushButton:pressed {{
             self.setWindowTitle(PRODUCT_NAME)
 
             # Update info labels with available space
+            # BUG-20260102-024: Clean format for both Windows (J:) and Linux (path)
             if smartdrive["total"] > 0:
-                launch_text = f"{drive_letter}: {self.format_used_total(smartdrive['used'], smartdrive['total'])}"
+                if platform.system() == "Windows":
+                    launch_text = f"{drive_letter}: {self.format_used_total(smartdrive['used'], smartdrive['total'])}"
+                else:
+                    # Linux: path already includes separators, don't add colon
+                    launch_text = f"{drive_letter} {self.format_used_total(smartdrive['used'], smartdrive['total'])}"
                 self.launch_info.setText(launch_text)
                 self._last_smartdrive_free = smartdrive["free"]  # Cache for language updates
                 self.launch_free_label.setText(
@@ -3731,7 +3962,11 @@ QPushButton:pressed {{
                 self.launch_info.update()
 
             if vc["total"] > 0 and self.is_mounted:
-                vc_text = f"{mount_letter}: {self.format_used_total(vc['used'], vc['total'])}"
+                if platform.system() == "Windows":
+                    vc_text = f"{mount_label} {self.format_used_total(vc['used'], vc['total'])}"
+                else:
+                    # Linux: mount_label is already full path, no extra separator needed
+                    vc_text = f"{mount_label} {self.format_used_total(vc['used'], vc['total'])}"
                 self.vc_info.setText(vc_text)
                 self._last_vc_free = vc["free"]  # Cache for language updates
                 self.vc_free_label.setText(tr("size_free", lang=get_lang(), size=self.format_size(vc["free"])))
@@ -3799,9 +4034,10 @@ QPushButton:pressed {{
                 vc_path = Path(f"{mount_letter}:/")
         else:
             # Unix: use mount point from config
+            # BUG-20260102-023: Expand ~ in mount point path
             mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "") if self.config else ""
             if mount_point:
-                vc_path = Path(mount_point)
+                vc_path = Path(os.path.expanduser(mount_point))
 
         if vc_path and vc_path.exists():
             open_in_file_manager(vc_path, parent=self)
@@ -3833,9 +4069,10 @@ QPushButton:pressed {{
                     vc_path = Path(f"{mount_letter}:/")
                     vc_enabled = vc_path.exists()
             else:
+                # BUG-20260102-023: Expand ~ in mount point path
                 mount_point = self.config.get(ConfigKeys.UNIX, {}).get(ConfigKeys.MOUNT_POINT, "")
                 if mount_point:
-                    vc_path = Path(mount_point)
+                    vc_path = Path(os.path.expanduser(mount_point))
                     vc_enabled = vc_path.exists()
 
         if hasattr(self, "btn_open_vc"):
@@ -3921,7 +4158,8 @@ QPushButton:pressed {{
 
         if mode == SecurityMode.GPG_PW_ONLY.value:
             # GPG password-only mode: no password input needed, mount directly
-            self.set_status("status_mounting_gpg")
+            # CHG-20260102-013: Use loading animation instead of static status
+            self._start_loading_animation("status_mounting_gpg")
             self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
             # Start mount operation in background thread
@@ -4000,7 +4238,8 @@ QPushButton:pressed {{
         self.tools_btn.setEnabled(True)
 
         # Start mount operation
-        self.set_status("status_mounting")
+        # CHG-20260102-013: Use loading animation instead of static status
+        self._start_loading_animation("status_mounting")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
         # CHG-20251221-042: Determine config_path for remote mode
@@ -4123,7 +4362,8 @@ QPushButton:pressed {{
         # Disable buttons during unmount
         self.mount_btn.setEnabled(False)
         self.unmount_btn.setEnabled(False)
-        self.set_status("status_unmounting")
+        # CHG-20260102-013: Use loading animation instead of static status
+        self._start_loading_animation("status_unmounting")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
 
         # CHG-20251221-042: Determine config_path for remote mode
@@ -4139,6 +4379,9 @@ QPushButton:pressed {{
     @pyqtSlot(bool, str, dict)
     def on_unmount_finished(self, success, message_key, message_args):
         """Handle unmount operation completion."""
+        # CHG-20260102-013: Stop loading animation before showing result
+        self._stop_loading_animation()
+
         if success:
             self.set_status("status_unmount_success")
             self.status_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold;")
@@ -4155,6 +4398,9 @@ QPushButton:pressed {{
     @pyqtSlot(bool, str, dict)
     def on_mount_finished(self, success, message_key, message_args):
         """Handle mount operation completion."""
+        # CHG-20260102-013: Stop loading animation before showing result
+        self._stop_loading_animation()
+
         if success:
             self.set_status("status_mount_success")
             self.status_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold;")
@@ -5423,6 +5669,19 @@ QPushButton:pressed {{
         # Update geometry immediately, refresh storage labels shortly after
         QTimer.singleShot(0, self._post_show_layout_fix)
         QTimer.singleShot(50, self.update_storage_display)
+
+    def resizeEvent(self, event):
+        """Handle resize to update the window mask for proper mouse input on Linux."""
+        super().resizeEvent(event)
+        # BUG-20260102-017: On Linux, frameless transparent windows need a mask
+        # to properly receive mouse events in the painted area
+        if platform.system() != "Windows":
+            from PyQt6.QtGui import QPainterPath, QRegion
+
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, self.width(), self.height(), CORNER_RADIUS, CORNER_RADIUS)
+            region = QRegion(path.toFillPolygon().toPolygon())
+            self.setMask(region)
 
     def paintEvent(self, event):
         """Custom paint event for rounded corners and shadow."""
@@ -6828,7 +7087,10 @@ class SettingsDialog(QDialog):
         current_mode = (
             self.config.get(ConfigKeys.MODE, SecurityMode.PW_ONLY.value) if self.config else SecurityMode.PW_ONLY.value
         )
-        current_seed_path = self.config.get(ConfigKeys.SEED_GPG_PATH, "") if self.config else ""
+        # BUG-20260102-013: Normalize Windows backslashes for cross-platform path comparison
+        current_seed_path = Paths.normalize_config_path(
+            self.config.get(ConfigKeys.SEED_GPG_PATH, "") if self.config else ""
+        )
         is_gpg_to_gpg_rekey = (
             current_mode
             in (

@@ -6,8 +6,9 @@ Deploys KeyDrive GUI to external drives for the first time.
 This creates the initial .smartdrive directory structure.
 
 Usage:
-    python deploy.py                    # Interactive deployment
-    python deploy.py --drive G          # Deploy to specific drive
+    python deploy.py                              # Interactive deployment
+    python deploy.py --drive G                    # Deploy to Windows drive G:
+    python deploy.py --drive /media/user/USBDrive # Deploy to Linux/macOS mount point
 """
 
 import json
@@ -54,6 +55,7 @@ from core.constants import Branding, FileNames
 # Import PathResolver for SSOT path management
 from core.path_resolver import RuntimePaths, consolidate_duplicates
 from core.paths import Paths
+from core.platform import get_platform as _get_platform
 from core.platform import is_windows as _is_windows
 from core.platform import windows_create_shortcut, windows_set_attributes
 
@@ -77,43 +79,206 @@ def _log_deploy(event: str, **kwargs) -> None:
     _deploy_logger.info(f"{event}{': ' + details if details else ''}")
 
 
+# =============================================================================
+# BUG-20260102-010: Pre-deployment cleanup to prevent storage accumulation
+# =============================================================================
+
+
+def _get_os_venv_dir_name() -> str:
+    """
+    Get the OS-specific venv directory name for the current platform.
+
+    BUG-20260102-012: Returns .venv-win, .venv-linux, or .venv-mac based on OS.
+    """
+    platform = _get_platform().lower()
+    if platform == "windows":
+        return FileNames.VENV_DIR_WIN
+    elif platform == "darwin":
+        return FileNames.VENV_DIR_MAC
+    else:  # Linux and other Unix-like
+        return FileNames.VENV_DIR_LINUX
+
+
+def _handle_remove_readonly(func, path, exc_info):
+    """
+    Error handler for shutil.rmtree to handle Windows read-only files.
+
+    Windows sets read-only attribute on some files, preventing deletion.
+    This handler clears the attribute and retries.
+    """
+    import stat
+
+    # Clear the read-only attribute and retry
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _cleanup_existing_smartdrive(smartdrive_dir: Path) -> bool:
+    r"""
+    Clean up existing .smartdrive directory before deployment.
+
+    BUG-20260102-010: Ensures storage doesn't accumulate between deployments.
+
+    On Windows:
+    - Clears hidden attribute before deletion
+    - Handles read-only files
+    - Handles long paths via \\?\ prefix when needed
+
+    Args:
+        smartdrive_dir: Path to the .smartdrive directory to clean
+
+    Returns:
+        True if cleanup succeeded (or directory didn't exist), False on failure
+    """
+    if not smartdrive_dir.exists():
+        return True
+
+    _log_deploy("deploy.cleanup.start", path=str(smartdrive_dir))
+    print(f"🧹 Cleaning up existing deployment at {smartdrive_dir}...")
+
+    try:
+        if _is_windows():
+            # Clear hidden attribute first
+            try:
+                windows_set_attributes(smartdrive_dir, hidden=False)
+            except Exception as e:
+                _log_deploy("deploy.cleanup.attrib_warning", error=str(e))
+
+            # For Windows, convert to long path format to handle >260 char paths
+            # This is common with nested venv directories
+            long_path = str(smartdrive_dir)
+            if not long_path.startswith("\\\\?\\") and len(long_path) > 200:
+                long_path = "\\\\?\\" + os.path.abspath(long_path)
+
+            shutil.rmtree(long_path, onerror=_handle_remove_readonly)
+        else:
+            # Unix: simple rmtree
+            shutil.rmtree(smartdrive_dir)
+
+        _log_deploy("deploy.cleanup.success", path=str(smartdrive_dir))
+        print(f"  ✓ Removed existing .smartdrive directory")
+        return True
+
+    except Exception as e:
+        _log_deploy("deploy.cleanup.error", path=str(smartdrive_dir), error=str(e))
+        print(f"  ❌ Failed to clean up: {e}")
+        print(f"     You may need to manually delete: {smartdrive_dir}")
+        return False
+
+
+def _copy_shell_script_with_unix_endings(src: Path, dst: Path) -> bool:
+    """
+    Copy a shell script ensuring Unix (LF) line endings.
+
+    BUG-20260102-011: Shell scripts deployed from Windows must have Unix line endings
+    to work when the drive is used on Linux/macOS.
+
+    Args:
+        src: Source script path
+        dst: Destination script path
+
+    Returns:
+        True if copy succeeded, False otherwise
+    """
+    try:
+        # Read the file content
+        content = src.read_text(encoding="utf-8")
+        # Write with explicit Unix line endings
+        dst.write_text(content, encoding="utf-8", newline="\n")
+        return True
+    except Exception as e:
+        _log_deploy("deploy.shell_script.error", src=str(src), error=str(e))
+        return False
+
+
 def get_available_drives():
-    """Get list of available drive letters."""
-    drives = []
-    for drive in "DEFGHIJKLMNOPQRSTUVWXYZ":
-        path = f"{drive}:\\"
-        if os.path.exists(path):
-            drives.append(drive)
-    return drives
+    """Get list of available drives/mount points based on platform."""
+    if _is_windows():
+        # Windows: scan drive letters D-Z
+        drives = []
+        for drive in "DEFGHIJKLMNOPQRSTUVWXYZ":
+            path = f"{drive}:\\"
+            if os.path.exists(path):
+                drives.append(drive)
+        return drives
+    else:
+        # Linux/macOS: scan common mount points for removable media
+        mount_points = []
+        # Linux mount locations
+        linux_media_paths = [
+            Path("/media"),  # Ubuntu/Debian auto-mount
+            Path("/run/media"),  # Fedora/Arch auto-mount
+            Path("/mnt"),  # Manual mounts
+        ]
+        # macOS mount location
+        macos_volumes = Path("/Volumes")
+
+        for media_base in linux_media_paths:
+            if media_base.exists():
+                # Check for user subdirectories (e.g., /media/username/)
+                for user_dir in media_base.iterdir():
+                    if user_dir.is_dir():
+                        for mount in user_dir.iterdir():
+                            if mount.is_dir() and _is_likely_removable(mount):
+                                mount_points.append(mount)
+
+        if macos_volumes.exists():
+            for volume in macos_volumes.iterdir():
+                # Skip system volumes
+                if volume.name not in ("Macintosh HD", "Recovery", "Preboot", "VM", "Data"):
+                    if volume.is_dir():
+                        mount_points.append(volume)
+
+        return mount_points
+
+
+def _is_likely_removable(path: Path) -> bool:
+    """Check if a mount point is likely a removable drive (heuristic)."""
+    try:
+        # Check if it's a mount point (different device than parent)
+        if path.stat().st_dev == path.parent.stat().st_dev:
+            return False  # Same device as parent, not a separate mount
+        # Basic writability check
+        return os.access(path, os.W_OK)
+    except (OSError, PermissionError):
+        return False
 
 
 def select_drive_interactive():
-    """Interactive drive selection."""
+    """Interactive drive selection (cross-platform)."""
     drives = get_available_drives()
 
     if not drives:
-        print("❌ No external drives found (D:-Z:)")
+        if _is_windows():
+            print("❌ No external drives found (D:-Z:)")
+        else:
+            print("❌ No external drives found in /media, /run/media, /mnt, or /Volumes")
+            print("   Tip: Use --drive /path/to/mount to specify a path directly.")
         return None
 
     print("\nAvailable drives:")
-    for i, drive in enumerate(drives, 1):
-        path = f"{drive}:\\"
-        try:
-            # Get drive label if possible
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            volume_name = ctypes.create_unicode_buffer(1024)
-            file_system = ctypes.create_unicode_buffer(1024)
-            kernel32.GetVolumeInformationW(path, volume_name, 1024, None, None, None, file_system, 1024)
-            label = volume_name.value or "No Label"
-        except:
-            label = "Unknown"
-        print(f"  [{i}] {drive}:\\ - {label}")
+    if _is_windows():
+        # Windows: show drive letters with labels
+        for i, drive in enumerate(drives, 1):
+            path = f"{drive}:\\"
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                volume_name = ctypes.create_unicode_buffer(1024)
+                file_system = ctypes.create_unicode_buffer(1024)
+                kernel32.GetVolumeInformationW(path, volume_name, 1024, None, None, None, file_system, 1024)
+                label = volume_name.value or "No Label"
+            except Exception:
+                label = "Unknown"
+            print(f"  [{i}] {drive}:\\ - {label}")
+    else:
+        # Linux/macOS: show mount paths
+        for i, mount_path in enumerate(drives, 1):
+            print(f"  [{i}] {mount_path}")
 
     while True:
         try:
-            choice = input("\nSelect drive to deploy to (number or letter): ").strip().upper()
+            choice = input("\nSelect drive to deploy to (number): ").strip()
 
             # Check if it's a number
             if choice.isdigit():
@@ -124,11 +289,11 @@ def select_drive_interactive():
                     print("Invalid number.")
                     continue
 
-            # Check if it's a drive letter
-            if len(choice) == 1 and choice in drives:
-                return choice
+            # Windows: also accept drive letter directly
+            if _is_windows() and len(choice) == 1 and choice.upper() in drives:
+                return choice.upper()
 
-            print("Invalid choice. Enter a number or drive letter.")
+            print("Invalid choice. Enter a number from the list.")
 
         except KeyboardInterrupt:
             print("\nCancelled.")
@@ -269,9 +434,30 @@ def deploy_to_drive(target_drive):
 
     Uses PathResolver as SSOT for all target paths.
     Copies 1:1 from repo/.smartdrive/ to DRIVE:/.smartdrive/ per AGENT_ARCHITECTURE.md.
+
+    Args:
+        target_drive: Windows drive letter (e.g., 'G') or Path to mount point
+
+    BUG-20260102-010: Now cleans up existing .smartdrive before deployment
+    BUG-20260102-011: Shell scripts written with Unix line endings
+    BUG-20260102-012: Uses OS-specific venv directory names
     """
-    # Use PathResolver as SSOT for target paths (cross-drive support)
-    target_path = Path(f"{target_drive}:\\")
+    # Normalize target_drive to Path (cross-platform support)
+    if isinstance(target_drive, Path):
+        target_path = target_drive
+    elif _is_windows() and len(str(target_drive)) == 1:
+        # Windows drive letter
+        target_path = Path(f"{target_drive}:\\")
+    else:
+        # Assume it's a path string (Linux/macOS mount point)
+        target_path = Path(target_drive)
+
+    # BUG-20260102-010: Clean up existing .smartdrive to prevent storage accumulation
+    existing_smartdrive = target_path / ".smartdrive"
+    if existing_smartdrive.exists():
+        if not _cleanup_existing_smartdrive(existing_smartdrive):
+            print("⚠️  Warning: Could not fully clean existing deployment.")
+            print("    Deployment will continue, but some old files may remain.")
 
     # Create RuntimePaths for target (SSOT)
     target_paths = RuntimePaths.for_target(target_path, create_dirs=True)
@@ -282,7 +468,7 @@ def deploy_to_drive(target_drive):
 
     _log_deploy("deploy.start", target=str(target_path), source=str(REPO_SMARTDRIVE))
 
-    print(f"\n🚀 Deploying {PRODUCT_NAME} to {target_drive}:\\")
+    print(f"\n🚀 Deploying {PRODUCT_NAME} to {target_path}")
     print(f"   Source: {REPO_SMARTDRIVE}")
     print(f"   Target: {target_paths.smartdrive_root}")
 
@@ -413,22 +599,38 @@ def deploy_to_drive(target_drive):
         print("  ⚠ tests/ directory not found (tests will not be deployed)")
         _log_deploy("deploy.tests.notfound", source=str(tests_src))
 
-    # CHG-20260102-007: Copy .venv for dependency shipping (portable deployment)
-    print("📦 Copying bundled Python environment (.venv)...")
-    venv_src = REPO_SMARTDRIVE / ".venv"  # .smartdrive/.venv/
-    venv_dst = target_paths.smartdrive_root / ".venv"  # target/.smartdrive/.venv/
+    # BUG-20260102-012: Copy OS-specific venv for dependency shipping (portable deployment)
+    # Each OS needs its own venv because Python venvs are platform-specific
+    os_venv_name = _get_os_venv_dir_name()
+    print(f"📦 Copying bundled Python environment ({os_venv_name})...")
+
+    # Try OS-specific venv first, then fall back to legacy .venv
+    venv_src = REPO_SMARTDRIVE / os_venv_name
+    if not venv_src.exists():
+        # Fall back to legacy .venv (backward compatibility)
+        venv_src = REPO_SMARTDRIVE / FileNames.VENV_DIR_LEGACY
+        if venv_src.exists():
+            print(f"  ℹ Using legacy .venv (consider creating {os_venv_name})")
+
+    # Target uses OS-specific name
+    venv_dst = target_paths.smartdrive_root / os_venv_name
+
     if venv_src.exists():
         shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True)
         # Count packages for logging
         site_packages = venv_dst / "Lib" / "site-packages"
         if not site_packages.exists():
-            site_packages = venv_dst / "lib" / "python3.11" / "site-packages"  # Linux/macOS
+            # Try various Python version paths for Unix
+            for py_ver in ["python3.12", "python3.11", "python3.10"]:
+                site_packages = venv_dst / "lib" / py_ver / "site-packages"
+                if site_packages.exists():
+                    break
         pkg_count = len([d for d in site_packages.iterdir() if d.is_dir()]) if site_packages.exists() else 0
-        print(f"  ✓ .venv/ directory copied (~{pkg_count} packages)")
-        _log_deploy("deploy.venv.copied", path=str(venv_dst), pkg_count=pkg_count)
+        print(f"  ✓ {os_venv_name}/ directory copied (~{pkg_count} packages)")
+        _log_deploy("deploy.venv.copied", path=str(venv_dst), pkg_count=pkg_count, venv_name=os_venv_name)
     else:
-        print("  ⚠ .venv/ directory not found (target will need manual pip install)")
-        _log_deploy("deploy.venv.notfound", source=str(venv_src))
+        print(f"  ⚠ {os_venv_name}/ directory not found (target will need manual pip install)")
+        _log_deploy("deploy.venv.notfound", source=str(venv_src), venv_name=os_venv_name)
 
     # Create clean root entrypoints AFTER assets/exe are in place
     # BUG-20260102-006: Copy ALL launcher files from repo root to ensure consistency
@@ -445,13 +647,22 @@ def deploy_to_drive(target_drive):
         FileNames.VBS_LAUNCHER,  # KeyDrive.vbs
     ]
 
-    # Copy launcher scripts
+    # BUG-20260102-011: Copy launcher scripts, ensuring shell scripts have Unix line endings
     for launcher in launcher_files:
         src = REPO_ROOT / launcher
         dst = target_path / launcher
         if src.exists():
-            shutil.copy2(src, dst)
-            print(f"  ✓ {launcher}")
+            # Check if this is a shell script that needs Unix line endings
+            if launcher in FileNames.SHELL_SCRIPTS:
+                if _copy_shell_script_with_unix_endings(src, dst):
+                    print(f"  ✓ {launcher} (Unix line endings)")
+                else:
+                    # Fallback to binary copy
+                    shutil.copy2(src, dst)
+                    print(f"  ✓ {launcher} (binary copy)")
+            else:
+                shutil.copy2(src, dst)
+                print(f"  ✓ {launcher}")
         else:
             print(f"  ⚠ {launcher} not found in repo root")
 
@@ -545,11 +756,26 @@ def main():
     print("=" * 40)
 
     target_drive = None
-    if len(sys.argv) > 1 and sys.argv[1].startswith("--drive"):
+    if len(sys.argv) > 1 and sys.argv[1] == "--drive":
         if len(sys.argv) > 2:
-            target_drive = sys.argv[2].upper()
+            drive_arg = sys.argv[2]
+            # Check if it's a path (starts with / on Unix or contains path separators)
+            if drive_arg.startswith("/") or os.path.sep in drive_arg or len(drive_arg) > 2:
+                # It's a path (Linux/macOS mount point)
+                target_drive = Path(drive_arg)
+                if not target_drive.exists():
+                    print(f"❌ Path does not exist: {target_drive}")
+                    sys.exit(1)
+                if not target_drive.is_dir():
+                    print(f"❌ Path is not a directory: {target_drive}")
+                    sys.exit(1)
+            else:
+                # Windows drive letter
+                target_drive = drive_arg.upper().rstrip(":")
         else:
-            print("❌ --drive requires a drive letter (e.g., --drive G)")
+            print("❌ --drive requires a drive letter or path")
+            print("   Examples: --drive G")
+            print("             --drive /media/user/USBDrive")
             sys.exit(1)
 
     if not target_drive:
@@ -559,12 +785,18 @@ def main():
         print("❌ No drive selected.")
         sys.exit(1)
 
-    # Confirm deployment
-    target_path = Path(f"{target_drive}:\\")
+    # Normalize to Path for confirmation
+    if isinstance(target_drive, Path):
+        target_path = target_drive
+    elif _is_windows() and len(str(target_drive)) == 1:
+        target_path = Path(f"{target_drive}:\\")
+    else:
+        target_path = Path(target_drive)
+
     smartdrive_dir = target_path / ".smartdrive"
 
     if smartdrive_dir.exists():
-        print(f"\n⚠️  {PRODUCT_NAME} is already deployed to {target_drive}:\\")
+        print(f"\n⚠️  {PRODUCT_NAME} is already deployed to {target_path}")
         response = input("Overwrite existing deployment? (y/N): ").strip().lower()
         if response != "y":
             print("❌ Deployment cancelled.")

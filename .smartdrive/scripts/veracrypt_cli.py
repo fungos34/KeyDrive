@@ -528,6 +528,89 @@ class OnDemandSecretsHandler:
 
 
 # ===========================================================================
+# Privilege Elevation Helper (BUG-20260102-015)
+# ===========================================================================
+# VeraCrypt on Linux requires root privileges for mount/unmount operations.
+# GUI must NOT run as root (breaks X11/Wayland display permissions).
+# Use pkexec (PolicyKit) to elevate just the VeraCrypt command.
+
+
+def _needs_privilege_elevation() -> bool:
+    """
+    Check if privilege elevation is needed for VeraCrypt operations.
+
+    Returns True on Linux/macOS when not running as root.
+    Returns False on Windows (VeraCrypt handles elevation itself).
+    """
+    if platform.system().lower() == "windows":
+        return False
+    # On Unix, check if we're already root
+    return os.geteuid() != 0
+
+
+def _get_elevation_command() -> Optional[list]:
+    """
+    Get the privilege elevation command prefix for the current platform.
+
+    Returns:
+        List of command prefix (e.g., ["pkexec"]) or None if not available.
+        Returns None on Windows or if already running as root.
+    """
+    if not _needs_privilege_elevation():
+        return None
+
+    # Try pkexec first (PolicyKit - provides graphical password prompt)
+    if shutil.which("pkexec"):
+        return ["pkexec"]
+
+    # Fallback: pkexec not available, return None
+    # The mount command will fail with "Failed to obtain administrator privileges"
+    # which is the expected VeraCrypt behavior
+    return None
+
+
+def _wrap_command_with_elevation(cmd: list, password_via_stdin: bool = False) -> tuple:
+    """
+    Wrap a command with privilege elevation if needed.
+
+    BUG-20260102-015: On Linux, VeraCrypt requires root for mount/unmount.
+    Use pkexec for graphical privilege elevation.
+
+    Args:
+        cmd: The command to wrap (list of strings)
+        password_via_stdin: If True, command expects password via stdin
+                           (pkexec doesn't pass stdin by default, need workaround)
+
+    Returns:
+        Tuple of (wrapped_cmd, needs_stdin_workaround)
+        - wrapped_cmd: The command with elevation prefix if needed
+        - needs_stdin_workaround: True if stdin must be handled specially
+    """
+    elevation = _get_elevation_command()
+
+    if elevation is None:
+        # No elevation needed or not available
+        return cmd, False
+
+    if password_via_stdin:
+        # pkexec doesn't pass stdin to the child process by default.
+        # We need to use a shell wrapper or alternative approach.
+        # For VeraCrypt mount: use --stdin flag which reads from stdin,
+        # but pkexec doesn't forward stdin.
+        #
+        # Solution: Use pkexec with sh -c and pass password via environment
+        # variable (less secure but necessary for pkexec).
+        #
+        # Actually, the better solution is to use --password flag instead
+        # of --stdin when using pkexec, even though it's less secure
+        # (password visible in process list briefly).
+        return elevation + cmd, True
+    else:
+        # Simple elevation - just prepend pkexec
+        return elevation + cmd, False
+
+
+# ===========================================================================
 # CLI Capability Detection (Per AGENT_ARCHITECTURE.md Section 2.5)
 # ===========================================================================
 
@@ -1406,8 +1489,18 @@ def try_mount(
             cmd.extend(["/pim", str(pim_value)])
         # Note: read_only not directly supported in Windows syntax; /ro may work on some versions
     else:
-        # Linux/macOS: Use --flag syntax with stdin for password (more secure)
-        cmd = [str(vc_exe), "--text", "--stdin", "--non-interactive"]
+        # Linux/macOS: VeraCrypt requires root privileges for mount
+        # BUG-20260102-015: Use pkexec for privilege elevation
+        use_pkexec = _needs_privilege_elevation() and _get_elevation_command() is not None
+
+        if use_pkexec:
+            # pkexec doesn't forward stdin, so we must use --password flag
+            # (password visible in process list briefly, but necessary for pkexec)
+            cmd = [str(vc_exe), "--text", "--non-interactive", "--password", password]
+        else:
+            # Running as root or no pkexec - use stdin for security
+            cmd = [str(vc_exe), "--text", "--stdin", "--non-interactive"]
+
         if keyfile_path:
             cmd.extend(["--keyfiles", str(keyfile_path)])
         if use_pim and pim_value > 0:
@@ -1416,6 +1509,10 @@ def try_mount(
             cmd.append("--mount-options=readonly")
         # Mount command: volume path and mount point
         cmd.extend([volume_path, mount_point])
+
+        # Add pkexec prefix if needed
+        if use_pkexec:
+            cmd = ["pkexec"] + cmd
 
     # Run command
     if is_windows:
@@ -1431,15 +1528,28 @@ def try_mount(
         stdout = result.stdout
         stderr = result.stderr
     else:
-        # Linux: Feed password via stdin
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        stdout, stderr = proc.communicate(input=password + "\n", timeout=TIMEOUT_LONG)
+        # BUG-20260102-015: Check if using pkexec (password already in command)
+        use_pkexec = _needs_privilege_elevation() and _get_elevation_command() is not None
+
+        if use_pkexec:
+            # Password is in command args, no stdin needed
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = proc.communicate(timeout=TIMEOUT_LONG)
+        else:
+            # Feed password via stdin (more secure)
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = proc.communicate(input=password + "\n", timeout=TIMEOUT_LONG)
         returncode = proc.returncode
 
     if returncode == 0:
@@ -1508,9 +1618,14 @@ def unmount(mount_point: str, force: bool = False) -> bool:
             cmd.append("/force")
     else:
         # Unix: --text --dismount mount_point
+        # BUG-20260102-015: Use pkexec for privilege elevation on Linux
         cmd = [str(vc_exe), "--text", "--dismount", mount_point]
         if force:
             cmd.append("--force")
+
+        # Add pkexec prefix if needed
+        if _needs_privilege_elevation() and _get_elevation_command() is not None:
+            cmd = ["pkexec"] + cmd
 
     # BUG-20251223-058 FIX: Add CREATE_NO_WINDOW to prevent GUI popup on error
     kwargs = {

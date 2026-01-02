@@ -58,6 +58,9 @@ EXCLUDED_FILES = [
 EXCLUDED_DIRS = [
     "venv",
     ".venv",
+    ".venv-win",  # BUG-20260102-012: OS-specific venv
+    ".venv-linux",  # BUG-20260102-012: OS-specific venv
+    ".venv-mac",  # BUG-20260102-012: OS-specific venv
     "tests",  # Test fixtures use synthetic paths for config mocking
     "env",
     ".env",
@@ -83,6 +86,8 @@ ALLOWED_PATTERNS = [
     r"'''.*'''",  # Multi-line docstrings
     r"dangerous_patterns\s*=",  # Safety check pattern definitions
     r'\(\s*["\'][A-Z]:.*["\'].*"',  # Tuple patterns for safety checks like ("C:", "desc")
+    r'\.glob\s*\(\s*["\']Scripts/',  # Windows venv glob patterns (e.g., Scripts/python.exe)
+    r'\.glob\s*\(\s*["\']bin/',  # Unix venv glob patterns (e.g., bin/python*)
 ]
 
 

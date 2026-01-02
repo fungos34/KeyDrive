@@ -1147,7 +1147,9 @@ def main() -> None:
         gpg_seed_data = secrets.token_bytes(32)  # 256-bit seed
 
         # Encrypt seed to YubiKeys - use configured seed GPG path if available
-        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
+        # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+        seed_path_str = cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
+        seed_path = Path(Paths.normalize_config_path(seed_path_str))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
 
@@ -1468,7 +1470,9 @@ def main() -> None:
 
     if "seed_new_path" in locals() and seed_new_path.exists():
         # Move new encrypted seed to final location
-        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
+        # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+        seed_path_str = cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
+        seed_path = Path(Paths.normalize_config_path(seed_path_str))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
 
@@ -1497,9 +1501,9 @@ def main() -> None:
 
             # Update mode-specific settings
             if new_mode == SecurityMode.GPG_PW_ONLY.value:
-                cfg_update[ConfigKeys.SEED_GPG_PATH] = Path(
-                    cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
-                )
+                # BUG-20260102-013: Store path with forward slashes for cross-platform compatibility
+                seed_path_str = cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
+                cfg_update[ConfigKeys.SEED_GPG_PATH] = Paths.normalize_config_path(seed_path_str)
                 cfg_update[ConfigKeys.KDF] = CryptoParams.KDF_HKDF_SHA256
                 # salt_b64 is set during GPG_PW_ONLY verification phase
                 cfg_update[ConfigKeys.SALT_B64] = salt_b64
@@ -1508,9 +1512,9 @@ def main() -> None:
                 # Remove keyfile settings if they exist
                 cfg_update.pop(ConfigKeys.ENCRYPTED_KEYFILE, None)
             elif new_mode in [SecurityMode.PW_KEYFILE.value, SecurityMode.PW_GPG_KEYFILE.value]:
-                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = Path(
-                    cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")
-                )
+                # BUG-20260102-013: Store path with forward slashes for cross-platform compatibility
+                keyfile_path_str = cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")
+                cfg_update[ConfigKeys.ENCRYPTED_KEYFILE] = Paths.normalize_config_path(keyfile_path_str)
                 # Remove GPG password-only settings
                 cfg_update.pop(ConfigKeys.SEED_GPG_PATH, None)
                 cfg_update.pop(ConfigKeys.KDF, None)
@@ -1551,7 +1555,9 @@ def main() -> None:
     print("\nCredentials have been changed and verified successfully!\n")
 
     if use_new_keyfile:
-        configured_keyfile = Path(cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}"))
+        # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+        keyfile_path_str = cfg.get(ConfigKeys.ENCRYPTED_KEYFILE, f"{Paths.KEYS_SUBDIR}/{FileNames.KEYFILE_GPG}")
+        configured_keyfile = Path(Paths.normalize_config_path(keyfile_path_str))
         if not configured_keyfile.is_absolute():
             configured_keyfile = (Path.cwd() / configured_keyfile).resolve()
         print(f"  New encrypted keyfile: {configured_keyfile}")
@@ -1559,7 +1565,9 @@ def main() -> None:
         print("\n  💡 Test mount.py before deleting the .old backup!")
 
     if needs_gpg_setup:
-        seed_path = Path(cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}"))
+        # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+        seed_path_str = cfg.get(ConfigKeys.SEED_GPG_PATH, f"{Paths.KEYS_SUBDIR}/{FileNames.SEED_GPG}")
+        seed_path = Path(Paths.normalize_config_path(seed_path_str))
         if not seed_path.is_absolute():
             seed_path = (Path.cwd() / seed_path).resolve()
         print(f"  New encrypted seed: {seed_path}")

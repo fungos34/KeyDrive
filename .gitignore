@@ -37,6 +37,7 @@ wheels/
 *.egg
 venv/
 .venv/
+.venv-linux/
 ENV/
 env/
 

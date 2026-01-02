@@ -18,6 +18,7 @@ Dependencies (runtime):
 """
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -204,6 +205,9 @@ def unmount_windows(vc_exe: Path, target: str | None = None, unmount_all: bool =
 def unmount_unix(target: str | None = None, unmount_all: bool = False) -> bool:
     """Unmount VeraCrypt volume(s) on Linux/macOS.
 
+    BUG-20260102-020: VeraCrypt on Linux requires root privileges for unmount.
+    Use pkexec (PolicyKit) to elevate just the VeraCrypt command.
+
     Args:
         target: Mount point to unmount (e.g., "/mnt/veracrypt")
         unmount_all: If True, unmount all volumes
@@ -211,13 +215,23 @@ def unmount_unix(target: str | None = None, unmount_all: bool = False) -> bool:
     Returns:
         True if successful, False otherwise.
     """
+    # BUG-20260102-020: Use pkexec for privilege elevation on Linux
+    needs_elevation = os.geteuid() != 0
+    elevation_prefix = []
+    if needs_elevation:
+        if shutil.which("pkexec"):
+            elevation_prefix = ["pkexec"]
+            log("Using pkexec for privilege elevation")
+        else:
+            log("WARNING: pkexec not found, unmount may fail without root privileges")
+
     if unmount_all:
-        args = ["veracrypt", "--text", "--dismount"]
+        args = elevation_prefix + ["veracrypt", "--text", "--dismount"]
         log("Unmounting all VeraCrypt volumes...")
     elif target:
         # Expand ~ in path
         mount_point = str(Path(target).expanduser())
-        args = ["veracrypt", "--text", "--dismount", mount_point]
+        args = elevation_prefix + ["veracrypt", "--text", "--dismount", mount_point]
         log(f"Unmounting {mount_point}...")
     else:
         error("No target specified. Use a mount point or --all")

@@ -111,11 +111,43 @@ def find_requirements_txt() -> Path | None:
     return None
 
 
+def _get_os_venv_dir_name() -> str:
+    """
+    Get the OS-specific venv directory name for the current platform.
+
+    BUG-20260102-012: Returns .venv-win, .venv-linux, or .venv-mac based on OS.
+    """
+    platform = get_platform_name()
+    if platform == "Windows":
+        return ".venv-win"
+    elif platform == "macOS":
+        return ".venv-mac"
+    else:  # Linux and other Unix-like
+        return ".venv-linux"
+
+
 def get_venv_path() -> Path:
-    """Get the path to the venv directory."""
+    """
+    Get the path to the venv directory.
+
+    BUG-20260102-012: Uses OS-specific venv name, falls back to legacy .venv.
+    """
     script_dir = Path(__file__).resolve().parent
     smartdrive_dir = script_dir.parent  # .smartdrive
-    return smartdrive_dir / ".venv"
+
+    # Try OS-specific venv first
+    os_venv_name = _get_os_venv_dir_name()
+    os_venv_path = smartdrive_dir / os_venv_name
+    if os_venv_path.exists():
+        return os_venv_path
+
+    # Fall back to legacy .venv
+    legacy_venv_path = smartdrive_dir / ".venv"
+    if legacy_venv_path.exists():
+        return legacy_venv_path
+
+    # Return OS-specific path for new venv creation
+    return os_venv_path
 
 
 def get_venv_python() -> Path | None:
@@ -135,7 +167,9 @@ def get_venv_python() -> Path | None:
 
 def create_venv(verbose: bool = True) -> bool:
     """
-    Create a virtual environment at .smartdrive/.venv.
+    Create a virtual environment at .smartdrive/{os-specific-venv}.
+
+    BUG-20260102-012: Creates OS-specific venv directory.
 
     Args:
         verbose: Print progress messages

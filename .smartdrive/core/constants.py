@@ -553,6 +553,24 @@ class FileNames:
 
     # Unix launchers
     SH_LAUNCHER = "keydrive.sh"
+    MACOS_COMMAND_LAUNCHER = "KeyDrive.command"
+
+    # BUG-20260102-012: OS-specific venv directory names
+    # Each OS needs its own venv because Python venvs are platform-specific
+    # (different binaries, site-packages structure, Scripts/ vs bin/, etc.)
+    VENV_DIR_WIN = ".venv-win"
+    VENV_DIR_LINUX = ".venv-linux"
+    VENV_DIR_MAC = ".venv-mac"
+    # Legacy fallback (for backward compatibility)
+    VENV_DIR_LEGACY = ".venv"
+
+    # BUG-20260102-011: Shell scripts requiring Unix line endings (LF)
+    # These files MUST be written with newline="\n" during deployment
+    # to ensure they work when deployed drive is used on Linux/macOS
+    SHELL_SCRIPTS = [
+        SH_LAUNCHER,  # keydrive.sh
+        "KeyDrive.command",  # macOS launcher
+    ]
 
     # Documentation
     README = "README.md"

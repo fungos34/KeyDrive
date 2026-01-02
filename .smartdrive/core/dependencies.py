@@ -145,6 +145,26 @@ REQUIRED_SYSTEM_TOOLS = {
     ),
 }
 
+# GPG-mode specific dependencies (only required when using GPG/YubiKey modes)
+GPG_MODE_DEPENDENCIES = {
+    "scdaemon": DependencyInfo(
+        name="scdaemon (GPG SmartCard Daemon)",
+        required_for="YubiKey/SmartCard communication in GPG modes",
+        install_windows="Included with Gpg4win. If missing, reinstall Gpg4win from https://gpg4win.org/",
+        install_linux="Ubuntu/Debian: sudo apt install scdaemon pcscd\nFedora: sudo dnf install pcsc-lite pcsc-lite-ccid gnupg2-smime\nArch: sudo pacman -S pcsclite ccid",
+        install_macos="brew install gnupg\n(scdaemon is included with gnupg on macOS)",
+        url="https://gnupg.org/",
+    ),
+    "pcscd": DependencyInfo(
+        name="pcscd (PC/SC Smart Card Daemon)",
+        required_for="SmartCard/YubiKey hardware communication",
+        install_windows="Included with Windows. If issues, check 'Smart Card' service in services.msc",
+        install_linux="Ubuntu/Debian: sudo apt install pcscd\nThen start: sudo systemctl enable --now pcscd",
+        install_macos="brew install pcsc-lite\n(Usually pre-installed on macOS)",
+        url="https://pcsclite.apdu.fr/",
+    ),
+}
+
 
 def is_package_installed(package_name: str) -> bool:
     """
@@ -271,6 +291,225 @@ def check_system_tools(tools: List[str] = None) -> Tuple[List[str], List[Depende
                 missing_infos.append(REQUIRED_SYSTEM_TOOLS[tool_name])
 
     return missing_names, missing_infos
+
+
+def check_gpg_mode_dependencies() -> Tuple[bool, str, List[DependencyInfo]]:
+    """
+    Check dependencies specific to GPG/YubiKey modes.
+
+    BUG-20260102-014: Provides detailed error messages when scdaemon or pcscd
+    are missing, which are required for YubiKey/SmartCard communication.
+
+    Returns:
+        Tuple of (all_ok: bool, error_message: str, missing_deps: List[DependencyInfo])
+    """
+    import subprocess
+
+    system = _get_platform_name()
+    missing_deps = []
+    issues = []
+
+    # Check if GPG can communicate with smartcard
+    try:
+        result = subprocess.run(
+            ["gpg", "--no-tty", "--card-status"],
+            capture_output=True,
+            timeout=10,
+        )
+        stderr = result.stderr.decode("utf-8", errors="replace").lower()
+
+        if result.returncode != 0:
+            # Analyze the specific error
+            if "no smartcard daemon" in stderr or "scdaemon" in stderr:
+                issues.append("scdaemon (GPG SmartCard Daemon) is not installed or not running")
+                missing_deps.append(GPG_MODE_DEPENDENCIES["scdaemon"])
+
+            elif "no card" in stderr:
+                # Card not present - this is expected if YubiKey not inserted
+                # Not a dependency issue
+                pass
+
+            elif "ipc connect call failed" in stderr or "can't connect" in stderr:
+                # Agent communication issue - may need restart
+                issues.append("GPG agent communication failed. Try: gpgconf --kill gpg-agent")
+
+            elif system == "Linux":
+                # On Linux, check if pcscd is running
+                pcscd_result = subprocess.run(
+                    ["systemctl", "is-active", "pcscd"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if pcscd_result.returncode != 0:
+                    issues.append("pcscd (PC/SC Smart Card Daemon) service is not running")
+                    missing_deps.append(GPG_MODE_DEPENDENCIES["pcscd"])
+
+    except FileNotFoundError:
+        issues.append("GPG is not installed")
+        missing_deps.append(REQUIRED_SYSTEM_TOOLS["gpg"])
+    except subprocess.TimeoutExpired:
+        issues.append("GPG is unresponsive (timed out)")
+    except Exception as e:
+        issues.append(f"Error checking GPG: {e}")
+
+    # On Linux, also check if scdaemon binary exists
+    if system == "Linux" and not shutil.which("scdaemon"):
+        if "scdaemon" not in [d.name for d in missing_deps]:
+            issues.append("scdaemon binary not found in PATH")
+            missing_deps.append(GPG_MODE_DEPENDENCIES["scdaemon"])
+
+    if not issues:
+        return True, "", []
+
+    # Format error message
+    lines = [
+        "=" * 70,
+        "GPG/YUBIKEY DEPENDENCY CHECK FAILED",
+        "=" * 70,
+        "",
+        "Issues detected:",
+    ]
+    for issue in issues:
+        lines.append(f"  • {issue}")
+
+    if missing_deps:
+        lines.append("")
+        lines.append("To fix, install the following:")
+        lines.append("-" * 40)
+        for dep in missing_deps:
+            lines.append(f"\n{dep.name}:")
+            lines.append(f"  {get_platform_instructions(dep)}")
+
+    lines.append("")
+    lines.append("=" * 70)
+
+    return False, "\n".join(lines), missing_deps
+
+
+def format_gpg_error_with_guidance(stderr: str, is_startup_issue: bool = False) -> str:
+    """
+    Format a GPG error with actionable guidance based on the error type.
+
+    BUG-20260102-014: Provides clear, OS-specific guidance for common GPG errors
+    including scdaemon issues, startup delays, and missing keys.
+
+    Args:
+        stderr: The stderr output from GPG command
+        is_startup_issue: Whether this appears to be a first-run startup issue
+
+    Returns:
+        User-friendly error message with resolution steps
+    """
+    system = _get_platform_name()
+    stderr_lower = stderr.lower()
+
+    # Detect specific error types
+    if "no smartcard daemon" in stderr_lower or "scdaemon" in stderr_lower:
+        if system == "Windows":
+            return (
+                "🔴 GPG SmartCard Daemon Not Available\n\n"
+                "The GPG smartcard daemon (scdaemon) cannot be reached.\n\n"
+                "SOLUTIONS:\n"
+                "1. Start Kleopatra from the Start Menu (this initializes GPG services)\n"
+                "2. If Kleopatra is not installed, install Gpg4win from:\n"
+                "   https://gpg4win.org/download.html\n"
+                "3. After installing, restart your computer\n\n"
+                "If this is the first mount attempt after startup, please wait\n"
+                "a moment and try again - GPG services may still be starting."
+            )
+        elif system == "Linux":
+            return (
+                "🔴 GPG SmartCard Daemon Not Available\n\n"
+                "The scdaemon package is not installed or not running.\n\n"
+                "INSTALL (Ubuntu/Debian):\n"
+                "  sudo apt install scdaemon pcscd\n"
+                "  sudo systemctl enable --now pcscd\n\n"
+                "INSTALL (Fedora):\n"
+                "  sudo dnf install pcsc-lite gnupg2-smime\n"
+                "  sudo systemctl enable --now pcscd\n\n"
+                "After installing, unplug and replug your YubiKey."
+            )
+        else:  # macOS
+            return (
+                "🔴 GPG SmartCard Daemon Not Available\n\n"
+                "SOLUTIONS:\n"
+                "1. Install/reinstall GPG:\n"
+                "   brew install gnupg\n"
+                "2. Or install GPG Suite from https://gpgtools.org/\n"
+                "3. Unplug and replug your YubiKey"
+            )
+
+    elif "no secret key" in stderr_lower:
+        return (
+            "🔴 GPG Secret Key Not Found\n\n"
+            "GPG cannot find the private key required for decryption.\n\n"
+            "POSSIBLE CAUSES:\n"
+            "• YubiKey with the correct key is not inserted\n"
+            "• Key stubs not present in GPG keyring\n"
+            "• Wrong GPG home directory\n\n"
+            "SOLUTIONS:\n"
+            "1. Insert the correct YubiKey\n"
+            "2. Check available keys: gpg --list-secret-keys\n"
+            "3. Re-import key stubs: gpg --card-status\n"
+            "4. If keys were set up on another machine, import public key first:\n"
+            "   gpg --import <your-public-key.asc>\n"
+            "   gpg --card-edit  (then type 'fetch' to link key to card)"
+        )
+
+    elif "no card" in stderr_lower or "card error" in stderr_lower:
+        return (
+            "🔴 YubiKey/SmartCard Not Detected\n\n"
+            "No YubiKey or SmartCard is detected by GPG.\n\n"
+            "SOLUTIONS:\n"
+            "1. Insert your YubiKey\n"
+            "2. If already inserted, try unplugging and replugging it\n"
+            "3. Check the YubiKey LED - it should be blinking during use\n"
+            "4. Try a different USB port\n"
+            f"5. {'Open Kleopatra to initialize GPG' if system == 'Windows' else 'Run: gpg --card-status'}"
+        )
+
+    elif "ipc connect" in stderr_lower or "can't connect" in stderr_lower:
+        if is_startup_issue or system == "Windows":
+            return (
+                "🟡 GPG Agent Starting Up\n\n"
+                "GPG services are initializing. This is normal after system startup.\n\n"
+                "Please wait a moment and try again.\n\n"
+                f"{'If this persists, try opening Kleopatra first.' if system == 'Windows' else 'If this persists, run: gpgconf --kill gpg-agent'}"
+            )
+        else:
+            return (
+                "🔴 GPG Agent Communication Failed\n\n"
+                "Cannot connect to GPG agent.\n\n"
+                "SOLUTIONS:\n"
+                "1. Restart GPG agent:\n"
+                "   gpgconf --kill gpg-agent\n"
+                "2. Then try mounting again\n"
+                "3. If issues persist, check GPG logs:\n"
+                f"   {'%APPDATA%\\gnupg\\' if system == 'Windows' else '~/.gnupg/'}"
+            )
+
+    elif "bad pin" in stderr_lower or "incorrect pin" in stderr_lower:
+        return (
+            "🔴 Incorrect PIN\n\n"
+            "The PIN entered for the YubiKey was incorrect.\n\n"
+            "⚠️ WARNING: Multiple incorrect attempts may lock your YubiKey!\n\n"
+            "If you've forgotten your PIN:\n"
+            "• Use the Admin PIN to reset the User PIN\n"
+            "• Default User PIN: 123456\n"
+            "• Default Admin PIN: 12345678"
+        )
+
+    else:
+        # Generic GPG error
+        return (
+            f"🔴 GPG Decryption Failed\n\n"
+            f"Error: {stderr[:200]}{'...' if len(stderr) > 200 else ''}\n\n"
+            "GENERAL SOLUTIONS:\n"
+            "1. Ensure YubiKey is inserted\n"
+            f"2. {'Open Kleopatra' if system == 'Windows' else 'Run: gpg --card-status'}\n"
+            "3. Check GPG keys: gpg --list-secret-keys\n"
+            "4. Restart GPG agent: gpgconf --kill gpg-agent"
+        )
 
 
 def format_dependency_error(missing_packages: List[DependencyInfo], missing_tools: List[DependencyInfo]) -> str:
