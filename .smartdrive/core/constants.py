@@ -594,7 +594,11 @@ class FileNames:
     KEYDRIVE_PY = "smartdrive.py"
     PLATFORM_PY = "platform.py"
     SAFETY_PY = "safety.py"
+    DEPENDENCIES_PY = "dependencies.py"
+    BOOTSTRAP_DEPENDENCIES_PY = "bootstrap_dependencies.py"
     REQUIREMENTS_TXT = "requirements.txt"
+    RESOURCES_PY = "resources.py"
+    CONFIG_PY = "config.py"
 
     # Distinct drive icons for Windows Explorer
     # LOGO_key.ico - KeyDrive launcher partition (USB unencrypted partition)
@@ -683,8 +687,9 @@ class FileNames:
         ".vscode",  # VS Code settings
         ".idea",  # PyCharm/IntelliJ settings
         "*.code-workspace",  # VS Code workspace files
-        ".venv",  # Virtual environment
-        "venv",  # Virtual environment (alternate name)
+        # CHG-20260102-007: .venv is NOW deployed (dependency shipping policy)
+        # ".venv",  # Virtual environment - DEPLOYED for portable dependencies
+        "venv",  # Virtual environment (alternate name) - not deployed
         ".env",  # Environment variables (may contain secrets)
         "tests",  # Unit/integration tests
         "docs/development",  # Developer documentation
@@ -704,6 +709,15 @@ class FileNames:
         ".DS_Store",  # macOS metadata
         "Thumbs.db",  # Windows thumbnail cache
         "desktop.ini",  # Windows folder settings
+        # BUG-20260102-001: Exclude helper files from deployment
+        "helper",  # Helper directory (agent instructions)
+        "helper_instruction.txt",  # Agent helper instructions file
+        ".smartdriveserver",  # SmartDrive server files
+        "tools",  # Development tools/scripts
+        "AGENT_ARCHITECTURE.md.backup",  # Backup files
+        "config.json",  # User configuration (SSOT)
+        # BUG-20260102-004: Exclude update temp directory to prevent recursion
+        "_update_tmp",  # Temporary update staging directory
     ]
 
 

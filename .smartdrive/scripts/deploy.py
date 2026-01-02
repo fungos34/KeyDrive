@@ -17,8 +17,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from core.paths import Paths
-
 # =============================================================================
 # Core module imports - SINGLE SOURCE OF TRUTH
 # =============================================================================
@@ -50,10 +48,12 @@ if str(REPO_SMARTDRIVE) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# BUG-20260102-005 FIX: Import core modules AFTER sys.path setup
 from core.constants import Branding, FileNames
 
 # Import PathResolver for SSOT path management
 from core.path_resolver import RuntimePaths, consolidate_duplicates
+from core.paths import Paths
 from core.platform import is_windows as _is_windows
 from core.platform import windows_create_shortcut, windows_set_attributes
 
@@ -148,6 +148,7 @@ def select_drive_interactive():
 
 PAYLOAD_MANIFEST = {
     # Core SSOT modules (MANDATORY - operations abort if missing)
+    # BUG-20260102-009: Added ALL core/*.py modules - gui.py requires all of them
     "core": {
         "files": [
             ("__init__.py", "SSOT module init", True),
@@ -158,6 +159,21 @@ PAYLOAD_MANIFEST = {
             (FileNames.MODES_PY, "SecurityMode enum definitions", True),
             (FileNames.PLATFORM_PY, "Platform detection utilities", True),
             (FileNames.SAFETY_PY, "DiskIdentity, PartitionRef guardrails", True),
+            (FileNames.DEPENDENCIES_PY, "Dependency checking module", True),
+            (FileNames.RESOURCES_PY, "Resource resolution (icons, assets)", True),
+            (FileNames.CONFIG_PY, "Config file handling", True),
+            # Additional core modules required by gui.py and scripts
+            ("single_instance.py", "Single instance manager", True),
+            ("clipboard.py", "Clipboard utilities", True),
+            ("context.py", "Runtime context management", True),
+            ("filesystems.py", "Filesystem utilities", True),
+            ("formatting.py", "Output formatting utilities", True),
+            ("integrity.py", "File integrity checking", True),
+            ("path_resolver.py", "Path resolution utilities", True),
+            ("qr_chain.py", "QR code chain generation", True),
+            ("secrets.py", "Secrets management", True),
+            ("settings_schema.py", "Settings schema definitions", True),
+            ("tray.py", "System tray support", True),
         ],
         "critical": True,  # Abort deployment if any missing
     },
@@ -181,6 +197,7 @@ PAYLOAD_MANIFEST = {
             (FileNames.CRYPTO_UTILS_PY, "Cryptographic utilities", True),
             (FileNames.VERACRYPT_CLI_PY, "VeraCrypt CLI wrapper", True),
             (FileNames.DEPLOY_PY, "Deployment tool (for re-deploy)", False),
+            (FileNames.BOOTSTRAP_DEPENDENCIES_PY, "Dependency bootstrap script", True),
         ],
         "critical": False,  # Warn but continue if non-required missing
     },
@@ -193,6 +210,10 @@ PAYLOAD_MANIFEST = {
         "critical": False,  # Icons missing degrades UX but doesn't break functionality
     },
 }
+
+# BUG-20260102-005 FIX: requirements.txt is at .smartdrive root, not .smartdrive/root/
+# It gets copied to target_paths.smartdrive_root / requirements.txt
+# So verification should check for it at smartdrive root, not under a "root" subdirectory
 
 
 def get_required_files_for_verification() -> dict:
@@ -233,6 +254,11 @@ def verify_deployed_layout(smartdrive_dir: Path) -> tuple[bool, list[str]]:
         full_path = smartdrive_dir / rel_path
         if not full_path.exists():
             missing.append(f"{rel_path} ({description})")
+
+    # BUG-20260102-005 FIX: Check requirements.txt at smartdrive root (not under "root" subdir)
+    requirements_path = smartdrive_dir / FileNames.REQUIREMENTS_TXT
+    if not requirements_path.exists():
+        missing.append(f"{FileNames.REQUIREMENTS_TXT} (Python dependencies for pip install)")
 
     return (len(missing) == 0, missing)
 
@@ -331,6 +357,18 @@ def deploy_to_drive(target_drive):
         shutil.copy2(gui_readme_src, docs_dst / FileNames.GUI_README)
         print(f"  ✓ {FileNames.GUI_README}")
 
+    # CHG-20251229-002: Copy requirements.txt for platform-independent dependency installation
+    print("📦 Copying requirements.txt for dependency bootstrap...")
+    req_src = REPO_SMARTDRIVE / FileNames.REQUIREMENTS_TXT
+    req_dst = target_paths.smartdrive_root / FileNames.REQUIREMENTS_TXT
+    if req_src.exists():
+        shutil.copy2(req_src, req_dst)
+        print(f"  ✓ {FileNames.REQUIREMENTS_TXT}")
+        _log_deploy("deploy.requirements.copied", file=FileNames.REQUIREMENTS_TXT)
+    else:
+        print(f"  ⚠ {FileNames.REQUIREMENTS_TXT} not found (dependency bootstrap may fail)")
+        _log_deploy("deploy.requirements.notfound", source=str(req_src))
+
     # Copy the compiled GUI executable into .smartdrive/scripts (preferred Windows entrypoint)
     exe_src = REPO_ROOT / "dist" / f"{PRODUCT_NAME}GUI.exe"
     exe_dst = target_scripts / f"{PRODUCT_NAME}GUI.exe"
@@ -375,46 +413,82 @@ def deploy_to_drive(target_drive):
         print("  ⚠ tests/ directory not found (tests will not be deployed)")
         _log_deploy("deploy.tests.notfound", source=str(tests_src))
 
+    # CHG-20260102-007: Copy .venv for dependency shipping (portable deployment)
+    print("📦 Copying bundled Python environment (.venv)...")
+    venv_src = REPO_SMARTDRIVE / ".venv"  # .smartdrive/.venv/
+    venv_dst = target_paths.smartdrive_root / ".venv"  # target/.smartdrive/.venv/
+    if venv_src.exists():
+        shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True)
+        # Count packages for logging
+        site_packages = venv_dst / "Lib" / "site-packages"
+        if not site_packages.exists():
+            site_packages = venv_dst / "lib" / "python3.11" / "site-packages"  # Linux/macOS
+        pkg_count = len([d for d in site_packages.iterdir() if d.is_dir()]) if site_packages.exists() else 0
+        print(f"  ✓ .venv/ directory copied (~{pkg_count} packages)")
+        _log_deploy("deploy.venv.copied", path=str(venv_dst), pkg_count=pkg_count)
+    else:
+        print("  ⚠ .venv/ directory not found (target will need manual pip install)")
+        _log_deploy("deploy.venv.notfound", source=str(venv_src))
+
     # Create clean root entrypoints AFTER assets/exe are in place
+    # BUG-20260102-006: Copy ALL launcher files from repo root to ensure consistency
     print("🔧 Creating root entrypoints...")
 
     if _is_windows():
         windows_set_attributes(target_paths.smartdrive_root, hidden=True)
 
-    sh_src = REPO_ROOT / FileNames.SH_LAUNCHER
-    sh_dst = target_path / FileNames.SH_LAUNCHER
-    if sh_src.exists():
-        shutil.copy2(sh_src, sh_dst)
-        print(f"  ✓ {FileNames.SH_LAUNCHER} created")
+    # Define all launcher files that should be copied from repo root to drive root
+    # CHG-20260102-007: Removed KeyDriveGUI.bat (redundant - KeyDrive.bat via .vbs is superior)
+    launcher_files = [
+        FileNames.SH_LAUNCHER,  # keydrive.sh
+        FileNames.BAT_LAUNCHER,  # KeyDrive.bat
+        FileNames.VBS_LAUNCHER,  # KeyDrive.vbs
+    ]
 
-    command_name = f"{PRODUCT_NAME}.command"
-    command_path = target_path / command_name
-    command_path.write_text(
-        "#!/bin/bash\n"
-        'cd "$(dirname "$0")"\n'
-        f"chmod +x './{FileNames.SH_LAUNCHER}' 2>/dev/null || true\n"
-        f"./{FileNames.SH_LAUNCHER}\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    print(f"  ✓ {command_name} created")
+    # Copy launcher scripts
+    for launcher in launcher_files:
+        src = REPO_ROOT / launcher
+        dst = target_path / launcher
+        if src.exists():
+            shutil.copy2(src, dst)
+            print(f"  ✓ {launcher}")
+        else:
+            print(f"  ⚠ {launcher} not found in repo root")
 
+    # BUG-20260102-008: CREATE .lnk shortcuts with correct target paths
+    # Do NOT copy .lnk files - they contain hardcoded paths to source location
+    # Instead, create new shortcuts pointing to the deployed .vbs file
     if _is_windows():
-        shortcut_name = Path(FileNames.BAT_LAUNCHER).with_suffix(".lnk").name
+        shortcut_name = "KeyDrive.lnk"
         shortcut_path = target_path / shortcut_name
+        vbs_target = target_path / FileNames.VBS_LAUNCHER
         icon_path = target_paths.static_dir / FileNames.ICON_MAIN
 
-        if exe_dst.exists():
+        if vbs_target.exists():
             windows_create_shortcut(
                 shortcut_path=shortcut_path,
-                target_path=exe_dst,
+                target_path=vbs_target,
                 working_dir=target_path,
                 icon_path=icon_path,
                 description=f"{PRODUCT_NAME} (GUI)",
             )
-            print(f"  ✓ {shortcut_name} created")
+            print(f"  ✓ {shortcut_name} (created with local paths)")
         else:
-            print(f"  ⚠ {PRODUCT_NAME}GUI.exe not available; shortcut not created")
+            print(f"  ⚠ {FileNames.VBS_LAUNCHER} not found, skipping shortcut creation")
+
+    # Create .command for macOS if not present
+    command_name = f"{PRODUCT_NAME}.command"
+    command_path = target_path / command_name
+    if not command_path.exists():
+        command_path.write_text(
+            "#!/bin/bash\n"
+            'cd "$(dirname "$0")"\n'
+            f"chmod +x './{FileNames.SH_LAUNCHER}' 2>/dev/null || true\n"
+            f"./{FileNames.SH_LAUNCHER}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        print(f"  ✓ {command_name} created")
 
     _log_deploy("deploy.entrypoints.created")
 

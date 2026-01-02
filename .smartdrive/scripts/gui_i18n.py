@@ -50,6 +50,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Reload Config",
         "tooltip_reload_config": "Reload configuration from disk (discards unsaved changes)",
+        # Common dialog titles
+        "warning": "Warning",
+        "settings_tab_security": "Security",
         # Status messages
         "status_config_not_found": "Configuration not found",
         "status_volume_mounted": "Volume mounted",
@@ -253,7 +256,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "Server URL for updates",
         "tooltip_local_root": "Local directory containing update files",
         "hint_update_local_title": "About Local Updates",
-        "hint_update_local_body": "Select the root directory of your development repository or another SmartDrive deployment (e.g., H:\\ or C:\\MyDev\\). The update will ONLY modify files inside the .smartdrive/ subdirectory. User data (recovery/, keys/, integrity/, config.json) is automatically protected. Development files (.git, tests, etc.) are excluded.",
+        "hint_update_local_body": "Select either: (1) the directory containing a .smartdrive/ folder (e.g., H:\\ or C:\\MyDev\\), or (2) a .smartdrive/ folder directly. The .smartdrive/ will be auto-detected. User data (recovery/, keys/, integrity/, config.json) is automatically protected. Development files (.git, tests, helper/) are excluded.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Update Actions",
         "btn_run_update": "Run Update",
@@ -523,6 +526,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "Abbrechen",
         "btn_confirm": "Bestätigen",
         "btn_ok": "OK",
+        "warning": "Warnung",
+        "settings_tab_security": "Sicherheit",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Konfig neu laden",
         "tooltip_reload_config": "Konfiguration von Festplatte neu laden (verwirft ungespeicherte Änderungen)",
@@ -964,7 +969,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "Server-URL für Updates",
         "tooltip_local_root": "Lokales Verzeichnis mit Update-Dateien",
         "hint_update_local_title": "Über lokale Updates",
-        "hint_update_local_body": "Wählen Sie das Stammverzeichnis Ihres Entwicklungs-Repositorys oder einer anderen SmartDrive-Bereitstellung (z.B. H:\\ oder C:\\MeineDev\\). Das Update ändert NUR Dateien im .smartdrive/-Unterverzeichnis. Benutzerdaten (recovery/, keys/, integrity/, config.json) werden automatisch geschützt. Entwicklungsdateien (.git, Tests usw.) werden ausgeschlossen.",
+        "hint_update_local_body": "Wählen Sie entweder: (1) das Verzeichnis, das einen .smartdrive/-Ordner enthält (z.B. H:\\ oder C:\\MeineDev\\), oder (2) direkt einen .smartdrive/-Ordner. Der .smartdrive/-Ordner wird automatisch erkannt. Benutzerdaten (recovery/, keys/, integrity/, config.json) werden automatisch geschützt. Entwicklungsdateien (.git, Tests, helper/) werden ausgeschlossen.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Update-Aktionen",
         "btn_run_update": "Update ausführen",
@@ -999,6 +1004,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "Otkaži",
         "btn_confirm": "Potvrdi",
         "btn_ok": "OK",
+        "warning": "Upozorenje",
+        "settings_tab_security": "Sigurnost",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Ponovo učitaj",
         "tooltip_reload_config": "Ponovo učitaj konfiguraciju s diska (odbacuje nesačuvane promjene)",
@@ -1414,7 +1421,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "URL servera za ažuriranja",
         "tooltip_local_root": "Lokalni direktorij sa datotekama ažuriranja",
         "hint_update_local_title": "O lokalnim ažuriranjima",
-        "hint_update_local_body": "Odaberite korijenski direktorij vašeg razvojnog repozitorija ili druge SmartDrive implementacije (npr. H:\\ ili C:\\MojDev\\). Ažuriranje će SAMO promijeniti datoteke unutar .smartdrive/ poddirektorija. Korisnički podaci (recovery/, keys/, integrity/, config.json) su automatski zaštićeni. Razvojne datoteke (.git, testovi, itd.) su isključene.",
+        "hint_update_local_body": "Odaberite: (1) direktorij koji sadrži .smartdrive/ folder (npr. H:\\ ili C:\\MojDev\\), ili (2) direktno .smartdrive/ folder. .smartdrive/ će biti automatski detektovan. Korisnicki podaci (recovery/, keys/, integrity/, config.json) su automatski zaštićeni. Razvojne datoteke (.git, testovi, helper/) su isključene.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Akcije ažuriranja",
         "btn_run_update": "Pokreni ažuriranje",
@@ -1474,6 +1481,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "Cancelar",
         "btn_confirm": "Confirmar",
         "btn_ok": "OK",
+        "warning": "Advertencia",
+        "settings_tab_security": "Seguridad",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Recargar config",
         "tooltip_reload_config": "Recargar configuración desde disco (descarta cambios no guardados)",
@@ -1881,7 +1890,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "URL del servidor para actualizaciones",
         "tooltip_local_root": "Directorio local que contiene archivos de actualización",
         "hint_update_local_title": "Acerca de las actualizaciones locales",
-        "hint_update_local_body": "Seleccione el directorio raíz de su repositorio de desarrollo u otra implementación de SmartDrive (ej. H:\\ o C:\\MiDes\\). La actualización SOLO modificará archivos dentro del subdirectorio .smartdrive/. Los datos del usuario (recovery/, keys/, integrity/, config.json) están protegidos automáticamente. Los archivos de desarrollo (.git, pruebas, etc.) se excluyen.",
+        "hint_update_local_body": "Seleccione: (1) el directorio que contiene una carpeta .smartdrive/ (ej. H:\\ o C:\\MiDes\\), o (2) una carpeta .smartdrive/ directamente. El .smartdrive/ se detectará automáticamente. Los datos del usuario (recovery/, keys/, integrity/, config.json) están protegidos automáticamente. Los archivos de desarrollo (.git, pruebas, helper/) se excluyen.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Acciones de actualización",
         "btn_run_update": "Ejecutar actualización",
@@ -1941,6 +1950,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "Annuler",
         "btn_confirm": "Confirmer",
         "btn_ok": "OK",
+        "warning": "Avertissement",
+        "settings_tab_security": "Sécurité",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Recharger config",
         "tooltip_reload_config": "Recharger la configuration depuis le disque (annule les modifications non enregistrées)",
@@ -2348,7 +2359,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "URL du serveur pour les mises à jour",
         "tooltip_local_root": "Répertoire local contenant les fichiers de mise à jour",
         "hint_update_local_title": "À propos des mises à jour locales",
-        "hint_update_local_body": "Sélectionnez le répertoire racine de votre dépôt de développement ou d'un autre déploiement SmartDrive (par ex. H:\\ ou C:\\MonDev\\). La mise à jour modifiera UNIQUEMENT les fichiers dans le sous-répertoire .smartdrive/. Les données utilisateur (recovery/, keys/, integrity/, config.json) sont automatiquement protégées. Les fichiers de développement (.git, tests, etc.) sont exclus.",
+        "hint_update_local_body": "Sélectionnez : (1) le répertoire contenant un dossier .smartdrive/ (par ex. H:\\ ou C:\\MonDev\\), ou (2) un dossier .smartdrive/ directement. Le .smartdrive/ sera détecté automatiquement. Les données utilisateur (recovery/, keys/, integrity/, config.json) sont automatiquement protégées. Les fichiers de développement (.git, tests, helper/) sont exclus.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Actions de mise à jour",
         "btn_run_update": "Exécuter la mise à jour",
@@ -2408,6 +2419,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "Отмена",
         "btn_confirm": "Подтвердить",
         "btn_ok": "OK",
+        "warning": "Предупреждение",
+        "settings_tab_security": "Безопасность",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ Перезагрузить",
         "tooltip_reload_config": "Перезагрузить конфигурацию с диска (отменяет несохранённые изменения)",
@@ -2815,7 +2828,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "URL сервера для обновлений",
         "tooltip_local_root": "Локальный каталог, содержащий файлы обновления",
         "hint_update_local_title": "О локальных обновлениях",
-        "hint_update_local_body": "Выберите корневой каталог вашего репозитория разработки или другого развертывания SmartDrive (например, H:\\ или C:\\МояРазработка\\). Обновление изменит ТОЛЬКО файлы в подкаталоге .smartdrive/. Пользовательские данные (recovery/, keys/, integrity/, config.json) автоматически защищены. Файлы разработки (.git, тесты и т.д.) исключаются.",
+        "hint_update_local_body": "Выберите: (1) каталог, содержащий папку .smartdrive/ (например, H:\\ или C:\\МояРазработка\\), или (2) папку .smartdrive/ напрямую. .smartdrive/ будет обнаружен автоматически. Пользовательские данные (recovery/, keys/, integrity/, config.json) автоматически защищены. Файлы разработки (.git, тесты, helper/) исключаются.",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "Действия обновления",
         "btn_run_update": "Выполнить обновление",
@@ -2875,6 +2888,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "btn_cancel": "取消",
         "btn_confirm": "确认",
         "btn_ok": "确定",
+        "warning": "警告",
+        "settings_tab_security": "安全",
         # CHG-20251223-055: Reload config button for non-modal settings
         "btn_reload_config": "↻ 重新加载配置",
         "tooltip_reload_config": "从磁盘重新加载配置（放弃未保存的更改）",
@@ -3276,7 +3291,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_server_url": "更新的服务器 URL",
         "tooltip_local_root": "包含更新文件的本地目录",
         "hint_update_local_title": "关于本地更新",
-        "hint_update_local_body": "选择开发存储库或另一个 SmartDrive 部署的根目录（例如 H:\\ 或 C:\\我的开发\\）。更新将仅修改 .smartdrive/ 子目录中的文件。用户数据（recovery/、keys/、integrity/、config.json）将自动受到保护。开发文件（.git、测试等）将被排除。",
+        "hint_update_local_body": "选择：(1) 包含 .smartdrive/ 文件夹的目录（例如 H:\\ 或 C:\\我的开发\\)，或 (2) 直接选择 .smartdrive/ 文件夹。系统将自动检测 .smartdrive/。用户数据（recovery/、keys/、integrity/、config.json）将自动受到保护。开发文件（.git、测试、helper/）将被排除。",
         # CHG-20251222-016: Update action section i18n keys
         "update_action_section_title": "更新操作",
         "btn_run_update": "执行更新",

@@ -1,23 +1,53 @@
-# KeyDrive Python Dependencies
+# ============================================================
+# KeyDrive – Python Dependencies
 #
-# IMPORTANT: Versions are pinned for reproducibility and security.
-# Update periodically but test thoroughly before deploying changes.
+# Target Python: 3.11.x
+# Platform: Windows / Linux (x86_64)
+#
+# Versions are pinned for reproducibility and security.
+# Update deliberately and test on a clean machine.
+# ============================================================
 
-# Core dependencies - using standard library only for MVP
-# No external packages required for basic functionality
 
-# PDF generation dependencies
-markdown==3.7           # Markdown to HTML conversion (pinned)
-reportlab==4.2.5        # HTML to PDF conversion (pinned, Windows compatible)
+# ----------------------------
+# GUI (REQUIRED)
+# ----------------------------
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.1
+PyQt6-sip==13.8.0
 
-# Recovery system dependencies
-cryptography==43.0.3    # AES-GCM encryption (SECURITY-CRITICAL: update promptly for CVEs)
-mnemonic==0.21          # BIP39 phrase generation with proper checksum
-argon2-cffi==23.1.0     # Argon2id KDF for key derivation
-qrcode[pil]==8.0        # QR code generation for paper reconstruction
-pillow==11.0.0          # Image processing for QR codes (qrcode dependency)
 
-# Future optional dependencies (commented out):
-# colorama>=0.4.6        # Cross-platform colored terminal output
-# pyside6>=6.6.0         # GUI wrapper (future feature)
-# pyinstaller>=6.0.0     # For packaging standalone executables
+# ----------------------------
+# PDF / Recovery Kit Generation
+# ----------------------------
+markdown==3.7
+reportlab==4.2.5
+
+
+# ----------------------------
+# Cryptography & Key Derivation
+# (SECURITY-CRITICAL)
+# ----------------------------
+cryptography==43.0.3
+argon2-cffi==23.1.0
+mnemonic==0.21
+
+
+# ----------------------------
+# QR Codes & Imaging
+# ----------------------------
+qrcode[pil]==8.0
+pillow==11.0.0
+
+
+# ----------------------------
+# CLI / UX helpers
+# ----------------------------
+colorama==0.4.6
+
+
+# ----------------------------
+# Packaging / Distribution
+# (NOT required at runtime)
+# ----------------------------
+# pyinstaller==6.9.0

@@ -58,6 +58,9 @@ if _script_dir.parent.name == ".smartdrive":
     # Add .smartdrive to path so 'from core.x import y' works
     if str(_smartdrive_dir) not in sys.path:
         sys.path.insert(0, str(_smartdrive_dir))
+    # BUG-20260102-010: Also add scripts dir for 'from crypto_utils import ...'
+    if str(_script_dir) not in sys.path:
+        sys.path.insert(0, str(_script_dir))
 else:
     # Development - project_root/core/ is the target
     pass

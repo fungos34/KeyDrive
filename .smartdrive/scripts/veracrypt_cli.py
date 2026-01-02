@@ -915,22 +915,26 @@ def render_header_export_gui_guide(
 
     # P1: Open VeraCrypt GUI ONCE per session only
     # Use module-level flag to prevent reopening if function is called again
-    # BUG-20251220-004 FIX: Pass volume_path to pre-select device in GUI
+    # BUG-20251221-022 FIX: Do NOT pass /volume argument to VeraCrypt GUI on Windows.
+    # Passing device paths like \Device\Harddisk1\Partition2 via /volume can cause
+    # "Error while parsing command line" popups on some Windows configurations.
+    # User is guided through steps to manually select volume, so pre-selection is not critical.
     global _veracrypt_gui_opened_this_session
 
     if not _veracrypt_gui_opened_this_session and vc_exe:
         try:
-            # BUG-20251220-004: Pass volume_path to pre-select device in GUI
-            # On Windows: CREATE_NO_WINDOW prevents unexpected GUI popups from probes
+            # BUG-20251221-022 FIX: Open VeraCrypt GUI WITHOUT /volume argument
+            # on Windows to prevent "Error while parsing command line" popups.
+            # The user will select the volume manually per the displayed guide steps.
             if "windows" in platform.system().lower():
-                # Launch with /volume argument to pre-select device
-                cmd = [str(vc_exe), "/volume", volume_path]
+                # Windows: Launch VeraCrypt GUI without device path argument
+                cmd = [str(vc_exe)]
                 subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                # Launch with --volume argument to pre-select device
+                # Unix: Can still use --volume as it's more reliable on Unix
                 cmd = [str(vc_exe), "--volume", volume_path]
                 subprocess.Popen(cmd)
-            print("  [OK] VeraCrypt GUI opened with device pre-selected.\n")
+            print("  [OK] VeraCrypt GUI opened.\n")
             _veracrypt_gui_opened_this_session = True
         except Exception as e:
             print(f"  [!] Could not open VeraCrypt: {e}")

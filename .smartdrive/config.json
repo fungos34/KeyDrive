@@ -6,7 +6,7 @@
   "setup_date": "2025-12-23",
   "last_password_change": "2025-12-23",
   "windows": {
-    "volume_path": "\\Device\\Harddisk1\\Partition2",
+    "volume_path": "\\Device\\Harddisk3\\Partition2",
     "mount_letter": "P",
     "veracrypt_path": "",
     "allow_mount_fallback": true
@@ -69,7 +69,7 @@
   "keyfile": "C:\\Users\\accou\\Code\\VeraCrypt_Yubikey_2FA\\.smartdrive\\keys\\keyfile.vc",
   "update_source_type": "local",
   "update_url": "http://server:8000/api/update/download/latest",
-  "update_local_root": "",
+  "update_local_root": "C:/Users/accou/Code/VeraCrypt_Yubikey_2FA/KeyDrive",
   "integrity_server_url": "http://127.0.0.1:8000/api/check",
-  "last_updated": "2025-12-24 02:33:58"
+  "last_updated": "2026-01-02 15:42:10"
 }

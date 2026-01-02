@@ -9,7 +9,7 @@ Usage:
     python update.py                                 # Interactive mode
     python update.py --drive G                       # Update specific drive
     python update.py --dry-run                       # Preview changes
-    
+
     # External drive GUI mode
     python update.py --mode external_drive --source server --url <URL>
     python update.py --mode external_drive --source local  --root <DIR>
@@ -54,7 +54,7 @@ try:
     from core.platform import windows_create_shortcut, windows_refresh_explorer, windows_set_attributes
     from core.version import VERSION as CURRENT_VERSION
 except ImportError:
-    CURRENT_VERSION = "2.0.0"  # Fallback for when core not available
+    CURRENT_VERSION = "1.0.0"  # Fallback for when core not available (bootstrap scenario)
     write_config_atomic = None  # Fallback will use direct write
 
     class FileNames:
@@ -291,6 +291,108 @@ def _ensure_clean_root_entrypoints(target_path: Path, target_scripts: Path) -> N
         )
     except Exception:
         pass
+
+
+def _ensure_clean_root_entrypoints_external(drive_root: Path, target_scripts: Path, payload_dir: Path) -> None:
+    """
+    Ensure the drive root contains OS-clickable entrypoints for external_drive update mode.
+
+    BUG-20260102-003 FIX: This function is specifically for the --mode external_drive path.
+    Unlike _ensure_clean_root_entrypoints, it gets launcher source files from payload_dir
+    (the update source) rather than DEV_ROOT (which may not be correct in this context).
+
+    BUG-20260102-006 FIX: Copy ALL launcher files (not just those dependent on .exe).
+
+    Args:
+        drive_root: The root of the external drive (parent of .smartdrive/)
+        target_scripts: The target .smartdrive/scripts/ directory
+        payload_dir: The directory containing update payload (source for launcher files)
+    """
+    log("[INFO] Updating launcher files...")
+
+    if _is_windows():
+        try:
+            windows_set_attributes(drive_root / Paths.SMARTDRIVE_DIR_NAME, hidden=True)
+        except Exception:
+            pass
+
+    # Define all launcher files that should be present
+    # CHG-20260102-007: Removed KeyDriveGUI.bat (redundant - KeyDrive.bat via .vbs is superior)
+    launcher_files = [
+        FileNames.SH_LAUNCHER,  # keydrive.sh
+        FileNames.BAT_LAUNCHER,  # KeyDrive.bat
+        FileNames.VBS_LAUNCHER,  # KeyDrive.vbs
+    ]
+
+    # Copy launcher scripts from payload (try both root and .smartdrive subdirectory)
+    for launcher in launcher_files:
+        candidates = [
+            payload_dir / launcher,
+            payload_dir / Paths.SMARTDRIVE_DIR_NAME / launcher,
+        ]
+        dst = drive_root / launcher
+        for src in candidates:
+            if src.exists():
+                try:
+                    shutil.copy2(src, dst)
+                    log(f"  ✓ Updated {launcher}")
+                    _log_update("update.launcher.copied", name=launcher)
+                except Exception as e:
+                    warn(f"Could not copy {launcher}: {e}")
+                break
+        else:
+            # Check DEV_ROOT as fallback
+            dev_src = DEV_ROOT / launcher
+            if dev_src.exists():
+                try:
+                    shutil.copy2(dev_src, dst)
+                    log(f"  ✓ Updated {launcher} (from DEV_ROOT)")
+                    _log_update("update.launcher.from_dev", name=launcher)
+                except Exception:
+                    pass
+
+    # BUG-20260102-008: CREATE .lnk shortcuts with correct target paths
+    # Do NOT copy .lnk files - they contain hardcoded paths to source location
+    # Instead, create new shortcuts pointing to the deployed .vbs file
+    if _is_windows():
+        shortcut_name = "KeyDrive.lnk"
+        shortcut_path = drive_root / shortcut_name
+        vbs_target = drive_root / FileNames.VBS_LAUNCHER
+        icon_path = drive_root / Paths.SMARTDRIVE_DIR_NAME / Paths.STATIC_SUBDIR / FileNames.ICON_MAIN
+
+        if vbs_target.exists():
+            try:
+                windows_create_shortcut(
+                    shortcut_path=shortcut_path,
+                    target_path=vbs_target,
+                    working_dir=drive_root,
+                    icon_path=icon_path,
+                    description=f"{Branding.PRODUCT_NAME} (GUI)",
+                )
+                log(f"  ✓ Created {shortcut_name} (with local paths)")
+                _log_update("update.launcher.shortcut_created", name=shortcut_name)
+            except Exception as e:
+                warn(f"Could not create shortcut: {e}")
+                _log_update("update.launcher.shortcut_error", error=str(e))
+        else:
+            log(f"  ⚠ {FileNames.VBS_LAUNCHER} not found, skipping shortcut creation")
+
+    # Create .command for macOS
+    command_name = f"{Branding.PRODUCT_NAME}.command"
+    command_path = drive_root / command_name
+    try:
+        command_path.write_text(
+            "#!/bin/bash\n"
+            'cd "$(dirname "$0")"\n'
+            f"chmod +x './{FileNames.SH_LAUNCHER}' 2>/dev/null || true\n"
+            f"./{FileNames.SH_LAUNCHER}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        log(f"  ✓ Created {command_name}")
+        _log_update("update.launcher.command_created", name=command_name)
+    except Exception as e:
+        warn(f"Could not create {command_name}: {e}")
 
 
 def log(msg: str, level: str = "INFO"):
@@ -811,6 +913,18 @@ if __name__ == "__main__":
                     if not src_root.exists():
                         error(f"Local update root not found: {src_root}")
                         sys.exit(2)
+
+                    # BUG-20260102-002 FIX: Auto-detect .smartdrive subdirectory
+                    # If user selected a directory containing .smartdrive/, use that as source.
+                    # This allows user to select either:
+                    #   - The parent directory (e.g., C:\MyDev\ which contains .smartdrive/)
+                    #   - Or the .smartdrive directory directly (e.g., C:\MyDev\.smartdrive\)
+                    smartdrive_subdir = src_root / Paths.SMARTDRIVE_DIR_NAME
+                    if src_root.name != Paths.SMARTDRIVE_DIR_NAME and smartdrive_subdir.exists():
+                        log(f"Auto-detected .smartdrive subdirectory in {src_root}")
+                        src_root = smartdrive_subdir
+                        _log_update("update.local.autodetect", detected=str(src_root))
+
                     _log_update("update.local.start", source=str(src_root))
 
                     # CHG-20251221-004: Apply deployment filtering
@@ -936,6 +1050,34 @@ if __name__ == "__main__":
                             except Exception as restore_error:
                                 error(f"Failed to restore config.json: {restore_error}")
                                 _log_update("update.config.restore_failed", error=str(restore_error))
+
+                # BUG-20260102-003 FIX: Update launcher files in drive root
+                # Launchers (.lnk, .sh, .command) must be placed at drive_root (parent of .smartdrive)
+                # This was missing in external_drive mode, causing stale shortcuts
+                log("Updating launcher files...")
+                _ensure_clean_root_entrypoints_external(drive_root, scripts_root, payload_dir)
+                _log_update("update.launchers.updated", target=str(drive_root))
+
+                # CHG-20260102-007: Update .venv for dependency shipping
+                # Copy bundled Python environment if present in payload
+                venv_candidates = [
+                    payload_dir / ".venv",
+                    payload_dir / Paths.SMARTDRIVE_DIR_NAME / ".venv",
+                ]
+                venv_dst = deploy_root / ".venv"
+                for venv_src in venv_candidates:
+                    if venv_src.exists():
+                        log("Updating bundled Python environment (.venv)...")
+                        try:
+                            if venv_dst.exists():
+                                shutil.rmtree(venv_dst)
+                            shutil.copytree(venv_src, venv_dst)
+                            _log_update("update.venv.copied", source=str(venv_src))
+                            log("  ✓ .venv/ updated")
+                        except Exception as e:
+                            warn(f"Could not update .venv: {e}")
+                            _log_update("update.venv.error", error=str(e))
+                        break
 
                 print("Update overlay complete.")
                 _log_update("update.external_drive.success")

@@ -53,6 +53,9 @@ if _script_dir.parent.name == ".smartdrive":
     _project_root = _deploy_root.parent  # drive root
     if str(_deploy_root) not in sys.path:
         sys.path.insert(0, str(_deploy_root))
+    # BUG-20260102-010: Also add scripts dir for 'from crypto_utils import ...'
+    if str(_script_dir) not in sys.path:
+        sys.path.insert(0, str(_script_dir))
 else:
     # Development: scripts/setup.py at repo root
     _project_root = _script_dir.parent

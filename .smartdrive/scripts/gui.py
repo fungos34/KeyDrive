@@ -61,6 +61,9 @@ if _script_dir.parent.name == ".smartdrive":
     _project_root = _deploy_root.parent  # drive root
     if str(_deploy_root) not in sys.path:
         sys.path.insert(0, str(_deploy_root))
+    # BUG-20260102-010: Also add scripts dir for sibling imports (gui_i18n, etc.)
+    if str(_script_dir) not in sys.path:
+        sys.path.insert(0, str(_script_dir))
 else:
     # Development: scripts/gui.py at repo root
     _project_root = _script_dir.parent
@@ -449,7 +452,12 @@ def get_python_exe():
             python_exe = "python.exe"
         return python_exe
     else:
-        # Running from source
+        # Running from source - prefer pythonw.exe for GUI contexts (no console window)
+        exe_path = Path(sys.executable)
+        if exe_path.name == "python.exe":
+            pythonw_path = exe_path.with_name("pythonw.exe")
+            if pythonw_path.exists():
+                return pythonw_path
         return sys.executable
 
 
@@ -463,6 +471,7 @@ if SCRIPT_DIR.name == "scripts" and SCRIPT_DIR.parent.name == ".smartdrive":
 else:
     CONFIG_FILE = SCRIPT_DIR / FileNames.CONFIG_JSON  # fallback for development
 
+# CHG-20251229-001: Improved dependency checking with OS-specific messages
 try:
     from PyQt6.QtCore import QPoint, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
     from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QTextOption
@@ -492,8 +501,25 @@ try:
         QWidget,
     )
 except ImportError:
-    print("[X] PyQt6 not available. Please install with: pip install PyQt6 PyQt6-Qt6")
-    sys.exit(1)
+    # PyQt6 is missing - use the dependency checker for clear error message
+    try:
+        from core.dependencies import check_all_dependencies, format_dependency_error
+
+        # Check all dependencies and show comprehensive error
+        all_ok, error_msg = check_all_dependencies(silent=False)
+        if not all_ok:
+            sys.exit(1)
+        else:
+            # Dependencies say OK but PyQt6 still failed - unexpected state
+            print("[X] PyQt6 import failed unexpectedly. Try: pip install PyQt6", file=sys.stderr)
+            sys.exit(1)
+    except ImportError:
+        # Core module not available - provide basic message
+        print("[X] PyQt6 not available. Please install with: pip install PyQt6", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("To install all dependencies, run:", file=sys.stderr)
+        print("  pip install -r requirements.txt", file=sys.stderr)
+        sys.exit(1)
 
 
 # ============================================================

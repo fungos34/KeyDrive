@@ -48,6 +48,9 @@ if _script_dir.parent.name == ".smartdrive":
     _project_root = _deploy_root.parent  # drive root
     if str(_deploy_root) not in sys.path:
         sys.path.insert(0, str(_deploy_root))
+    # BUG-20260102-010: Also add scripts dir for 'from crypto_utils import ...'
+    if str(_script_dir) not in sys.path:
+        sys.path.insert(0, str(_script_dir))
 else:
     # Development: scripts/mount.py at repo root
     _project_root = _script_dir.parent
@@ -1362,6 +1365,141 @@ def validate_volume_path_windows(volume_path: str) -> None:
     log(f"✓ Safety check passed for: {volume_path}")
 
 
+def resolve_volume_path_unix(config_volume_path: str, script_path: Path) -> str:
+    """
+    Resolve the volume path for mounting on Unix (Linux/macOS).
+
+    BUG-20251229-002/BUG-20251229-003: Handle cross-platform config portability.
+    Config.json may contain Windows device paths when setup was done on Windows.
+
+    Key insight: The mount script runs from the USB drive's launcher partition.
+    The VeraCrypt volume is partition 2 of the SAME disk.
+    Device paths change between operating systems.
+
+    Resolution strategy:
+    1. If volume_path looks like a Windows path, auto-detect the Unix device
+    2. Detect which disk the script is running from
+    3. Find partition 2 of that same disk
+    4. Return a usable path for VeraCrypt CLI on Unix
+
+    Args:
+        config_volume_path: The path from config (may be Windows device path or Unix path)
+        script_path: Path to the mount.py script
+
+    Returns:
+        Resolved volume path usable by VeraCrypt CLI on Unix
+    """
+    normalized = (config_volume_path or "").strip()
+
+    # Check if this looks like a Windows device path
+    is_windows_path = (
+        normalized.startswith("\\Device\\")
+        or normalized.startswith("\\\\Device\\\\")
+        or (len(normalized) <= 3 and normalized[0].isalpha() and ":" in normalized)  # Drive letter like "E:"
+    )
+
+    if not is_windows_path:
+        # Already a Unix path - validate and return
+        if normalized.startswith("/dev/"):
+            if Path(normalized).exists():
+                log(f"Volume path is valid Unix device: {normalized}")
+                return normalized
+            else:
+                log(f"⚠ Configured Unix device path does not exist: {normalized}")
+                log("Will attempt auto-detection...")
+        else:
+            # Could be a file container path
+            expanded = os.path.expanduser(normalized)
+            if Path(expanded).exists():
+                log(f"Volume path is a file container: {expanded}")
+                return expanded
+            log(f"⚠ Configured path does not exist: {normalized}, attempting auto-detection...")
+
+    # Auto-resolve: Find the payload partition on the same disk as the script
+    log(f"Auto-resolving volume path from script location...")
+
+    try:
+        # Find which device the script's directory is on
+        script_dir = str(script_path.parent.resolve())
+
+        # Use df to find the device
+        df_result = subprocess.run(
+            ["df", "-P", script_dir], capture_output=True, text=True, timeout=Limits.POWERSHELL_QUICK_TIMEOUT
+        )
+
+        if df_result.returncode != 0:
+            log(f"⚠ df command failed: {df_result.stderr}")
+            return config_volume_path
+
+        # Parse df output: Filesystem ... Mounted on
+        lines = df_result.stdout.strip().split("\n")
+        if len(lines) < 2:
+            log(f"⚠ Unexpected df output: {df_result.stdout}")
+            return config_volume_path
+
+        # First field of second line is the device
+        parts = lines[1].split()
+        script_device = parts[0] if parts else ""
+
+        if not script_device.startswith("/dev/"):
+            log(f"⚠ Script device is not a block device: {script_device}")
+            return config_volume_path
+
+        log(f"Script running from device: {script_device}")
+
+        # Extract base device name and partition number
+        # /dev/sdb1 -> base=/dev/sdb, partition=1
+        # /dev/nvme0n1p1 -> base=/dev/nvme0n1, partition=1
+        import re
+
+        # Try NVMe pattern first: /dev/nvme0n1p1
+        nvme_match = re.match(r"(/dev/nvme\d+n\d+)p(\d+)", script_device)
+        if nvme_match:
+            base_device = nvme_match.group(1)
+            payload_partition = f"{base_device}p2"
+        else:
+            # Standard pattern: /dev/sdb1, /dev/mmcblk0p1
+            # Handle mmcblk style: /dev/mmcblk0p1
+            mmcblk_match = re.match(r"(/dev/mmcblk\d+)p(\d+)", script_device)
+            if mmcblk_match:
+                base_device = mmcblk_match.group(1)
+                payload_partition = f"{base_device}p2"
+            else:
+                # Standard SCSI/SATA pattern: /dev/sdb1
+                std_match = re.match(r"(/dev/[a-z]+)(\d+)", script_device)
+                if std_match:
+                    base_device = std_match.group(1)
+                    payload_partition = f"{base_device}2"
+                else:
+                    log(f"⚠ Cannot parse device pattern: {script_device}")
+                    return config_volume_path
+
+        log(f"Checking for payload partition: {payload_partition}")
+
+        # Verify the partition exists
+        if Path(payload_partition).exists():
+            log(f"✓ Resolved to Unix device: {payload_partition}")
+            return payload_partition
+        else:
+            # Try with 'p' suffix for some device naming schemes
+            alt_partition = f"{base_device}p2"
+            if Path(alt_partition).exists():
+                log(f"✓ Resolved to Unix device (alt format): {alt_partition}")
+                return alt_partition
+
+            log(f"⚠ Payload partition not found: {payload_partition}")
+            log("The USB drive may not have a second partition, or partition numbering differs.")
+            log(f"Available devices: {list(Path('/dev').glob('sd[b-z]*'))}")
+            return config_volume_path
+
+    except subprocess.TimeoutExpired:
+        log(f"⚠ Volume resolution timed out, using config value: {config_volume_path}")
+        return config_volume_path
+    except Exception as e:
+        log(f"⚠ Volume resolution failed ({e}), using config value: {config_volume_path}")
+        return config_volume_path
+
+
 def validate_volume_path_unix(volume_path: str) -> None:
     """Validate that volume path is not a critical system location."""
     dangerous_patterns = [
@@ -1434,6 +1572,8 @@ def resolve_volume_path_windows(config_volume_path: str, script_path: Path) -> s
 
     try:
         # Find which disk the script's drive letter is on
+        # BUG-20260102-012: Check filesystem before returning drive letter
+        # RAW/encrypted partitions can have drive letters but aren't accessible as paths
         ps_script = f"""
         $partition = Get-Partition -DriveLetter '{script_letter}' -ErrorAction Stop
         $diskNumber = $partition.DiskNumber
@@ -1442,18 +1582,18 @@ def resolve_volume_path_windows(config_volume_path: str, script_path: Path) -> s
         $payloadPartition = Get-Partition -DiskNumber $diskNumber -PartitionNumber 2 -ErrorAction SilentlyContinue
         
         if ($payloadPartition) {{
-            # Check if it has a drive letter
-            if ($payloadPartition.DriveLetter) {{
+            # BUG-20260102-012: Check if partition has a readable filesystem
+            # RAW/encrypted partitions cannot be accessed via drive letter
+            $volume = Get-Volume -Partition $payloadPartition -ErrorAction SilentlyContinue
+            $hasReadableFS = $volume -and $volume.FileSystem -and ($volume.FileSystem -ne '')
+            
+            if ($payloadPartition.DriveLetter -and $hasReadableFS) {{
+                # Has drive letter AND readable filesystem - use drive letter
                 Write-Output "LETTER:$($payloadPartition.DriveLetter)"
             }} else {{
-                # Get Volume GUID as fallback
-                $volume = Get-Volume -Partition $payloadPartition -ErrorAction SilentlyContinue
-                if ($volume -and $volume.UniqueId) {{
-                    Write-Output "GUID:$($volume.UniqueId)"
-                }} else {{
-                    # Use device path format VeraCrypt understands
-                    Write-Output "DEVICE:\\Device\\Harddisk$($diskNumber)\\Partition2"
-                }}
+                # RAW/encrypted partition - use device path format
+                # Device path is most reliable for VeraCrypt with encrypted partitions
+                Write-Output "DEVICE:\\Device\\Harddisk$($diskNumber)\\Partition2"
             }}
         }} else {{
             Write-Output "ERROR:No partition 2 found on disk $diskNumber"
@@ -1468,10 +1608,6 @@ def resolve_volume_path_windows(config_volume_path: str, script_path: Path) -> s
         if output.startswith("LETTER:"):
             resolved = output.replace("LETTER:", "").strip() + ":"
             log(f"✓ Resolved to drive letter: {resolved}")
-            return resolved
-        elif output.startswith("GUID:"):
-            resolved = output.replace("GUID:", "").strip()
-            log(f"✓ Resolved to volume GUID: {resolved[:30]}...")
             return resolved
         elif output.startswith("DEVICE:"):
             resolved = output.replace("DEVICE:", "").strip()
@@ -1590,6 +1726,20 @@ def mount_veracrypt_windows(vc_exe: Path, cfg: dict, tmp_keys: list[Path] | None
             run_cmd(args, check=True, capture_output=True)
         else:
             run_cmd(args, check=True)
+
+        # BUG-20260102-011: VeraCrypt CLI returns exit code 0 even on failure in /silent mode
+        # Must verify mount actually succeeded by checking if drive letter exists
+        import time
+
+        time.sleep(0.5)  # Brief delay for mount to complete
+        mount_path = Path(f"{mount_letter}:\\")
+        if not mount_path.exists():
+            # Mount failed despite exit code 0 - raise error to trigger helpful message
+            raise RuntimeError(
+                f"VeraCrypt command completed but drive {mount_letter}: was not mounted.\n"
+                f"This usually means wrong password or the volume path is incorrect."
+            )
+
         log(f"Mounted successfully as {mount_letter}:")
 
         # Update drive icon to mounted state
@@ -1723,11 +1873,19 @@ def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) 
 
     BUG-20251221-037: Implements automatic mount point fallback with user preference,
     retry logic, and clear error messages distinguishing mount point issues from credentials.
+
+    BUG-20251229-002/BUG-20251229-003: Handles cross-platform config portability.
+    If config contains Windows device paths, auto-detects the correct Unix device.
     """
     cfg_unix = cfg.get(ConfigKeys.UNIX) or {}
-    volume_path = (cfg_unix.get(ConfigKeys.VOLUME_PATH) or "").strip()
-    if not volume_path:
+    volume_path_config = (cfg_unix.get(ConfigKeys.VOLUME_PATH) or "").strip()
+    if not volume_path_config:
         raise RuntimeError("unix.volume_path is missing/empty in config.json")
+
+    # BUG-20251229-002/BUG-20251229-003: Auto-resolve volume path
+    # This handles config created on Windows containing Windows device paths
+    script_path = Path(__file__).resolve()
+    volume_path = resolve_volume_path_unix(volume_path_config, script_path)
 
     # Safety check: prevent mounting system drives
     validate_volume_path_unix(volume_path)
@@ -1817,6 +1975,16 @@ def mount_veracrypt_unix(cfg: dict, tmp_keys: list[Path] | None, password: str) 
             )
     else:
         run_cmd(base_cmd, check=True)
+
+    # BUG-20260102-011: Verify mount actually succeeded
+    import time
+
+    time.sleep(0.5)  # Brief delay for mount to complete
+    if not mount_point.is_mount():
+        raise RuntimeError(
+            f"VeraCrypt command completed but {mount_point} was not mounted.\n"
+            f"This usually means wrong password or the volume path is incorrect."
+        )
 
     log(f"Mounted successfully at {mount_point}")
 

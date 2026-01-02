@@ -52,6 +52,13 @@ class TestDeploymentExcludePatterns:
         # Virtual environments
         assert ".venv" in patterns or "venv" in patterns
 
+        # BUG-20260102-001: Helper files (agent instructions)
+        assert "helper" in patterns
+        assert "helper_instruction.txt" in patterns
+
+        # BUG-20260102-004: Update temp directory (prevents recursion)
+        assert "_update_tmp" in patterns
+
     def test_readme_exception_pattern(self):
         """Verify README.md has exception pattern."""
         patterns = FileNames.DEPLOYMENT_EXCLUDE_PATTERNS
@@ -108,13 +115,19 @@ class TestShouldExcludeFromDeployment:
         tests_dir = temp_base / "tests"
         assert should_exclude_from_deployment(tests_dir, temp_base) is True
 
-    def test_venv_directory_excluded(self, temp_base):
-        """Test virtual environment directories are excluded."""
+    def test_venv_directory_handling(self, temp_base):
+        """Test virtual environment directories handling.
+
+        CHG-20260102-007: .venv is NOW deployed (dependency shipping policy).
+        Only 'venv' (alternate name) is excluded.
+        """
         from scripts.update import should_exclude_from_deployment
 
+        # .venv should NOT be excluded (deployed for portable dependencies)
         venv_dir = temp_base / ".venv"
-        assert should_exclude_from_deployment(venv_dir, temp_base) is True
+        assert should_exclude_from_deployment(venv_dir, temp_base) is False
 
+        # 'venv' (alternate name) should still be excluded
         venv_dir2 = temp_base / "venv"
         assert should_exclude_from_deployment(venv_dir2, temp_base) is True
 
@@ -124,6 +137,27 @@ class TestShouldExcludeFromDeployment:
 
         vscode_dir = temp_base / ".vscode"
         assert should_exclude_from_deployment(vscode_dir, temp_base) is True
+
+    def test_helper_directory_excluded(self, temp_base):
+        """Test helper directory is excluded (BUG-20260102-001)."""
+        from scripts.update import should_exclude_from_deployment
+
+        helper_dir = temp_base / "helper"
+        assert should_exclude_from_deployment(helper_dir, temp_base) is True
+
+    def test_helper_instruction_txt_excluded(self, temp_base):
+        """Test helper_instruction.txt file is excluded (BUG-20260102-001)."""
+        from scripts.update import should_exclude_from_deployment
+
+        helper_file = temp_base / "helper_instruction.txt"
+        assert should_exclude_from_deployment(helper_file, temp_base) is True
+
+    def test_update_tmp_directory_excluded(self, temp_base):
+        """Test _update_tmp directory is excluded (BUG-20260102-004)."""
+        from scripts.update import should_exclude_from_deployment
+
+        update_tmp_dir = temp_base / "_update_tmp"
+        assert should_exclude_from_deployment(update_tmp_dir, temp_base) is True
 
     def test_python_script_included(self, temp_base):
         """Test .py files are included (not excluded)."""

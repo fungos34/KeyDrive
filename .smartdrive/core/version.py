@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-VERSION = "0.0.1"
+VERSION = "1.0.0"
 
 # Build metadata (optional)
 BUILD_ID = None  # Set by CI/CD if needed

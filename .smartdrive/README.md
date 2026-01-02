@@ -7,58 +7,107 @@ GUI_EXE_NAME: KeyDriveGUI.exe
 KeyDrive_DIR_NAME: .smartdrive
 -->
 
-# {PRODUCT_NAME} – Encrypted External Drive with YubiKey + GPG + VeraCrypt
+# KeyDrive v1.0.0 – Encrypted External Drive with Hardware Key Support
 
-A cross-platform, self-contained encrypted storage system for external drives (USB stick, HDD, SSD) that combines:
-- **VeraCrypt** for data-at-rest encryption
-- **GPG public-key encryption** to protect the keyfile (optional)
-- **Two YubiKeys** (main + backup) for multi-factor authentication (optional)
-- **Emergency Recovery Kit** with 24-word phrase for disaster recovery (optional)
+**KeyDrive** is a cross-platform, self-contained encrypted storage system for external drives (USB sticks, HDDs, SSDs) that combines:
+
+- **VeraCrypt** for military-grade AES-256 encryption
+- **GPG/YubiKey** for hardware-based authentication (optional)
+- **Recovery Kit** with 24-word phrase for disaster recovery
+
+**Quick Start:** Install [VeraCrypt](https://www.veracrypt.fr/en/Downloads.html), [Python 3.8+](https://python.org), run `python .smartdrive/scripts/gui_launcher.py` (or double-click `KeyDrive.bat` on Windows / `keydrive.sh` on Linux/macOS).
 
 ---
 
-## 🚨 CRITICAL SECURITY WARNING
+## ⚡ 30-Second Overview
 
-**⚠️ BEFORE USING {PRODUCT_NAME}, YOU MUST VERIFY YOUR DRIVE HAS NOT BEEN COMPROMISED! ⚠️**
-
-{PRODUCT_NAME} cannot protect you if your drive has already been tampered with. **Automated verification CANNOT detect sophisticated system compromises.** 
-
-**For true security, you MUST perform MANUAL verification:**
-- Access the official server endpoint (verify domain authenticity)
-- Manually copy salt files to your LAUNCHER partition  
-- Manually hash your entire partition using trusted tools
-- Personally witness server validation responses
-
-**Read the "Drive Compromise Detection" section below BEFORE proceeding.**
+| What it does | How it works |
+|--------------|--------------|
+| Encrypts your external drive | VeraCrypt creates an encrypted partition |
+| Optional hardware 2FA | YubiKey + GPG protects access with hardware token |
+| Self-contained | All scripts live on the drive itself |
+| Cross-platform | Windows, Linux, macOS support |
+| Recovery system | 24-word phrase can restore access if hardware is lost |
 
 ---
 
 ## 🔑 Security Modes
 
-{PRODUCT_NAME} supports **four security levels** - choose what fits your needs:
+KeyDrive supports **four security levels**—choose what fits your needs:
 
-| Mode | Protection | Use Case |
-|------|------------|----------|
-| **Password Only** | VeraCrypt password | Simple, portable (no YubiKey needed) |
-| **Plain Keyfile** | Password + unencrypted keyfile | Defense in depth (keyfile on separate device) |
-| **YubiKey + GPG** | Password + YubiKey-encrypted keyfile | Maximum security (requires hardware token) |
-| **GPG Password-Only** | YubiKey-derived password | Ultimate convenience (PIN/touch only, no typing) |
-
-### Full YubiKey Mode (Recommended)
-- VeraCrypt volume protected by: **password + keyfile**
-- Keyfile stored **only in GPG-encrypted form** (`keyfile.vc.gpg`)
-- Decryption requires: **YubiKey + PIN** (and optionally touch)
-- Effective security: **Something you know (password) + Something you have (YubiKey + PIN)**
+| Mode | Authentication | Best For |
+|------|----------------|----------|
+| **Password Only** | Password | Simple, portable (no YubiKey needed) |
+| **Password + Keyfile** | Password + file | Defense in depth (keyfile on separate device) |
+| **Password + YubiKey Keyfile** | Password + YubiKey-encrypted keyfile | High security (hardware token required) |
+| **GPG-Derived Password** | YubiKey only (PIN/touch) | Maximum convenience (no typing passwords) |
 
 ---
 
-## 💪 Strengths
+## 🚀 Quick Start
+
+### Prerequisites
+
+| Tool | Windows | Linux | macOS |
+|------|---------|-------|-------|
+| **VeraCrypt** | [Download](https://www.veracrypt.fr/en/Downloads.html) | `sudo apt install veracrypt` | [Download](https://www.veracrypt.fr/en/Downloads.html) |
+| **Python 3.8+** | [Download](https://python.org) | Pre-installed | Pre-installed |
+| **GPG** (optional) | [Gpg4win](https://www.gpg4win.org/) | `sudo apt install gnupg` | `brew install gnupg` |
+
+### Running KeyDrive
+
+**Windows:**
+```
+Double-click KeyDrive.bat (CLI) or KeyDriveGUI.bat (GUI)
+```
+
+**Linux/macOS:**
+```bash
+./keydrive.sh    # CLI mode
+# or
+python .smartdrive/scripts/gui_launcher.py  # GUI mode
+```
+
+### First-Time Setup
+
+1. **Run the setup wizard:**
+   ```bash
+   python .smartdrive/scripts/setup.py
+   ```
+
+2. **Follow the guided phases:**
+   - Phase 1: Select your external drive
+   - Phase 2: Choose security mode and settings
+   - Phase 3: Review and type `ERASE` to confirm
+   - Phase 4: Drive is partitioned and encrypted
+   - Phase 5: Verification confirms success
+
+3. **Mount your encrypted drive:**
+   - GUI: Click the Mount button
+   - CLI: `python .smartdrive/scripts/mount.py`
+
+---
+
+## 🚨 Security Warning
+
+**KeyDrive cannot protect you if your drive has already been compromised.** Always verify:
+- Your drive came from a trusted source
+- Scripts match the official repository
+- No unauthorized modifications exist
+
+See the "Drive Compromise Detection" section for verification procedures.
+
+---
+
+## 🔑 Security Modes (Detailed)
+
+KeyDrive supports **four security levels**—choose what fits your needs:
 
 ### Risks REDUCED vs Vanilla VeraCrypt (Password-Only)
 
-This is what {PRODUCT_NAME} actually improves:
+This is what KeyDrive actually improves:
 
-| Risk | Vanilla VeraCrypt | {PRODUCT_NAME} (Hardware Token) | Improvement |
+| Risk | Vanilla VeraCrypt | KeyDrive (Hardware Token) | Improvement |
 |------|-------------------|----------------------------|-------------|
 | **Password theft (keylogger)** | 🔴 Full compromise | 🟢 Still need token + PIN | Attacker with password alone cannot decrypt |
 | **Password theft (shoulder surfing)** | 🔴 Full compromise | 🟢 Still need token + PIN | Physical observation insufficient |
@@ -332,7 +381,7 @@ Understanding these two components helps you choose the right security level.
 
 ### Network Attacks vs Close-Circle Attacks
 
-| Attack Type | Severity | Likelihood (Trend) | **Overall Risk** | {PRODUCT_NAME} Protection |
+| Attack Type | Severity | Likelihood (Trend) | **Overall Risk** | KeyDrive Protection |
 |-------------|----------|-------------------|------------------|----------------------|
 | **Mass credential breaches** | 🔴 High | 📈 High & increasing | 🔴 **HIGH RISK** | ✅ Password alone insufficient |
 | **Automated password spraying** | 🔴 High | 📈 High & increasing | 🔴 **HIGH RISK** | ✅ Hardware token blocks remote |
@@ -383,19 +432,19 @@ Understanding these two components helps you choose the right security level.
 
 **For most people in 2025:**
 
-| Threat Type | Severity | Likelihood | Risk | {PRODUCT_NAME} Value |
+| Threat Type | Severity | Likelihood | Risk | KeyDrive Value |
 |-------------|----------|------------|------|------------------|
 | 🌐 Network attacks | High | **HIGH & rising** | 🔴 HIGH | ✅ Primary protection |
 | 👥 Close-circle | High | Low-Med & stable | 🟡 MEDIUM | ✅ Adds friction |
 | 🕵️ Targeted physical | High | Very low | 🟢 LOW | ⚠️ Limited protection |
 
-**{PRODUCT_NAME}'s value proposition:** Dramatically reduces risk from the **high-likelihood** threats (breaches, malware, remote attacks) that affect millions, while meaningfully increasing difficulty for **medium-likelihood** close-circle threats.
+**KeyDrive's value proposition:** Dramatically reduces risk from the **high-likelihood** threats (breaches, malware, remote attacks) that affect millions, while meaningfully increasing difficulty for **medium-likelihood** close-circle threats.
 
 ---
 
 **Key trends:**
 
-| Trend | Implication for {PRODUCT_NAME} |
+| Trend | Implication for KeyDrive |
 |-------|---------------------------|
 | 📈 **Network attacks scaling exponentially** | Password-only is increasingly dangerous; hardware 2FA blocks 99% of remote attacks |
 | 📈 **Credential stuffing automated** | Reused passwords = compromised everywhere; hardware token = unique per-device |
@@ -422,13 +471,13 @@ Understanding these two components helps you choose the right security level.
 - 🟡 **Close-circle attacks** are relationship-specific; hardware token helps but isn't foolproof
 - ⚪ **Physical "spy movie" attacks** are rare unless you're specifically targeted
 
-**{PRODUCT_NAME}'s sweet spot:** Protecting against the **high-likelihood** threats (breaches, malware, remote theft) that affect millions of people, while adding meaningful friction against **close-circle** threats.
+**KeyDrive's sweet spot:** Protecting against the **high-likelihood** threats (breaches, malware, remote theft) that affect millions of people, while adding meaningful friction against **close-circle** threats.
 
 ---
 
 ## 🔐 Compatible Hardware Tokens
 
-{PRODUCT_NAME} works with **any device that supports OpenPGP smartcard functionality** via GPG. The YubiKey is just one popular option.
+KeyDrive works with **any device that supports OpenPGP smartcard functionality** via GPG. The YubiKey is just one popular option.
 
 ### Tested / Recommended
 
@@ -462,7 +511,7 @@ Understanding these two components helps you choose the right security level.
 
 ### Requirements for Compatibility
 
-For a hardware token to work with {PRODUCT_NAME}, it must:
+For a hardware token to work with KeyDrive, it must:
 1. **Support OpenPGP smartcard standard** (ISO 7816-4)
 2. **Store RSA or ECC private keys** on the device
 3. **Work with GnuPG** (`gpg --card-status` must detect it)
@@ -485,7 +534,7 @@ gpg --edit-card
 # 4. Get the 40-character fingerprint
 gpg --list-keys --fingerprint
 
-# 5. Use the fingerprint when setting up {PRODUCT_NAME}
+# 5. Use the fingerprint when setting up KeyDrive
 python setup.py  # Select your key during Phase 2
 ```
 
@@ -495,7 +544,7 @@ python setup.py  # Select your key during Phase 2
 
 ### ⚡ Temporary Decrypted Keyfile: Understanding the Real Risk
 
-{PRODUCT_NAME} must decrypt the GPG-encrypted keyfile before VeraCrypt can use it. This creates a brief window where the plaintext keyfile exists.
+KeyDrive must decrypt the GPG-encrypted keyfile before VeraCrypt can use it. This creates a brief window where the plaintext keyfile exists.
 
 #### Is This Worse Than Vanilla VeraCrypt? **NO!**
 
@@ -504,10 +553,10 @@ This is actually **better** than vanilla VeraCrypt with a keyfile:
 | Scenario | Keyfile Exposure | Attacker Window |
 |----------|------------------|-----------------|
 | **Vanilla VeraCrypt + plain keyfile** | Plaintext file on disk **permanently** | ♾️ Unlimited - copy anytime |
-| **{PRODUCT_NAME} (Hardware Token)** | Plaintext exists **~1-5 seconds** during mount | ⏱️ Tiny window, then gone |
+| **KeyDrive (Hardware Token)** | Plaintext exists **~1-5 seconds** during mount | ⏱️ Tiny window, then gone |
 | **Vanilla VeraCrypt (password-only)** | No keyfile | N/A |
 
-**Key insight:** If you were going to use VeraCrypt with a keyfile anyway, {PRODUCT_NAME} **reduces** your exposure from "always" to "seconds."
+**Key insight:** If you were going to use VeraCrypt with a keyfile anyway, KeyDrive **reduces** your exposure from "always" to "seconds."
 
 #### Why Can't We Generate a New Keyfile Each Mount?
 
@@ -542,7 +591,7 @@ Generating a new keyfile would require re-encrypting the volume header (what `re
 │                                                                     │
 │  1. GPG decrypts keyfile.vc.gpg → plaintext keyfile in TEMP        │
 │  2. VeraCrypt reads plaintext keyfile + your password              │
-│  3. {PRODUCT_NAME} DELETES plaintext keyfile (secure wipe)             │
+│  3. KeyDrive DELETES plaintext keyfile (secure wipe)             │
 │  4. Volume is mounted                                               │
 │                                                                     │
 │  Window of exposure: Steps 1-3 (~1-5 seconds)                       │
@@ -552,12 +601,12 @@ Generating a new keyfile would require re-encrypting the volume header (what `re
 
 #### Realistic Threat Assessment
 
-| Attack | vs Vanilla+Keyfile | vs {PRODUCT_NAME} | Winner |
+| Attack | vs Vanilla+Keyfile | vs KeyDrive | Winner |
 |--------|-------------------|---------------|--------|
-| **Malware copies keyfile** | 🔴 Easy - file always there | 🟡 Hard - 5 second window | {PRODUCT_NAME} |
-| **Attacker finds backup** | 🔴 Plaintext in backup | 🟢 Only `.gpg` in backup | {PRODUCT_NAME} |
-| **Forensic recovery** | 🔴 File exists on disk | 🟡 Brief temp file | {PRODUCT_NAME} |
-| **Shoulder surfing keyfile location** | 🔴 Can go copy it later | 🟢 Nothing to copy | {PRODUCT_NAME} |
+| **Malware copies keyfile** | 🔴 Easy - file always there | 🟡 Hard - 5 second window | KeyDrive |
+| **Attacker finds backup** | 🔴 Plaintext in backup | 🟢 Only `.gpg` in backup | KeyDrive |
+| **Forensic recovery** | 🔴 File exists on disk | 🟡 Brief temp file | KeyDrive |
+| **Shoulder surfing keyfile location** | 🔴 Can go copy it later | 🟢 Nothing to copy | KeyDrive |
 | **Cold boot attack** | 🟡 Keyfile in RAM if mounted | 🟡 Same | Tie |
 | **Admin/root malware** | 🔴 Game over | 🔴 Game over | Tie |
 
@@ -583,25 +632,25 @@ Generating a new keyfile would require re-encrypting the volume header (what `re
 | Tool | Approach | Keyfile Exposure | Trade-off |
 |------|----------|------------------|-----------|
 | **Vanilla VeraCrypt + keyfile** | User stores keyfile | **Permanent** | Must secure file yourself |
-| **{PRODUCT_NAME}** | GPG decrypts → temp → delete | **~5 seconds** | Brief window, encrypted at rest |
+| **KeyDrive** | GPG decrypts → temp → delete | **~5 seconds** | Brief window, encrypted at rest |
 | **LUKS + systemd-cryptenroll** | TPM/FIDO2 direct unlock | **None** | Tied to specific hardware |
 | **BitLocker + TPM** | Key in TPM | **None** | Microsoft ecosystem only |
 
 #### Bottom Line
 
-**{PRODUCT_NAME}'s temporary keyfile is NOT a weakness compared to vanilla VeraCrypt with a keyfile - it's an improvement.** 
+**KeyDrive's temporary keyfile is NOT a weakness compared to vanilla VeraCrypt with a keyfile - it's an improvement.** 
 
-The only scenario where {PRODUCT_NAME} has "more" exposure is compared to **password-only** VeraCrypt (which has no keyfile at all). But password-only lacks the 2FA benefits that are the whole point of {PRODUCT_NAME}.
+The only scenario where KeyDrive has "more" exposure is compared to **password-only** VeraCrypt (which has no keyfile at all). But password-only lacks the 2FA benefits that are the whole point of KeyDrive.
 
 #### Recommendations to Minimize This Risk
 
-1. **Automatic RAM usage:** {PRODUCT_NAME} automatically uses RAM-backed temp directories when available (`/dev/shm` on Linux, secure system temp on Windows/macOS)
+1. **Automatic RAM usage:** KeyDrive automatically uses RAM-backed temp directories when available (`/dev/shm` on Linux, secure system temp on Windows/macOS)
 2. **High-security needs:** Mount only on trusted, malware-free systems
 3. **After mounting:** The keyfile is gone - ongoing use is safe
 
 ### Compared to Vanilla VeraCrypt
 
-| Aspect | Vanilla VeraCrypt | {PRODUCT_NAME} |
+| Aspect | Vanilla VeraCrypt | KeyDrive |
 |--------|-------------------|------------|
 | **Attack surface** | VeraCrypt only | VeraCrypt + GPG + Python scripts |
 | **Audit status** | Professionally audited | Scripts not audited |
@@ -613,7 +662,7 @@ The only scenario where {PRODUCT_NAME} has "more" exposure is compared to **pass
 
 ### Attack Surface (Hardware Token Mode)
 
-{PRODUCT_NAME} adds convenience but also introduces new attack vectors:
+KeyDrive adds convenience but also introduces new attack vectors:
 
 | Attack Vector | Risk | Mitigation |
 |---------------|------|------------|
@@ -654,13 +703,13 @@ The only scenario where {PRODUCT_NAME} has "more" exposure is compared to **pass
 
 ### Threat Model Summary
 
-**{PRODUCT_NAME} protects against:**
+**KeyDrive protects against:**
 - ✅ Remote attackers (no network access to decryption)
 - ✅ Stolen/lost drive (encrypted data + encrypted keyfile in token mode)
 - ✅ Casual physical access (need password, and token+PIN in hardware mode)
 - ✅ Single point of failure (backup hardware token support)
 
-**{PRODUCT_NAME} does NOT protect against:**
+**KeyDrive does NOT protect against:**
 - ❌ Attacker with drive + token + PIN + weak password
 - ❌ Malware on the host system while volume is mounted
 - ❌ Physical access while the volume is mounted
@@ -720,7 +769,7 @@ The only scenario where {PRODUCT_NAME} has "more" exposure is compared to **pass
 
 | Practice | Implementation | Impact |
 |----------|----------------|--------|
-| **Automatic RAM-backed temp** | {PRODUCT_NAME} uses `/dev/shm` on Linux, secure temp on Windows/macOS | Keyfile never touches persistent disk |
+| **Automatic RAM-backed temp** | KeyDrive uses `/dev/shm` on Linux, secure temp on Windows/macOS | Keyfile never touches persistent disk |
 | **Short GPG agent timeout** | `default-cache-ttl 60` in `gpg-agent.conf` | Limits PIN caching |
 | **Enable YubiKey touch** | `ykman openpgp keys set-touch dec on` | Requires physical presence |
 | **Full-disk encryption on host** | BitLocker/LUKS on your main system | Protects temp files at rest |
@@ -774,7 +823,7 @@ If you're a journalist, activist, or handle extremely sensitive data:
 | **Boot from read-only media** | Tails on DVD (not USB) |
 | **Faraday bag for YubiKey** | Prevents relay attacks |
 | **Duress password** | VeraCrypt hidden volume with decoy data |
-| **Plausible deniability** | Use VeraCrypt GUI for hidden volumes (not {PRODUCT_NAME}) |
+| **Plausible deniability** | Use VeraCrypt GUI for hidden volumes (not KeyDrive) |
 | **Regular rekey schedule** | Weekly/monthly regardless of use |
 | **Secure erase after travel** | Wipe and restore from backup after border crossings |
 
@@ -797,8 +846,8 @@ If you're a journalist, activist, or handle extremely sensitive data:
 **Development Environment (this repo):**
 ```
 VeraCrypt_Yubikey_2FA/
-├── {BAT_LAUNCHER_NAME}               # Windows launcher (auto-detects structure)
-├── {SH_LAUNCHER_NAME}                # Linux/macOS launcher
+├── KeyDrive.bat               # Windows launcher (auto-detects structure)
+├── keydrive.sh                # Linux/macOS launcher
 ├── .smartdrive/               # CANONICAL RUNTIME TREE (deployed 1:1)
 │   ├── core/                    # SSOT modules (authoritative)
 │   │   ├── version.py           # VERSION constant
@@ -828,9 +877,9 @@ VeraCrypt_Yubikey_2FA/
 LAUNCHER/                        (USB Drive - Unencrypted Partition)
 ├── KeyDrive.lnk                 # Windows entrypoint (clickable)
 ├── KeyDriveGUI.lnk              # Windows GUI entrypoint (clickable)
-├── {SH_LAUNCHER_NAME}           # Linux entrypoint (clickable)
+├── keydrive.sh           # Linux entrypoint (clickable)
 ├── KeyDrive.command             # macOS entrypoint (clickable)
-└── {KeyDrive_DIR_NAME}/         # Hidden folder (clean root; everything else lives here)
+└── .smartdrive/         # Hidden folder (clean root; everything else lives here)
     ├── core/                    # SSOT modules (copied 1:1 from repo)
     │   ├── version.py
     │   ├── constants.py
@@ -1069,7 +1118,7 @@ self.mount_btn = QPushButton("🔓 Mount")  # Hardcoded literal
 
 ### Release Verification (No-Skips Policy)
 
-{PRODUCT_NAME} enforces a **zero-skip release policy**. All tests must pass without skips for a release to be valid.
+KeyDrive enforces a **zero-skip release policy**. All tests must pass without skips for a release to be valid.
 
 **Running release verification:**
 
@@ -1129,7 +1178,7 @@ powershell -ExecutionPolicy Bypass -File tools/verify_e2e_windows.ps1 -SkipDestr
 - From the LAUNCHER or System menu: Select "✍️ Sign scripts"
 - Or manually:
   ```bash
-  cd {KeyDrive_DIR_NAME}/integrity
+  cd .smartdrive/integrity
   gpg --detach-sign scripts.sha256
   ```
 
@@ -1137,7 +1186,7 @@ powershell -ExecutionPolicy Bypass -File tools/verify_e2e_windows.ps1 -SkipDestr
 - From the LAUNCHER menu: Select "🔍 Verify script integrity"
 - Or manually:
   ```bash
-  cd {KeyDrive_DIR_NAME}/integrity
+  cd .smartdrive/integrity
   gpg --verify scripts.sha256.sig scripts.sha256
   ```
 
@@ -1145,7 +1194,7 @@ powershell -ExecutionPolicy Bypass -File tools/verify_e2e_windows.ps1 -SkipDestr
 
 | Aspect | Detail |
 |--------|--------|
-| **What's protected** | All Python scripts in `{KeyDrive_DIR_NAME}/scripts/` folder |
+| **What's protected** | All Python scripts in `.smartdrive/scripts/` folder |
 | **Signing requires** | Your GPG private key (YubiKey if using hardware token) |
 | **Verification requires** | Only your GPG public key (no YubiKey needed) |
 | **When to verify** | After traveling, lending drive, or any suspicion of tampering |
@@ -1183,9 +1232,9 @@ With touch enabled, even if your YubiKey is plugged in, an attacker cannot sign 
 
 ## ⚠️ CRITICAL SECURITY WARNING: Drive Compromise Detection
 
-**BEFORE USING ANY {PRODUCT_NAME} FEATURES, YOU MUST VERIFY YOUR DRIVE HAS NOT BEEN COMPROMISED.**
+**BEFORE USING ANY KeyDrive FEATURES, YOU MUST VERIFY YOUR DRIVE HAS NOT BEEN COMPROMISED.**
 
-{PRODUCT_NAME} cannot protect you if your drive has already been tampered with. The only way to achieve true security is through **manual verification procedures** that you personally witness and control.
+KeyDrive cannot protect you if your drive has already been tampered with. The only way to achieve true security is through **manual verification procedures** that you personally witness and control.
 
 ### Why Automated Verification Is Insufficient
 
@@ -1240,13 +1289,13 @@ The **gold standard** for drive integrity verification is **manual hashing of yo
 
 ### Current Implementation Status
 
-The current {PRODUCT_NAME} includes **automated directory hashing** as a **convenience feature only**. This provides basic integrity checking but **CANNOT** detect sophisticated compromises.
+The current KeyDrive includes **automated directory hashing** as a **convenience feature only**. This provides basic integrity checking but **CANNOT** detect sophisticated compromises.
 
 **For maximum security, always perform manual partition verification using official server guidelines.**
 
 ### When to Perform Verification
 
-- **Before first use** of any {PRODUCT_NAME} on a new system
+- **Before first use** of any KeyDrive on a new system
 - **After any physical access** to your drive by others
 - **After connecting to untrusted networks**
 - **Before sensitive operations** (key changes, password resets)
@@ -1265,15 +1314,15 @@ The current {PRODUCT_NAME} includes **automated directory hashing** as a **conve
 
 ## 🌐 Remote Integrity Verification (Challenge-Response)
 
-{PRODUCT_NAME} provides **automated directory hashing** as a convenience feature, but **true security requires manual verification** that you personally witness and control.
+KeyDrive provides **automated directory hashing** as a convenience feature, but **true security requires manual verification** that you personally witness and control.
 
 ### ⚠️ SECURITY LIMITATION
 
-**The automated verification in {PRODUCT_NAME} CANNOT detect sophisticated system compromises.** For maximum security, follow the manual verification process above.
+**The automated verification in KeyDrive CANNOT detect sophisticated system compromises.** For maximum security, follow the manual verification process above.
 
 ### Automated Directory Hashing (Convenience Feature)
 
-For basic integrity checking, {PRODUCT_NAME} can automate the hashing process:
+For basic integrity checking, KeyDrive can automate the hashing process:
 
 #### How Directory Hashing Works
 
@@ -1314,7 +1363,7 @@ Automated Server Side:
    Response includes `challenge_id` and `salt`.
 
 3. **Generate response hash:**
-   - From {PRODUCT_NAME} menu: Select "🔐 Generate challenge hash"
+   - From KeyDrive menu: Select "🔐 Generate challenge hash"
    - Enter the server endpoint URL
    - Enter the salt from step 2
    - The system saves the salt to `.challenge_salt` in your scripts directory
@@ -1344,18 +1393,18 @@ Automated Server Side:
 
 ---
 
-## 🚀 Quick Start: Using the {PRODUCT_NAME} Manager
+## 🚀 Quick Start: Using the KeyDrive Manager
 
-The easiest way to use {PRODUCT_NAME} is through the **unified CLI menu**:
+The easiest way to use KeyDrive is through the **unified CLI menu**:
 
 **Windows:**
 ```
-Double-click {BAT_LAUNCHER_NAME}
+Double-click KeyDrive.bat
 ```
 
 **Linux/macOS:**
 ```bash
-./{SH_LAUNCHER_NAME}
+./keydrive.sh
 ```
 
 **Or directly:**
@@ -1454,7 +1503,7 @@ python .KeyDrive/scripts/KeyDrive.py -c /path/to/config.json
 
 ### Log File Locations
 
-{PRODUCT_NAME} writes structured logs to help diagnose issues:
+KeyDrive writes structured logs to help diagnose issues:
 
 | Log Type | Location | Purpose |
 |----------|----------|---------|
@@ -1478,7 +1527,7 @@ python .KeyDrive/scripts/KeyDrive.py -c /path/to/config.json
 
 ### Disk Identity Protection
 
-{PRODUCT_NAME} uses **unique disk identifiers** (not disk numbers) to prevent operations on the wrong drive:
+KeyDrive uses **unique disk identifiers** (not disk numbers) to prevent operations on the wrong drive:
 
 | Check | Protection |
 |-------|------------|
@@ -1690,7 +1739,7 @@ For developers and auditors, see [docs/RECOVERY_TECHNICAL.md](docs/RECOVERY_TECH
 
 ## 🔄 Rebranding & Customization
 
-{PRODUCT_NAME} is designed to be easily rebrandable for different use cases, organizations, or deployments. The entire product name and branding can be changed by modifying a single configuration file.
+KeyDrive is designed to be easily rebrandable for different use cases, organizations, or deployments. The entire product name and branding can be changed by modifying a single configuration file.
 
 ### How to Rebrand
 
@@ -1744,7 +1793,7 @@ Results in:
 
 ### PDF/Documentation Rendering
 
-When converting this README to PDF or other formats, the `{PRODUCT_NAME}` variables will automatically render to your chosen product name, making documentation automatically branded.
+When converting this README to PDF or other formats, the `KeyDrive` variables will automatically render to your chosen product name, making documentation automatically branded.
 
 ---
 
@@ -1752,7 +1801,7 @@ When converting this README to PDF or other formats, the `{PRODUCT_NAME}` variab
 
 ### DO NOT Target System Drives!
 
-**{PRODUCT_NAME} includes safety checks to prevent catastrophic data loss.**
+**KeyDrive includes safety checks to prevent catastrophic data loss.**
 
 #### Dangerous Volume Paths (Never Use These):
 
@@ -1835,7 +1884,7 @@ diskutil list
 
 **Option A: Use the Setup Wizard (Recommended)**
 
-The {PRODUCT_NAME} setup wizard provides full automation for preparing a new external drive:
+The KeyDrive setup wizard provides full automation for preparing a new external drive:
 
 ```bash
 cd scripts
@@ -2450,35 +2499,28 @@ See `AGENT_ARCHITECTURE.md` Section 15 for detailed file management policies.
 
 ## 📜 Changelog
 
-### v1.2.0 (December 2025)
-- **New Feature:** GPG Password-Only mode (`gpg_pw_only`)
-  - Mount with YubiKey PIN/touch only (no password typing)
-  - Uses HKDF-SHA256 to derive VeraCrypt password from GPG-encrypted seed
+### v1.0.0 (January 2026)
+**Initial stable release** — All features production-ready.
+
+- **Four Security Modes:**
+  - Password Only (`pw_only`) — Simple, portable
+  - Password + Keyfile (`pw_keyfile`) — Defense in depth
+  - Password + YubiKey Keyfile (`pw_gpg_keyfile`) — Hardware token required
+  - GPG-Derived Password (`gpg_pw_only`) — YubiKey PIN/touch only, no password typing
+- **Recovery System:** 24-word BIP39 mnemonic phrase for disaster recovery
+- **Cross-Platform:** Windows, Linux, macOS with native GUI (PyQt6)
+- **Internationalization:** 7 languages (English, German, Bosnian, Spanish, French, Russian, Chinese)
+- **Security Features:**
+  - RAM-backed temp files for decrypted keyfiles (uses `/dev/shm` on Linux)
+  - Secure deletion with multiple overwrite passes
+  - HKDF-SHA256 password derivation for GPG mode
   - No decrypted secrets written to persistent disk
-  - Automatic RAM-backed temp handling for security
-- **Schema Update:** Config schema v2 with mode-specific fields
-- **Enhanced Security:** Secure deletion and memory hygiene improvements
-
-### v1.1.3 (December 2025)
-- **Security Enhancement:** Automatic RAM-backed temporary files for decrypted keyfiles
-  - Uses `/dev/shm` on Linux (never touches persistent storage)
-  - Falls back to secure system temp on Windows/macOS
-  - Implements secure deletion with multiple overwrite passes
-  - Minimizes forensic recovery risk on untrusted devices
-
-### v1.1.2
-- GUI improvements and icon handling fixes
-- Enhanced phishing resistance features
-
-### v1.1.1
-- Cross-platform CLI improvements
-- Drive update automation
-
-### v1.1.0
-- Initial public release
-- YubiKey + GPG integration
-- Emergency recovery system
-- Cross-platform support (Windows, Linux, macOS)
+- **GUI Features:**
+  - Settings panel with themes (light/dark/system)
+  - Update checking with phishing-resistant verification
+  - Non-modal settings with live preview
+  - About section with version info and GitHub link
+- **Schema:** Config schema v3 with full backward compatibility to v2
 
 ---
 
