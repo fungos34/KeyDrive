@@ -19,7 +19,7 @@ Per AGENT_ARCHITECTURE.md Section 7 & 10.3:
 
 Usage:
     from core.secrets import SecretProvider
-    
+
     provider = SecretProvider.from_config(config)
     provider.copy_password_to_clipboard()  # Decrypts ONLY NOW
     provider.copy_keyfile_path_to_clipboard()
@@ -231,7 +231,8 @@ def _decrypt_gpg_file_to_bytes(
             "ipc connect" in stderr_lower
             or "can't connect" in stderr_lower
             or "no smartcard daemon" in stderr_lower
-            or "agent" in stderr_lower and "not running" in stderr_lower
+            or "agent" in stderr_lower
+            and "not running" in stderr_lower
         )
 
         if is_startup_error and retry_on_startup and not _gpg_startup_retry_attempted:
@@ -242,6 +243,7 @@ def _decrypt_gpg_file_to_bytes(
 
             # Wait for GPG to initialize
             import time
+
             time.sleep(3)
 
             if status_callback:
@@ -456,30 +458,42 @@ class SecretProvider:
 
         provider = cls(security_mode=security_mode, volume_path=volume_path)
 
-        # Mode-specific configuration
-        if security_mode == SecurityMode.GPG_PW_ONLY:
-            # Seed-based password derivation
-            # Session override takes precedence (for setup workflow with temp seed)
-            if "seed_gpg_path" in overrides:
-                provider.seed_gpg_path = Path(overrides["seed_gpg_path"])
-            else:
-                seed_path = config.get(ConfigKeys.SEED_GPG_PATH, "")
-                if seed_path and smartdrive_dir:
-                    # BUG-20260102-013: Normalize Windows backslashes to forward slashes
-                    provider.seed_gpg_path = smartdrive_dir / Paths.normalize_config_path(seed_path)
-
-            # Salt and HKDF info
+        # BUG-20260103-001: Process session_overrides for GPG_PW_ONLY parameters FIRST,
+        # regardless of current config mode. This enables rekey flows where the target
+        # mode differs from the current config mode (e.g., switching to GPG_PW_ONLY).
+        # Session overrides take precedence and indicate the caller's intent.
+        if "seed_gpg_path" in overrides:
+            provider.seed_gpg_path = Path(overrides["seed_gpg_path"])
+            # When seed_gpg_path is overridden, also apply salt/hkdf overrides or defaults
             provider.salt_b64 = overrides.get("salt_b64", config.get(ConfigKeys.SALT_B64, ""))
             provider.hkdf_info = overrides.get(
                 "hkdf_info", config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT)
             )
 
+        # BUG-20260103-001: Similarly, process keyfile_gpg_path override regardless of mode
+        if "keyfile_gpg_path" in overrides:
+            provider.keyfile_gpg_path = Path(overrides["keyfile_gpg_path"])
+
+        # Mode-specific configuration (only if NOT already set by session overrides)
+        if security_mode == SecurityMode.GPG_PW_ONLY:
+            # Seed-based password derivation
+            # Only apply config values if no session override was provided
+            if provider.seed_gpg_path is None:
+                seed_path = config.get(ConfigKeys.SEED_GPG_PATH, "")
+                if seed_path and smartdrive_dir:
+                    # BUG-20260102-013: Normalize Windows backslashes to forward slashes
+                    provider.seed_gpg_path = smartdrive_dir / Paths.normalize_config_path(seed_path)
+
+            # Salt and HKDF info (only if not set by override block above)
+            if provider.salt_b64 is None:
+                provider.salt_b64 = config.get(ConfigKeys.SALT_B64, "")
+            if provider.hkdf_info is None:
+                provider.hkdf_info = config.get(ConfigKeys.HKDF_INFO, CryptoParams.HKDF_INFO_DEFAULT)
+
         elif security_mode == SecurityMode.PW_GPG_KEYFILE:
             # GPG-encrypted keyfile
-            # Session override takes precedence
-            if "keyfile_gpg_path" in overrides:
-                provider.keyfile_gpg_path = Path(overrides["keyfile_gpg_path"])
-            else:
+            # Only apply config values if no session override was provided
+            if provider.keyfile_gpg_path is None:
                 kf_path = config.get(ConfigKeys.ENCRYPTED_KEYFILE, "")
                 if kf_path and smartdrive_dir:
                     # BUG-20260102-013: Normalize Windows backslashes to forward slashes

@@ -263,6 +263,7 @@ def select_drive_interactive():
             path = f"{drive}:\\"
             try:
                 import ctypes
+
                 kernel32 = ctypes.windll.kernel32
                 volume_name = ctypes.create_unicode_buffer(1024)
                 file_system = ctypes.create_unicode_buffer(1024)
@@ -599,38 +600,11 @@ def deploy_to_drive(target_drive):
         print("  ⚠ tests/ directory not found (tests will not be deployed)")
         _log_deploy("deploy.tests.notfound", source=str(tests_src))
 
-    # BUG-20260102-012: Copy OS-specific venv for dependency shipping (portable deployment)
-    # Each OS needs its own venv because Python venvs are platform-specific
-    os_venv_name = _get_os_venv_dir_name()
-    print(f"📦 Copying bundled Python environment ({os_venv_name})...")
-
-    # Try OS-specific venv first, then fall back to legacy .venv
-    venv_src = REPO_SMARTDRIVE / os_venv_name
-    if not venv_src.exists():
-        # Fall back to legacy .venv (backward compatibility)
-        venv_src = REPO_SMARTDRIVE / FileNames.VENV_DIR_LEGACY
-        if venv_src.exists():
-            print(f"  ℹ Using legacy .venv (consider creating {os_venv_name})")
-
-    # Target uses OS-specific name
-    venv_dst = target_paths.smartdrive_root / os_venv_name
-
-    if venv_src.exists():
-        shutil.copytree(venv_src, venv_dst, dirs_exist_ok=True)
-        # Count packages for logging
-        site_packages = venv_dst / "Lib" / "site-packages"
-        if not site_packages.exists():
-            # Try various Python version paths for Unix
-            for py_ver in ["python3.12", "python3.11", "python3.10"]:
-                site_packages = venv_dst / "lib" / py_ver / "site-packages"
-                if site_packages.exists():
-                    break
-        pkg_count = len([d for d in site_packages.iterdir() if d.is_dir()]) if site_packages.exists() else 0
-        print(f"  ✓ {os_venv_name}/ directory copied (~{pkg_count} packages)")
-        _log_deploy("deploy.venv.copied", path=str(venv_dst), pkg_count=pkg_count, venv_name=os_venv_name)
-    else:
-        print(f"  ⚠ {os_venv_name}/ directory not found (target will need manual pip install)")
-        _log_deploy("deploy.venv.notfound", source=str(venv_src), venv_name=os_venv_name)
+    # CHG-20260103-001: Virtual environments are NOT copied during deployment
+    # They are auto-created and dependencies installed on first startup via bootstrap_dependencies.py
+    # This reduces deployment size and ensures each OS creates its own compatible venv
+    print("📦 Python environment: Will be auto-created on first startup")
+    _log_deploy("deploy.venv.skipped", reason="auto_bootstrap_on_startup")
 
     # Create clean root entrypoints AFTER assets/exe are in place
     # BUG-20260102-006: Copy ALL launcher files from repo root to ensure consistency

@@ -477,6 +477,8 @@ def format_gpg_error_with_guidance(stderr: str, is_startup_issue: bool = False) 
                 f"{'If this persists, try opening Kleopatra first.' if system == 'Windows' else 'If this persists, run: gpgconf --kill gpg-agent'}"
             )
         else:
+            # BUG-20260103-002: Cannot use backslashes inside f-string expressions
+            gpg_logs_path = "%APPDATA%\\gnupg\\" if system == "Windows" else "~/.gnupg/"
             return (
                 "🔴 GPG Agent Communication Failed\n\n"
                 "Cannot connect to GPG agent.\n\n"
@@ -485,7 +487,7 @@ def format_gpg_error_with_guidance(stderr: str, is_startup_issue: bool = False) 
                 "   gpgconf --kill gpg-agent\n"
                 "2. Then try mounting again\n"
                 "3. If issues persist, check GPG logs:\n"
-                f"   {'%APPDATA%\\gnupg\\' if system == 'Windows' else '~/.gnupg/'}"
+                f"   {gpg_logs_path}"
             )
 
     elif "bad pin" in stderr_lower or "incorrect pin" in stderr_lower:

@@ -3,7 +3,8 @@ REM ============================================================
 REM KeyDrive Launcher for Windows
 REM ============================================================
 REM Double-click this file to open the KeyDrive GUI application.
-REM Automatically activates bundled venv if present.
+REM Automatically creates and activates OS-specific venv if needed.
+REM CHG-20260103-001: Auto-creates venv and installs deps on first run
 REM ============================================================
 
 title KeyDrive
@@ -15,24 +16,25 @@ echo Starting KeyDrive...
 echo.
 
 REM ============================================================
-REM VENV Detection and Activation (BUG-20260102-012)
+REM VENV Detection, Creation, and Activation (CHG-20260103-001)
 REM ============================================================
 REM Priority:
-REM   1. OS-specific venv at .smartdrive\.venv-win
+REM   1. OS-specific venv at .smartdrive\.venv-win (auto-create if missing)
 REM   2. Legacy venv at .smartdrive\.venv (backward compatibility)
-REM   3. System Python in PATH (fallback)
+REM   3. System Python in PATH (used to create venv)
 REM ============================================================
 
+set "VENV_DIR=.smartdrive\.venv-win"
 set "VENV_ACTIVATE="
 set "PYTHON_CMD="
 set "PYTHONW_CMD="
 
 REM Check for Windows-specific venv first (.venv-win)
-if exist ".smartdrive\.venv-win\Scripts\python.exe" (
-    echo Found bundled venv at .smartdrive\.venv-win
-    set "VENV_ACTIVATE=%~dp0.smartdrive\.venv-win\Scripts\activate.bat"
-    set "PYTHON_CMD=%~dp0.smartdrive\.venv-win\Scripts\python.exe"
-    set "PYTHONW_CMD=%~dp0.smartdrive\.venv-win\Scripts\pythonw.exe"
+if exist "%VENV_DIR%\Scripts\python.exe" (
+    echo Found bundled venv at %VENV_DIR%
+    set "VENV_ACTIVATE=%~dp0%VENV_DIR%\Scripts\activate.bat"
+    set "PYTHON_CMD=%~dp0%VENV_DIR%\Scripts\python.exe"
+    set "PYTHONW_CMD=%~dp0%VENV_DIR%\Scripts\pythonw.exe"
     goto :venv_found
 )
 
@@ -45,34 +47,100 @@ if exist ".smartdrive\.venv\Scripts\python.exe" (
     goto :venv_found
 )
 
-REM No bundled venv - check system Python
-echo No bundled venv found, checking system Python...
+REM No bundled venv - need to create one
+echo No Python environment found. Checking system Python...
+
+REM Try multiple Python commands: python, py (Windows launcher), python3
+set "SYS_PYTHON="
 where python >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "SYS_PYTHON=python"
+    goto :python_found
+)
+where py >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "SYS_PYTHON=py"
+    goto :python_found
+)
+where python3 >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    set "SYS_PYTHON=python3"
+    goto :python_found
+)
+
+REM No Python found at all
+echo.
+echo ====================================================
+echo   ERROR: Python not found
+echo ====================================================
+echo.
+echo Python is required to run KeyDrive.
+echo.
+echo Please install Python 3.10+ from https://www.python.org/
+echo (Check "Add Python to PATH" during installation)
+echo.
+pause
+exit /b 1
+
+:python_found
+echo Found system Python: %SYS_PYTHON%
+
+REM System Python available - create venv automatically
+echo.
+echo ====================================================
+echo   First-time setup: Creating Python environment...
+echo ====================================================
+echo.
+echo This may take a minute. Please wait...
+echo.
+
+REM Create venv
+echo [1/3] Creating virtual environment at %VENV_DIR%...
+%SYS_PYTHON% -m venv "%VENV_DIR%"
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo ERROR: Python not found
-    echo.
-    echo No bundled venv found at .smartdrive\.venv-win
-    echo and Python is not available in system PATH.
-    echo.
-    echo Please either:
-    echo   1. Install Python 3.10+ from https://www.python.org/
-    echo      (Check "Add Python to PATH" during installation)
-    echo   2. Copy a pre-configured .venv to .smartdrive\.venv-win
-    echo.
+    echo ERROR: Failed to create virtual environment.
+    echo Please ensure Python 3.10+ is properly installed.
     pause
     exit /b 1
 )
+echo       Done!
 
-REM System Python available - find pythonw.exe
-for /f "delims=" %%i in ('python -c "import sys, os; print(os.path.dirname(sys.executable))"') do set PYTHON_DIR=%%i
-set "PYTHON_CMD=python"
-if exist "%PYTHON_DIR%\pythonw.exe" (
-    set "PYTHONW_CMD=%PYTHON_DIR%\pythonw.exe"
+REM Set up paths
+set "VENV_ACTIVATE=%~dp0%VENV_DIR%\Scripts\activate.bat"
+set "PYTHON_CMD=%~dp0%VENV_DIR%\Scripts\python.exe"
+set "PYTHONW_CMD=%~dp0%VENV_DIR%\Scripts\pythonw.exe"
+
+REM Activate venv
+call "%VENV_ACTIVATE%"
+
+REM Install dependencies
+echo.
+echo [2/3] Installing dependencies from requirements.txt...
+echo       (This may take a few minutes on first run)
+echo.
+if exist ".smartdrive\requirements.txt" (
+    "%PYTHON_CMD%" -m pip install --upgrade pip >nul 2>&1
+    "%PYTHON_CMD%" -m pip install -r ".smartdrive\requirements.txt"
+    if %ERRORLEVEL% NEQ 0 (
+        echo.
+        echo WARNING: Some dependencies may have failed to install.
+        echo The GUI may not work correctly.
+        echo.
+        pause
+    ) else (
+        echo.
+        echo       Done!
+    )
 ) else (
-    set "PYTHONW_CMD=python"
+    echo WARNING: requirements.txt not found. Dependencies not installed.
 )
-echo Using system Python: %PYTHON_DIR%
+
+echo.
+echo [3/3] Setup complete!
+echo.
+echo ====================================================
+echo.
 goto :run_gui
 
 :venv_found
@@ -84,22 +152,25 @@ if exist "%VENV_ACTIVATE%" (
 
 :run_gui
 REM ============================================================
-REM Bootstrap Dependencies (CHG-20251229-002)
+REM Bootstrap Dependencies (CHG-20260103-001)
 REM ============================================================
-REM Check for missing dependencies and offer to install them
+REM Check for missing dependencies and install them automatically
 
 if exist ".smartdrive\scripts\bootstrap_dependencies.py" (
     echo Checking dependencies...
     "%PYTHON_CMD%" -B ".smartdrive\scripts\bootstrap_dependencies.py" --check -q >nul 2>&1
     if %ERRORLEVEL% NEQ 0 (
         echo.
-        echo Some Python dependencies are missing.
-        "%PYTHON_CMD%" -B ".smartdrive\scripts\bootstrap_dependencies.py"
+        echo Updating Python dependencies...
+        "%PYTHON_CMD%" -B ".smartdrive\scripts\bootstrap_dependencies.py" --auto
         if %ERRORLEVEL% NEQ 0 (
             echo.
-            echo Dependencies not installed. GUI may not work correctly.
+            echo WARNING: Some dependencies may not be installed correctly.
             echo Press any key to continue anyway, or close this window to abort.
             pause >nul
+        ) else (
+            echo Dependencies updated successfully!
+            echo.
         )
     )
 )
@@ -110,13 +181,10 @@ REM ============================================================
 
 REM Check for gui.py in .smartdrive structure
 if exist ".smartdrive\scripts\gui.py" (
-    echo Launching KeyDrive GUI from .smartdrive\scripts\gui.py
-    echo Current directory: %CD%
-    echo PYTHONW_CMD: %PYTHONW_CMD%
+    echo Launching KeyDrive GUI...
     echo.
     
     REM BUG-20260102-009: Use CALL to ensure proper variable expansion
-    REM The if exist check was failing due to batch parser evaluating before goto
     call :launch_gui
     goto :end
 )

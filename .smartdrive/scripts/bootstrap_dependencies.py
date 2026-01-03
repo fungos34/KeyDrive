@@ -222,12 +222,13 @@ def install_into_venv(requirements_path: Path, verbose: bool = True) -> bool:
         print("=" * 60)
 
     try:
+        # BUG-20260103-003: Removed --upgrade for fresh installs (massive speedup)
+        # Use plain install since requirements.txt has pinned versions
         cmd = [
             str(venv_python),
             "-m",
             "pip",
             "install",
-            "--upgrade",
             "-r",
             str(requirements_path),
         ]
@@ -306,12 +307,13 @@ def install_from_requirements(requirements_path: Path, verbose: bool = True) -> 
         print("=" * 60)
 
     try:
+        # BUG-20260103-003: Removed --upgrade for fresh installs (massive speedup)
+        # Use plain install since requirements.txt has pinned versions
         cmd = [
             sys.executable,
             "-m",
             "pip",
             "install",
-            "--upgrade",
             "-r",
             str(requirements_path),
         ]

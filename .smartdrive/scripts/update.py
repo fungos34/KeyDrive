@@ -1070,83 +1070,11 @@ if __name__ == "__main__":
                 _ensure_clean_root_entrypoints_external(drive_root, scripts_root, payload_dir)
                 _log_update("update.launchers.updated", target=str(drive_root))
 
-                # BUG-20260102-012: Update OS-specific .venv for dependency shipping
-                # Copy bundled Python environment if present in payload
-                # Determine OS-specific venv name
-                from core.platform import get_platform as _get_platform
-
-                _platform = _get_platform().lower()
-                if _platform == "windows":
-                    os_venv_name = ".venv-win"
-                elif _platform == "darwin":
-                    os_venv_name = ".venv-mac"
-                else:
-                    os_venv_name = ".venv-linux"
-
-                venv_candidates = [
-                    # Try OS-specific venv first
-                    payload_dir / os_venv_name,
-                    payload_dir / Paths.SMARTDRIVE_DIR_NAME / os_venv_name,
-                    # Fall back to legacy .venv
-                    payload_dir / ".venv",
-                    payload_dir / Paths.SMARTDRIVE_DIR_NAME / ".venv",
-                ]
-                # Target uses OS-specific name
-                venv_dst = deploy_root / os_venv_name
-                for venv_src in venv_candidates:
-                    if venv_src.exists():
-                        log(f"Updating bundled Python environment ({os_venv_name})...")
-                        try:
-                            # BUG-20260102-025: Handle "Text file busy" error on Linux
-                            # When GUI is running from the venv, the Python binary can't be replaced/deleted
-                            # First check if venv is in use by testing if we can rename the python binary
-                            if venv_dst.exists():
-                                # Check if venv is in use before attempting to delete
-                                python_bins = list(venv_dst.glob("bin/python*")) + list(
-                                    venv_dst.glob("Scripts/python.exe")
-                                )
-                                for pbin in python_bins:
-                                    if pbin.exists():
-                                        try:
-                                            # Try to open for writing to test if in use
-                                            # On Linux, open() succeeds but unlink/rename fails when busy
-                                            test_path = pbin.with_suffix(".test")
-                                            pbin.rename(test_path)
-                                            test_path.rename(pbin)
-                                        except OSError as e:
-                                            if e.errno == 26:  # ETXTBSY - Text file busy
-                                                warn(f"Skipping {os_venv_name}: Python environment is in use")
-                                                warn(
-                                                    "  (Restart KeyDrive and run update again to update Python dependencies)"
-                                                )
-                                                _log_update("update.venv.busy", venv_name=os_venv_name)
-                                                break  # Skip venv update entirely
-                                            raise
-                                else:
-                                    # No python binary was busy, proceed with removal
-                                    shutil.rmtree(venv_dst)
-                                    shutil.copytree(venv_src, venv_dst)
-                                    _log_update("update.venv.copied", source=str(venv_src), venv_name=os_venv_name)
-                                    log(f"  ✓ {os_venv_name}/ updated")
-                            else:
-                                # venv doesn't exist, just copy
-                                shutil.copytree(venv_src, venv_dst)
-                                _log_update("update.venv.copied", source=str(venv_src), venv_name=os_venv_name)
-                                log(f"  ✓ {os_venv_name}/ updated")
-                        except OSError as e:
-                            # BUG-20260102-016: Handle "Text file busy" error on Linux
-                            # When GUI is running from the venv, the Python binary can't be replaced
-                            if e.errno == 26:  # ETXTBSY - Text file busy
-                                warn(f"Skipping {os_venv_name}: Python environment is in use")
-                                warn("  (Restart KeyDrive and run update again to update Python dependencies)")
-                                _log_update("update.venv.busy", venv_name=os_venv_name)
-                            else:
-                                warn(f"Could not update {os_venv_name}: {e}")
-                                _log_update("update.venv.error", error=str(e))
-                        except Exception as e:
-                            warn(f"Could not update {os_venv_name}: {e}")
-                            _log_update("update.venv.error", error=str(e))
-                        break
+                # CHG-20260103-001: Virtual environments are NOT copied during updates
+                # They are auto-created and dependencies installed on startup via bootstrap_dependencies.py
+                # This means if requirements.txt changed, bootstrap will handle installing new deps
+                log("Python environment: Dependencies will be checked on next startup")
+                _log_update("update.venv.skipped", reason="auto_bootstrap_on_startup")
 
                 print("Update overlay complete.")
                 _log_update("update.external_drive.success")

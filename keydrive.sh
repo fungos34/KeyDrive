@@ -3,7 +3,8 @@
 # KeyDrive Launcher for Linux/macOS
 # ============================================================
 # Run this script to open the KeyDrive GUI application.
-# Automatically activates bundled venv if present.
+# Automatically creates and activates OS-specific venv if needed.
+# CHG-20260103-001: Auto-creates venv and installs deps on first run
 # Usage: ./keydrive.sh
 # ============================================================
 
@@ -14,12 +15,12 @@ echo "Starting KeyDrive..."
 echo
 
 # ============================================================
-# VENV Detection and Activation (BUG-20260102-012)
+# VENV Detection, Creation, and Activation (CHG-20260103-001)
 # ============================================================
 # Priority:
-#   1. OS-specific venv: .smartdrive/.venv-linux or .smartdrive/.venv-mac
+#   1. OS-specific venv: .smartdrive/.venv-linux or .smartdrive/.venv-mac (auto-create if missing)
 #   2. Legacy venv: .smartdrive/.venv (backward compatibility)
-#   3. System Python in PATH (fallback)
+#   3. System Python in PATH (used to create venv)
 # ============================================================
 
 PYTHON_CMD=""
@@ -56,48 +57,107 @@ elif [ -f ".smartdrive/.venv/bin/python" ]; then
         echo "Venv activated"
     fi
 else
-    # No bundled venv - check system Python
-    echo "No bundled venv found, checking system Python..."
+    # No bundled venv - need to create one
+    echo "No Python environment found. Checking system Python..."
     
+    SYSTEM_PYTHON=""
     if command -v python3 &> /dev/null; then
-        PYTHON_CMD="python3"
+        SYSTEM_PYTHON="python3"
     elif command -v python &> /dev/null; then
-        PYTHON_CMD="python"
+        SYSTEM_PYTHON="python"
     else
         echo ""
-        echo "ERROR: Python not found"
+        echo "===================================================="
+        echo "  ERROR: Python not found"
+        echo "===================================================="
         echo ""
-        echo "No bundled venv found at .smartdrive/${VENV_NAME}"
-        echo "and Python is not available in system PATH."
+        echo "Python is required to run KeyDrive."
         echo ""
         echo "Please install Python 3.10+ using your package manager:"
-        echo "  Ubuntu/Debian: sudo apt install python3"
+        echo "  Ubuntu/Debian: sudo apt install python3 python3-venv"
         echo "  macOS:         brew install python3"
         echo "  Fedora:        sudo dnf install python3"
-        echo ""
-        echo "Or copy a pre-configured venv to .smartdrive/${VENV_NAME}"
         echo ""
         exit 1
     fi
     
-    echo "Using system Python: $($PYTHON_CMD --version)"
+    # System Python available - create venv automatically
+    echo ""
+    echo "===================================================="
+    echo "  First-time setup: Creating Python environment..."
+    echo "===================================================="
+    echo ""
+    echo "This may take a minute. Please wait..."
+    echo ""
+    
+    VENV_DIR=".smartdrive/${VENV_NAME}"
+    
+    # Create venv
+    echo "[1/3] Creating virtual environment at ${VENV_DIR}..."
+    $SYSTEM_PYTHON -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "ERROR: Failed to create virtual environment."
+        echo "Please ensure Python 3.10+ is properly installed with venv support."
+        echo "  Ubuntu/Debian: sudo apt install python3-venv"
+        exit 1
+    fi
+    echo "      Done!"
+    
+    # Set up paths
+    VENV_ACTIVATE="${VENV_DIR}/bin/activate"
+    PYTHON_CMD="${VENV_DIR}/bin/python"
+    
+    # Activate venv
+    source "$VENV_ACTIVATE"
+    
+    # Install dependencies
+    echo ""
+    echo "[2/3] Installing dependencies from requirements.txt..."
+    echo "      (This may take a few minutes on first run)"
+    echo ""
+    if [ -f ".smartdrive/requirements.txt" ]; then
+        "$PYTHON_CMD" -m pip install --upgrade pip > /dev/null 2>&1
+        "$PYTHON_CMD" -m pip install -r ".smartdrive/requirements.txt"
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "WARNING: Some dependencies may have failed to install."
+            echo "The GUI may not work correctly."
+            echo ""
+            read -p "Press Enter to continue anyway, or Ctrl+C to abort..."
+        else
+            echo ""
+            echo "      Done!"
+        fi
+    else
+        echo "WARNING: requirements.txt not found. Dependencies not installed."
+    fi
+    
+    echo ""
+    echo "[3/3] Setup complete!"
+    echo ""
+    echo "===================================================="
+    echo ""
 fi
 
 # ============================================================
-# Bootstrap Dependencies (CHG-20251229-002)
+# Bootstrap Dependencies (CHG-20260103-001)
 # ============================================================
-# Check for missing dependencies and offer to install them
+# Check for missing dependencies and install them automatically
 
 if [ -f ".smartdrive/scripts/bootstrap_dependencies.py" ]; then
     echo "Checking dependencies..."
     if ! $PYTHON_CMD -B .smartdrive/scripts/bootstrap_dependencies.py --check -q > /dev/null 2>&1; then
         echo ""
-        echo "Some Python dependencies are missing."
-        $PYTHON_CMD -B .smartdrive/scripts/bootstrap_dependencies.py
+        echo "Updating Python dependencies..."
+        $PYTHON_CMD -B .smartdrive/scripts/bootstrap_dependencies.py --auto
         if [ $? -ne 0 ]; then
             echo ""
-            echo "Dependencies not installed. GUI may not work correctly."
+            echo "WARNING: Some dependencies may not be installed correctly."
             read -p "Press Enter to continue anyway, or Ctrl+C to abort..."
+        else
+            echo "Dependencies updated successfully!"
+            echo ""
         fi
     fi
 fi
@@ -108,13 +168,11 @@ fi
 
 # Try new structure first (.smartdrive/), fall back to old (scripts/)
 if [ -f ".smartdrive/scripts/gui.py" ]; then
-    echo "Launching KeyDrive GUI from .smartdrive/scripts/gui.py"
-    echo "Current directory: $(pwd)"
+    echo "Launching KeyDrive GUI..."
     echo
     $PYTHON_CMD -B .smartdrive/scripts/gui.py
 elif [ -f "scripts/gui.py" ]; then
-    echo "Launching KeyDrive GUI from scripts/gui.py"
-    echo "Current directory: $(pwd)"
+    echo "Launching KeyDrive GUI..."
     echo
     $PYTHON_CMD -B scripts/gui.py
 elif [ -f ".smartdrive/scripts/smartdrive.py" ]; then

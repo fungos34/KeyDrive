@@ -1259,6 +1259,111 @@ def apportion(width: int, parts: list[float], min_if_nonzero=1) -> list[int]:
 
     return widths
 
+##################################################################
+# LOADING DOTS WIDGET
+##################################################################
+
+# CHG-20260103-002: Enhanced loading dots indicator - visible, colorful, own row
+class LoadingDotsWidget(QWidget):
+    """
+    Custom widget for animated loading dots indicator.
+
+    Displays 5 large colored dots that pulse sequentially to indicate
+    a long-running operation. The dots are colorful and highly visible,
+    displayed on their own dedicated row.
+    """
+
+    DOT_COUNT = 5
+    DOT_SIZE = 12  # Larger dots for visibility
+    DOT_SPACING = 8  # Space between dots
+    PULSE_INTERVAL_MS = 200  # Animation speed
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(self.DOT_SIZE + 8)  # Height + padding
+        self._active_dot = 0
+        self._is_running = False
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._advance_dot)
+
+        # Colorful dot colors - gradient from primary to success
+        self._dot_colors = [
+            "#6366f1",  # Indigo
+            "#8b5cf6",  # Violet
+            "#a855f7",  # Purple
+            "#d946ef",  # Fuchsia
+            "#ec4899",  # Pink
+        ]
+        self._inactive_color = "#3f3f46"  # zinc-700 - visible but muted
+
+        # Center the widget
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def start(self) -> None:
+        """Start the loading animation."""
+        self._is_running = True
+        self._active_dot = 0
+        self._timer.start(self.PULSE_INTERVAL_MS)
+        self.show()
+        self.update()
+
+    def stop(self) -> None:
+        """Stop the loading animation."""
+        self._is_running = False
+        self._timer.stop()
+        self.hide()
+        self.update()
+
+    def _advance_dot(self) -> None:
+        """Advance to the next dot in the animation cycle."""
+        self._active_dot = (self._active_dot + 1) % self.DOT_COUNT
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        """Draw the animated dots."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Calculate total width of dots
+        total_width = (self.DOT_COUNT * self.DOT_SIZE) + ((self.DOT_COUNT - 1) * self.DOT_SPACING)
+        start_x = (self.width() - total_width) // 2  # Center horizontally
+        y = (self.height() - self.DOT_SIZE) // 2  # Center vertically
+
+        for i in range(self.DOT_COUNT):
+            x = start_x + (i * (self.DOT_SIZE + self.DOT_SPACING))
+
+            if self._is_running:
+                # Active dot is larger and colored, others are smaller and muted
+                if i == self._active_dot:
+                    # Active dot: full color, full size
+                    color = QColor(self._dot_colors[i])
+                    size = self.DOT_SIZE
+                    # Add glow effect
+                    glow_color = QColor(self._dot_colors[i])
+                    glow_color.setAlpha(80)
+                    painter.setBrush(QBrush(glow_color))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(x - 2, y - 2, size + 4, size + 4)
+                elif i == (self._active_dot - 1) % self.DOT_COUNT:
+                    # Previous dot: fading color
+                    color = QColor(self._dot_colors[i])
+                    color.setAlpha(150)
+                    size = self.DOT_SIZE - 2
+                else:
+                    # Inactive dots: muted
+                    color = QColor(self._inactive_color)
+                    size = self.DOT_SIZE - 4
+            else:
+                # All dots inactive
+                color = QColor(self._inactive_color)
+                size = self.DOT_SIZE - 4
+
+            # Center the dot based on size difference
+            offset = (self.DOT_SIZE - size) // 2
+            painter.setBrush(QBrush(color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(x + offset, y + offset, size, size)
+
 
 # ============================================================
 # STORAGE BAR WIDGET
@@ -1274,6 +1379,7 @@ class BarWidget(QWidget):
         self.storage_info = {}
         self.setMouseTracking(True)
         self.setToolTip("")  # Enable tooltips
+
 
     def set_storage_info(self, info):
         self.storage_info = info
@@ -1652,9 +1758,8 @@ class SmartDriveGUI(QWidget):
         self.status_timer.timeout.connect(self.refresh_status)
         self.status_timer.start(2000)
 
-        # CHG-20260102-013: Loading animation state for mount/unmount operations
-        self._loading_timer: Optional[QTimer] = None
-        self._loading_dots_state = 0
+        # CHG-20260102-013, CHG-20260103-002: Loading animation state
+        # Now uses LoadingDotsWidget for visible, colorful animation on own row
         self._loading_base_status_key: Optional[str] = None
 
         # Initialize tray icon
@@ -2784,18 +2889,23 @@ QPushButton:pressed {{
         self.status_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         status_container_layout = QVBoxLayout(self.status_container)
         status_container_layout.setContentsMargins(0, 0, 0, 0)
-        status_container_layout.setSpacing(0)
+        status_container_layout.setSpacing(4)  # CHG-20260103-002: Add spacing for loading dots
 
         self.status_label = QLabel()
         self.status_label.setFont(QFont("Segoe UI", 10))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Calculate fixed height from font metrics
+        # CHG-20260103-002: Add loading dots widget (own row, visible, colorful)
+        self.loading_dots = LoadingDotsWidget()
+        self.loading_dots.hide()  # Hidden by default
+
+        # Calculate fixed height from font metrics (include loading dots row)
         font_metrics = self.status_label.fontMetrics()
-        status_height = font_metrics.height() + 8  # Single line + padding
+        status_height = font_metrics.height() + 8 + 24  # Status line + padding + dots row
         self.status_container.setFixedHeight(status_height)
 
         status_container_layout.addWidget(self.status_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_container_layout.addWidget(self.loading_dots, 0, Qt.AlignmentFlag.AlignCenter)
         top_layout.addWidget(self.status_container)
 
         # Storage visualization
@@ -3350,47 +3460,33 @@ QPushButton:pressed {{
             self.status_label.setStyleSheet(style)
 
     # CHG-20260102-013: Loading animation methods for mount/unmount operations
+    # CHG-20260103-002: Enhanced with LoadingDotsWidget - visible, colorful, own row
     def _start_loading_animation(self, status_key: str) -> None:
         """
         Start animated loading indicator for long-running operations.
 
-        Displays the base status message with animated dots (·, ··, ···)
-        cycling every 400ms to indicate the application is working.
+        Shows the status message and starts the colorful animated dots indicator
+        on its own row below the status text.
 
         Args:
             status_key: Translation key for base status message
         """
         self._loading_base_status_key = status_key
-        self._loading_dots_state = 0
-        self._update_loading_dots()
+        # Set the status text (without dots - they're now in their own widget)
+        base_text = tr(status_key, lang=get_lang())
+        self.status_label.setText(base_text)
 
-        if self._loading_timer is None:
-            self._loading_timer = QTimer()
-            self._loading_timer.timeout.connect(self._update_loading_dots)
-        self._loading_timer.start(400)  # Update every 400ms
+        # Start the enhanced loading dots animation
+        if hasattr(self, "loading_dots"):
+            self.loading_dots.start()
 
     def _stop_loading_animation(self) -> None:
-        """Stop the loading animation timer."""
-        if self._loading_timer is not None:
-            self._loading_timer.stop()
+        """Stop the loading animation and hide the dots indicator."""
         self._loading_base_status_key = None
-        self._loading_dots_state = 0
 
-    def _update_loading_dots(self) -> None:
-        """
-        Update the status label with animated dots.
-
-        Cycles through: base_text ·, base_text ··, base_text ···
-        """
-        if self._loading_base_status_key is None:
-            return
-
-        # Cycle through 0, 1, 2 for 1-3 dots
-        dots = "·" * (self._loading_dots_state + 1)
-        base_text = tr(self._loading_base_status_key, lang=get_lang())
-        self.status_label.setText(f"{base_text} {dots}")
-
-        self._loading_dots_state = (self._loading_dots_state + 1) % 3
+        # Stop the loading dots widget
+        if hasattr(self, "loading_dots"):
+            self.loading_dots.stop()
 
     def update_storage_labels(self, lang: str = None) -> None:
         """

@@ -686,6 +686,14 @@ class FileNames:
         "integrity",  # Signatures directory
         "recovery",  # Recovery container and artifacts (Paths.RECOVERY_SUBDIR)
         CONFIG_JSON,  # User configuration (version field updated separately)
+        ".venv",
+        "challenge_request.py",
+        "challenge_verification.py",
+        "challenges.json",
+        "e2e_result.txt",
+        "hash_database.json",
+        "hash_server.py",
+        "obsolete",  # Obsolete files directory
     }
 
     # CHG-20251221-004: Deployment exclusion patterns
